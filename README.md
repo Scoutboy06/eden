@@ -12,11 +12,12 @@ To run:
 bun run index.ts
 ```
 
-## Linting and formatting
+## Checks
 
 ```bash
 bun run lint      # Oxlint
 bun run fmt       # Oxfmt
 bun run fmt:check # Check formatting
-bun run check     # Run both checks
+bun run analyze   # Fallow code analysis
+bun run check     # Run all checks
 ```

@@ -7,10 +7,12 @@
     "lint": "oxlint",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "check": "bun run lint && bun run fmt:check"
+    "analyze": "fallow",
+    "check": "bun run lint && bun run fmt:check && bun run analyze"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "fallow": "^3.33.1",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0"
   },
