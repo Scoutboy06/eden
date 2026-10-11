@@ -7,6 +7,7 @@
       "devDependencies": {
         "@types/bun": "latest",
         "fallow": "^3.33.1",
+        "husky": "^9.1.7",
         "oxfmt": "^0.72.0",
         "oxlint": "^1.87.0",
       },
@@ -159,6 +160,8 @@
     "fallow": ["fallow@3.33.1", "", { "dependencies": { "detect-libc": "2.1.2" }, "optionalDependencies": { "@fallow-cli/darwin-arm64": "3.33.1", "@fallow-cli/darwin-x64": "3.33.1", "@fallow-cli/linux-arm64-gnu": "3.33.1", "@fallow-cli/linux-arm64-musl": "3.33.1", "@fallow-cli/linux-x64-gnu": "3.33.1", "@fallow-cli/linux-x64-musl": "3.33.1", "@fallow-cli/win32-arm64-msvc": "3.33.1", "@fallow-cli/win32-x64-msvc": "3.33.1", "fallow-type-aware": "3.33.1" }, "bin": { "fallow": "bin/fallow", "fallow-lsp": "bin/fallow-lsp", "fallow-mcp": "bin/fallow-mcp" } }, "sha512-+fZdeFsb5Fv2/l8WRdjD/eT1D2iRg8q5/0GRyfzV5GRsNCIUnndT7IAdr0q+ZKqH2lVHArkGvDRtVgLwXSMpeA=="],
 
     "fallow-type-aware": ["fallow-type-aware@3.33.1", "", { "dependencies": { "typescript": "7.0.2" }, "bin": { "fallow-type-aware": "fallow-type-aware.mjs" } }, "sha512-YDq+INBmAFk2KpOnX1T97McttUsRwMO0UGpF0gk6CE/R9oVbaYyqUULF7/2XzdGAeOejnhIwCGORCfeCQwfo9Q=="],
+
+    "husky": ["husky@9.1.7", "", { "bin": { "husky": "bin.js" } }, "sha512-5gs5ytaNjBrh5Ow3zrvdUUY+0VxIuWVL4i9irt6friV+BqdCfmV11CQTWMiBYWHbXhco+J1kHfTOUkePhCDvMA=="],
 
     "oxfmt": ["oxfmt@0.72.0", "", { "dependencies": { "tinypool": "2.2.0" }, "optionalDependencies": { "@oxfmt/binding-android-arm-eabi": "0.72.0", "@oxfmt/binding-android-arm64": "0.72.0", "@oxfmt/binding-darwin-arm64": "0.72.0", "@oxfmt/binding-darwin-x64": "0.72.0", "@oxfmt/binding-freebsd-x64": "0.72.0", "@oxfmt/binding-linux-arm-gnueabihf": "0.72.0", "@oxfmt/binding-linux-arm-musleabihf": "0.72.0", "@oxfmt/binding-linux-arm64-gnu": "0.72.0", "@oxfmt/binding-linux-arm64-musl": "0.72.0", "@oxfmt/binding-linux-ppc64-gnu": "0.72.0", "@oxfmt/binding-linux-riscv64-gnu": "0.72.0", "@oxfmt/binding-linux-riscv64-musl": "0.72.0", "@oxfmt/binding-linux-s390x-gnu": "0.72.0", "@oxfmt/binding-linux-x64-gnu": "0.72.0", "@oxfmt/binding-linux-x64-musl": "0.72.0", "@oxfmt/binding-openharmony-arm64": "0.72.0", "@oxfmt/binding-win32-arm64-msvc": "0.72.0", "@oxfmt/binding-win32-ia32-msvc": "0.72.0", "@oxfmt/binding-win32-x64-msvc": "0.72.0" }, "peerDependencies": { "svelte": "^5.0.0", "vite-plus": "*" }, "optionalPeers": ["svelte", "vite-plus"], "bin": { "oxfmt": "bin/oxfmt" } }, "sha512-16OQeL0uhPZbfmT9S9WWM0Nv9+BmVi8Ra1uTYaSKj/qSCs6FB30KOhz9JoNYw6thT+K5bVxsk/tSEOu497i34g=="],
 

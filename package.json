@@ -8,11 +8,13 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "analyze": "fallow",
-    "check": "bun run lint && bun run fmt:check && bun run analyze"
+    "check": "bun run lint && bun run fmt:check && bun run analyze",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "fallow": "^3.33.1",
+    "husky": "^9.1.7",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0"
   },
