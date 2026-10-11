@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "cli": "bun run apps/cli/src/main.ts",
+    "test": "bun test",
     "lint": "oxlint",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
