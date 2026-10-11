@@ -1,7 +1,20 @@
 import { plugin, type CommandContext } from "gunshi";
-import { renderValidationErrors } from "gunshi/renderer";
+import { renderUsage, renderValidationErrors } from "gunshi/renderer";
+import { writeOutput } from "./output";
 
-type Failure = { code: string; message: string };
+type ErrorDescription = { code: string; message: string };
+type ExecutionFailure = {
+  kind: "execution";
+  error: ErrorDescription;
+};
+type ValidationFailure = {
+  kind: "validation";
+  error: ErrorDescription;
+  context: Readonly<CommandContext>;
+  cause: AggregateError;
+};
+type Failure = ExecutionFailure | ValidationFailure;
+type NormalizedError = { failure: Failure; context?: Readonly<CommandContext> };
 
 class CommandFailure extends Error {
   constructor(
@@ -35,26 +48,55 @@ export async function captureValidationError(
 }
 
 export async function reportError(error: unknown): Promise<void> {
-  process.stderr.write(`${await renderError(error)}\n`);
+  const { failure, context } = normalizeError(error);
+  await writeOutput(
+    { json: context?.values.json === true, destination: "stderr" },
+    { data: { error: failure.error }, human: () => renderHuman(failure) },
+  );
   process.exitCode = 1;
 }
 
-async function renderError(error: unknown): Promise<string> {
-  if (!(error instanceof CommandFailure)) return describeError(error, "COMMAND_FAILED").message;
-
-  const { cause, context } = error;
-  const failure = describeError(
-    cause,
-    cause === context.validationError ? "VALIDATION_ERROR" : "COMMAND_FAILED",
-  );
-  if (context.values.json === true) return JSON.stringify({ error: failure });
-  if (cause === context.validationError && cause instanceof AggregateError) {
-    return renderValidationErrors(context, cause);
+function normalizeError(error: unknown): NormalizedError {
+  if (!(error instanceof CommandFailure)) {
+    return { failure: { kind: "execution", error: describeError(error, "COMMAND_FAILED") } };
   }
-  return failure.message;
+
+  const { context, cause } = error;
+  if (cause === context.validationError && cause instanceof AggregateError) {
+    return {
+      context,
+      failure: {
+        kind: "validation",
+        error: describeError(cause, "VALIDATION_ERROR"),
+        context,
+        cause,
+      },
+    };
+  }
+
+  return { context, failure: { kind: "execution", error: describeError(cause, "COMMAND_FAILED") } };
 }
 
-function describeError(error: unknown, fallbackCode: string): Failure {
+function renderHuman(failure: Failure): string | Promise<string> {
+  switch (failure.kind) {
+    case "validation":
+      return renderHumanValidation(failure);
+    case "execution":
+      return renderHumanExecution(failure);
+  }
+}
+
+async function renderHumanValidation({ context, cause }: ValidationFailure): Promise<string> {
+  return (await Promise.all([renderValidationErrors(context, cause), renderUsage(context)])).join(
+    "\n\n",
+  );
+}
+
+function renderHumanExecution({ error }: ExecutionFailure): string {
+  return error.message;
+}
+
+function describeError(error: unknown, fallbackCode: string): ErrorDescription {
   if (error instanceof AggregateError) {
     const failures = error.errors.map((cause) => describeError(cause, fallbackCode));
     const first = failures[0];

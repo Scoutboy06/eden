@@ -22,7 +22,7 @@ export default defineCommand({
 
     await fs.mkdir(ctx.values.path);
 
-    printOperations(execution.operations, {
+    await printOperations(execution.operations, {
       json,
       dryRun,
     });

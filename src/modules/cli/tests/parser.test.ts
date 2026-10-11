@@ -4,10 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const main = fileURLToPath(new URL("../../../apps/cli/src/main.ts", import.meta.url));
+const main = fileURLToPath(new URL("../../../../apps/cli/src/main.ts", import.meta.url));
 
 async function invoke(...argv: string[]) {
-  const child = Bun.spawn([process.execPath, main, ...argv], {
+  return execute(main, ...argv);
+}
+
+async function invokeFixture(command: string, ...argv: string[]) {
+  const fixture = join(directory, "fixture.ts");
+  await Bun.write(
+    fixture,
+    `import { runCli } from ${JSON.stringify(new URL("../parser.ts", import.meta.url).href)};
+import { lazy } from ${JSON.stringify(import.meta.resolve("gunshi"))};
+await runCli({ fixture: ${command} });`,
+  );
+  return execute(fixture, "fixture", ...argv);
+}
+
+async function execute(entry: string, ...argv: string[]) {
+  const child = Bun.spawn([process.execPath, entry, ...argv], {
     stdout: "pipe",
     stderr: "pipe",
     env: { ...process.env, FORCE_COLOR: "1" },
@@ -30,11 +45,14 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-test("renders human validation errors only on stderr without color or a stack trace", async () => {
+test("renders human validation errors and usage only on stderr without color or a stack trace", async () => {
   const result = await invoke("mkdir");
   expect(result.exitCode).toBe(1);
   expect(result.stdout).toBe("");
-  expect(result.stderr).toBe("Positional argument 'path' is required\n");
+  expect(result.stderr).toStartWith("Positional argument 'path' is required\n\n");
+  expect(result.stderr).toContain("USAGE:\n  eden mkdir <OPTIONS> <path>");
+  expect(result.stderr).not.toContain("\u001b");
+  expect(result.stderr).not.toContain("at ");
 });
 
 for (const argv of [
@@ -77,6 +95,7 @@ for (const json of [false, true]) {
       expect(Object.keys(failure)).toEqual(["error"]);
     } else {
       expect(result.stderr).toContain("EEXIST");
+      expect(result.stderr).not.toContain("USAGE:");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
     }
     expect(await Bun.file(path).text()).toBe("unchanged");
@@ -112,4 +131,55 @@ test("continues to render help on stdout without validating required input", asy
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("Create a directory");
   expect(result.stderr).toBe("");
+});
+
+test("combines multiple validation errors into one JSON object", async () => {
+  const result = await invokeFixture(
+    `{
+      name: "fixture",
+      args: {
+        first: { type: "string", required: true },
+        second: { type: "string", required: true },
+      },
+      run() { throw new Error("Validation should prevent execution"); },
+    }`,
+    "--json",
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe("");
+  const failure = JSON.parse(result.stderr);
+  expect(failure.error.code).toBe("VALIDATION_ERROR");
+  expect(failure.error.message.split("\n")).toEqual([
+    "Optional argument '--first' is required",
+    "Optional argument '--second' is required",
+  ]);
+  expect(result.stderr.trim().split("\n")).toHaveLength(1);
+});
+
+for (const json of [false, true]) {
+  for (const [expression, message] of [
+    ['new AggregateError([], "Empty aggregate")', "Empty aggregate"],
+    ['new Error("No native code")', "No native code"],
+  ]) {
+    test(`handles ${message} in ${json ? "JSON" : "human"} mode`, async () => {
+      const result = await invokeFixture(
+        `{ name: "fixture", run() { throw ${expression}; } }`,
+        ...(json ? ["--json"] : []),
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        json
+          ? `${JSON.stringify({ error: { code: "COMMAND_FAILED", message } })}\n`
+          : `${message}\n`,
+      );
+    });
+  }
+}
+
+test("catches command-loading errors before context exists exactly once", async () => {
+  const result = await invokeFixture('lazy(() => { throw new Error("Loading failed"); })');
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("Loading failed\n");
 });

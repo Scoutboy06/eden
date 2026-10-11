@@ -13,6 +13,8 @@ apps/
 
 ## Local Development
 
+Read [CODE.md](CODE.md) for project coding standards.
+
 To install dependencies:
 
 ```bash
@@ -25,12 +27,6 @@ To run:
 bun run cli --help
 bun run cli mkdir ./example --dry-run --json
 ```
-
-## Adding commands
-
-See the [command creation skill](.agents/skills/eden-command/SKILL.md) for the
-workflow and an example. Commands use Eden's CLI module; Gunshi integration
-stays inside that module. Add option functionality when a real command needs it.
 
 ### Checks
 
