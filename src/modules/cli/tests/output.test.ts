@@ -1,49 +1,65 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { printOperations, writeOutput } from "../output";
+import { captureOutput } from "./support/output";
 
-afterEach(() => mock.restore());
-
-test("writes compact JSON to stdout without evaluating human presentation", async () => {
-  const stdout = spyOn(process.stdout, "write").mockReturnValue(true);
-  const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
-  await writeOutput(
-    { json: true, destination: "stdout" },
-    {
-      data: { value: 42 },
-      human: () => {
-        throw new Error("Human presentation must stay lazy");
-      },
-    },
+test("JSON presentation is written as one compact object on stdout", async () => {
+  const result = await captureOutput(() =>
+    writeOutput(
+      { json: true, destination: "stdout" },
+      { data: { value: 42 }, human: () => "unused" },
+    ),
   );
-  expect(stdout).toHaveBeenCalledWith('{"value":42}\n');
-  expect(stderr).not.toHaveBeenCalled();
+
+  expect(result).toEqual({ stdout: '{"value":42}\n', stderr: "" });
 });
 
-test("writes asynchronous human presentation only to stderr", async () => {
-  const stdout = spyOn(process.stdout, "write").mockReturnValue(true);
-  const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
-  await writeOutput(
-    { json: false, destination: "stderr" },
-    { data: { unused: true }, human: async () => "Human message" },
+test("JSON mode does not evaluate the human renderer", async () => {
+  const human = mock(() => "unused");
+
+  await captureOutput(() =>
+    writeOutput({ json: true, destination: "stdout" }, { data: {}, human }),
   );
-  expect(stderr).toHaveBeenCalledWith("Human message\n");
-  expect(stdout).not.toHaveBeenCalled();
+
+  expect(human).not.toHaveBeenCalled();
 });
 
-test("preserves human operation lines", async () => {
-  const stdout = spyOn(process.stdout, "write").mockReturnValue(true);
-  await printOperations(
-    [
-      { type: "fs.mkdir", description: "Create first", input: { path: "first" } },
-      { type: "fs.mkdir", description: "Create second", input: { path: "second" } },
-    ],
-    { json: false, dryRun: true },
+test("asynchronous human presentation is written only to stderr", async () => {
+  const result = await captureOutput(() =>
+    writeOutput(
+      { json: false, destination: "stderr" },
+      { data: {}, human: async () => "Human message" },
+    ),
   );
-  expect(stdout).toHaveBeenCalledWith("[dry-run] Create first\n[dry-run] Create second\n");
+
+  expect(result).toEqual({ stdout: "", stderr: "Human message\n" });
 });
 
-test("does not print a blank line for an empty human operation list", async () => {
-  const stdout = spyOn(process.stdout, "write").mockReturnValue(true);
-  await printOperations([], { json: false, dryRun: false });
-  expect(stdout).not.toHaveBeenCalled();
+test("human operation output preserves order and marks dry-run", async () => {
+  const result = await captureOutput(() =>
+    printOperations(
+      [
+        { type: "fs.mkdir", description: "Create first", input: { path: "first" } },
+        { type: "fs.mkdir", description: "Create second", input: { path: "second" } },
+      ],
+      { json: false, dryRun: true },
+    ),
+  );
+
+  expect(result).toEqual({
+    stdout: "[dry-run] Create first\n[dry-run] Create second\n",
+    stderr: "",
+  });
+});
+
+test("empty human operation lists produce no output", async () => {
+  const result = await captureOutput(() => printOperations([], { json: false, dryRun: false }));
+
+  expect(result).toEqual({ stdout: "", stderr: "" });
+});
+
+test("JSON operation output has no success envelope", async () => {
+  const result = await captureOutput(() => printOperations([], { json: true, dryRun: false }));
+
+  expect(JSON.parse(result.stdout)).toEqual({ dryRun: false, operations: [] });
+  expect(result.stderr).toBe("");
 });
