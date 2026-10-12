@@ -17,7 +17,7 @@
           pkgs = import nixpkgs { inherit system; };
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.bun ];
+            packages = [ pkgs.bun pkgs.zsh pkgs.coreutils ];
           };
         });
     };

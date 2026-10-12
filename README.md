@@ -28,6 +28,12 @@ bun run cli --help
 bun run cli mkdir ./example --dry-run --json
 ```
 
+### Completions
+
+```sh
+bun run cli completion zsh --stdout
+```
+
 ### Checks
 
 ```bash
