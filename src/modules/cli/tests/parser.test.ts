@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCli, runFixture } from "./support/cli";
 
 test("the application registers mkdir in root help", async () => {
@@ -34,10 +37,17 @@ test.each([
   expect(result.stderr).toBe("");
 });
 
-test("exposes the dry-run flag through the command context", async () => {
-  const result = await runFixture("echo", "hello", "--dry-run", "--json");
+test("CLI mkdir dry-run reports its plan without creating the directory", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const path = join(directory, "not-created");
+    const result = await runCli("mkdir", path, "--dry-run", "--json");
 
-  expect(result.exitCode).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({ value: "hello", dryRun: true });
-  expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      dryRun: true,
+      operations: [{ type: "fs.mkdir", input: { path } }],
+    });
+  });
 });
