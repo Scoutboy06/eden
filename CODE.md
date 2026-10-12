@@ -1,5 +1,9 @@
 # Coding standards
 
+Do not write code comments; make the code explain itself through clear names and structure.
+
+Separate logical blocks with one blank line, including setup, action, and assertions in tests.
+
 ## Test placement
 
 Place module tests in a `tests/` folder inside the module, not alongside its

@@ -28,6 +28,10 @@ bun run cli --help
 bun run cli mkdir ./example --dry-run --json
 ```
 
+### Configuration
+
+Put global configuration in `$XDG_CONFIG_HOME/eden/config.yaml` (default: `~/.config/eden/config.yaml`).
+
 ### Completions
 
 ```sh
