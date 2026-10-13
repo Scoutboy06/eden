@@ -1,6 +1,4 @@
-import { defineCommand, printOperations } from "../../../../src/modules/cli";
-import { createExecution } from "../../../../src/modules/execution";
-import { FilesystemService } from "../../../../src/modules/fs";
+import { defineCommand } from "../../../../src/modules/cli";
 
 export default defineCommand({
   name: "mkdir",
@@ -14,17 +12,9 @@ export default defineCommand({
     },
   },
 
-  async run(ctx) {
-    const { dryRun, json } = ctx.extensions.eden;
-
-    const execution = createExecution({ dryRun });
-    const fs = new FilesystemService(execution);
-
+  async run(ctx, { fs, output }) {
     await fs.mkdir(ctx.values.path);
 
-    await printOperations(execution.operations, {
-      json,
-      dryRun,
-    });
+    await output.printOperations();
   },
 });
