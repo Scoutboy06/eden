@@ -4,6 +4,8 @@ Do not write code comments; make the code explain itself through clear names and
 
 Separate logical blocks with one blank line, including setup, action, and assertions in tests.
 
+After imports and supporting types, place the file's primary class or function before its implementation helpers.
+
 ## Test placement
 
 Place module tests in a `tests/` folder inside the module, not alongside its

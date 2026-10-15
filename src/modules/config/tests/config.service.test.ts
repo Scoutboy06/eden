@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
 import { ConfigError } from "../errors";
+
+const defaults = { worktree_root: join(homedir(), ".worktrees") };
 
 test("reads a configured agent from a YAML file", async () => {
   await withTemporaryDirectory(async (directory) => {
@@ -11,7 +15,7 @@ test("reads a configured agent from a YAML file", async () => {
     await writeFile(path, "agent:\n  default: claude\n");
     const service = createFileConfigService({ pathsLowToHigh: [path] });
 
-    expect(await service.read()).toEqual({ agent: { default: "claude" } });
+    expect(await service.read()).toEqual({ ...defaults, agent: { default: "claude" } });
   });
 });
 
@@ -47,12 +51,12 @@ test("reports validation issues across root and nested settings", async () => {
   });
 });
 
-test("reports a missing file without creating it", async () => {
+test("defaults a missing file without creating it", async () => {
   await withTemporaryDirectory(async (directory) => {
     const path = join(directory, "config.yaml");
     const service = createFileConfigService({ pathsLowToHigh: [path] });
 
-    await expect(service.read()).rejects.toMatchObject({ code: "CONFIG_NOT_FOUND", path });
+    expect(await service.read()).toEqual(defaults);
     expect(await Bun.file(path).exists()).toBe(false);
   });
 });
@@ -93,7 +97,10 @@ test.each([
     const path = join(directory, "config.yaml");
     await writeFile(path, text);
 
-    expect(await createFileConfigService({ pathsLowToHigh: [path] }).read()).toEqual(expected);
+    expect(await createFileConfigService({ pathsLowToHigh: [path] }).read()).toEqual({
+      ...defaults,
+      ...expected,
+    });
   });
 });
 
@@ -104,9 +111,9 @@ test("does not read at construction and sees subsequent file edits", async () =>
     expect(await Bun.file(path).exists()).toBe(false);
 
     await writeFile(path, "agent:\n  default: codex\n");
-    expect(await service.read()).toEqual({ agent: { default: "codex" } });
+    expect(await service.read()).toEqual({ ...defaults, agent: { default: "codex" } });
     await writeFile(path, "agent:\n  default: claude\n");
-    expect(await service.read()).toEqual({ agent: { default: "claude" } });
+    expect(await service.read()).toEqual({ ...defaults, agent: { default: "claude" } });
     await writeFile(path, "agent:\n  default: invalid\n");
     await expect(service.read()).rejects.toMatchObject({ code: "CONFIG_SCHEMA_INVALID", path });
   });
@@ -127,11 +134,14 @@ test.each(["xdg", "home"] as const)("reads the global configuration using %s", a
     const configHome = location === "xdg" ? xdg : join(home, ".config");
     await mkdir(join(configHome, "eden"), { recursive: true });
     await writeFile(join(configHome, "eden", "config.yaml"), "agent:\n  default: opencode\n");
-    const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures", "read.ts")], {
-      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: location === "xdg" ? xdg : "" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const child = Bun.spawn(
+      [process.execPath, fileURLToPath(new URL("./fixtures/read.ts", import.meta.url))],
+      {
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: location === "xdg" ? xdg : "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
@@ -140,7 +150,10 @@ test.each(["xdg", "home"] as const)("reads the global configuration using %s", a
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ agent: { default: "opencode" } });
+    expect(JSON.parse(stdout)).toEqual({
+      worktree_root: join(home, ".worktrees"),
+      agent: { default: "opencode" },
+    });
   });
 });
 

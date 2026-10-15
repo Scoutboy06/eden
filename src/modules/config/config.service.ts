@@ -37,7 +37,9 @@ async function readConfigFile(path: string): Promise<string> {
   } catch (error) {
     const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
 
-    throw new ConfigError(missing ? "CONFIG_NOT_FOUND" : "CONFIG_READ_FAILED", path);
+    if (missing) return "{}";
+
+    throw new ConfigError("CONFIG_READ_FAILED", path);
   }
 }
 

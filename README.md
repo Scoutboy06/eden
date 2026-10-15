@@ -26,11 +26,19 @@ To run:
 ```bash
 bun run cli --help
 bun run cli mkdir ./example --dry-run --json
+bun run cli worktree create --name "Fix login" --dry-run --json
 ```
 
 ### Configuration
 
 Put global configuration in `$XDG_CONFIG_HOME/eden/config.yaml` (default: `~/.config/eden/config.yaml`).
+
+Configuration is optional. Worktrees default to `~/.worktrees/<repository>/<name>`.
+Override the root with an absolute path or a path starting with `~/`:
+
+```yaml
+worktree_root: ~/.worktrees
+```
 
 ### Completions
 

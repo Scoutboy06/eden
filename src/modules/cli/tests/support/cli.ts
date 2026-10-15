@@ -7,15 +7,27 @@ export function runCli(...argv: string[]) {
   return execute(application, argv);
 }
 
+export function runCliWith(
+  options: { cwd: string; env?: Record<string, string | undefined> },
+  ...argv: string[]
+) {
+  return execute(application, argv, options);
+}
+
 export function runFixture(...argv: string[]) {
   return execute(fixture, argv);
 }
 
-async function execute(entry: string, argv: string[]) {
+async function execute(
+  entry: string,
+  argv: string[],
+  options?: { cwd: string; env?: Record<string, string | undefined> },
+) {
   const child = Bun.spawn([process.execPath, entry, ...argv], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, FORCE_COLOR: "1" },
+    cwd: options?.cwd,
+    env: { ...process.env, FORCE_COLOR: "1", ...options?.env },
   });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,

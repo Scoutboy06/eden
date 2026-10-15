@@ -51,3 +51,14 @@ test("CLI mkdir dry-run reports its plan without creating the directory", async 
     });
   });
 });
+
+test.each([
+  { argv: ["--dry-run", "--json", "nested", "echo", "hello"] },
+  { argv: ["nested", "echo", "hello", "--dry-run", "--json"] },
+])("accepts global flags around nested commands: %j", async ({ argv }) => {
+  const result = await runFixture(...argv);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({ value: "hello", dryRun: true });
+});
