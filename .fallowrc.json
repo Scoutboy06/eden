@@ -1,0 +1,3 @@
+{
+  "entry": ["src/modules/script/tests/fixtures/*.ts"]
+}
