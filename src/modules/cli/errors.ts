@@ -1,8 +1,9 @@
 import { plugin, type CommandContext } from "gunshi";
 import { renderUsage, renderValidationErrors } from "gunshi/renderer";
 import { writeOutput } from "./output";
+import { requestsFlag } from "./options";
+import { describeError, type ErrorDescription } from "./error-description";
 
-type ErrorDescription = { code: string; message: string };
 type ExecutionFailure = {
   kind: "execution";
   error: ErrorDescription;
@@ -47,11 +48,31 @@ export async function captureValidationError(
   throw new CommandFailure(error, context);
 }
 
-export async function reportError(error: unknown): Promise<void> {
+export async function withCliErrors(argv: string[], run: () => Promise<unknown>): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    await reportError(error, argv);
+  }
+}
+
+async function reportError(error: unknown, argv: string[]): Promise<void> {
   const { failure, context } = normalizeError(error);
+  const json = context ? context.values.json === true : requestsFlag(argv, "json");
+  const dryRun = context ? context.values["dry-run"] === true : requestsFlag(argv, "dry-run");
   await writeOutput(
-    { json: context?.values.json === true, destination: "stderr" },
-    { data: { error: failure.error }, human: () => renderHuman(failure) },
+    {
+      json,
+      destination: json ? "stdout" : "stderr",
+    },
+    {
+      data: {
+        ok: false,
+        dryRun,
+        error: failure.error,
+      },
+      human: () => renderHuman(failure),
+    },
   );
   process.exitCode = 1;
 }
@@ -94,29 +115,4 @@ async function renderHumanValidation({ context, cause }: ValidationFailure): Pro
 
 function renderHumanExecution({ error }: ExecutionFailure): string {
   return error.message;
-}
-
-function describeError(error: unknown, fallbackCode: string): ErrorDescription {
-  if (error instanceof AggregateError) {
-    const failures = error.errors.map((cause) => describeError(cause, fallbackCode));
-    const first = failures[0];
-    return failures.length === 1 && first
-      ? first
-      : {
-          code: fallbackCode,
-          message: failures.map((failure) => failure.message).join("\n") || error.message,
-        };
-  }
-
-  return { code: errorCode(error) ?? fallbackCode, message: errorMessage(error) };
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

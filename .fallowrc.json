@@ -1,3 +1,6 @@
 {
-  "entry": ["src/modules/script/tests/fixtures/*.ts"]
+  "entry": ["src/modules/script/tests/fixtures/*.ts"],
+  "typeAware": {
+    "enabled": true
+  }
 }

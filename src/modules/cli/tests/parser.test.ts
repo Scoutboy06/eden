@@ -4,6 +4,20 @@ import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCli, runFixture } from "./support/cli";
 
+test("silent commands still return one JSON success response", async () => {
+  const result = await runFixture("silent", "--json");
+
+  expect(result).toEqual({ exitCode: 0, stdout: '{"ok":true,"dryRun":false}\n', stderr: "" });
+});
+
+test("completion scripts retain their native format with the JSON flag", async () => {
+  const result = await runCli("completion", "zsh", "--stdout", "--json");
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).not.toContain('{"ok":true}');
+  expect(result.stdout).toContain("#compdef");
+});
+
 test("the application registers mkdir in root help", async () => {
   const result = await runCli("--help");
 
@@ -33,7 +47,7 @@ test.each([
   const result = await runFixture(...argv);
 
   expect(result.exitCode).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({ value: "hello", dryRun: false });
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, value: "hello", dryRun: false });
   expect(result.stderr).toBe("");
 });
 
@@ -60,5 +74,5 @@ test.each([
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr).toBe("");
-  expect(JSON.parse(result.stdout)).toEqual({ value: "hello", dryRun: true });
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, value: "hello", dryRun: true });
 });

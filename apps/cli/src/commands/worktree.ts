@@ -14,14 +14,10 @@ const create = defineCommand({
       baseBranch: ctx.values["base-branch"],
     });
 
-    if (ctx.extensions.eden.dryRun) {
-      await output.printOperations();
-    } else {
-      await output.write({
-        data: result,
-        human: () => `Created ${result.branch} at ${result.path}`,
-      });
-    }
+    output.write({
+      data: { result },
+      human: () => `Created ${result.branch} at ${result.path}`,
+    });
   },
 });
 

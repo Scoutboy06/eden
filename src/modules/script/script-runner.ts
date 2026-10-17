@@ -5,6 +5,7 @@ export type RunOptions = {
   timeoutMs?: number;
   signal?: AbortSignal;
   killGraceMs?: number;
+  onStderr?: (text: string) => void;
 };
 
 export type RunResult = { stdout: string; stderr: string } & (
@@ -20,7 +21,7 @@ export class ScriptRunner {
     input?: string | null,
     options?: RunOptions | null,
   ): Promise<RunResult> {
-    const { args = [], cwd, env, timeoutMs, signal, killGraceMs = 1000 } = options ?? {};
+    const { args = [], cwd, env, timeoutMs, signal, killGraceMs = 1000, onStderr } = options ?? {};
 
     if (signal?.aborted) return { outcome: "cancelled", stdout: "", stderr: "" };
 
@@ -50,7 +51,7 @@ export class ScriptRunner {
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited,
         new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
+        captureStderr(child.stderr, onStderr),
       ]);
 
       if (termination) await termination;
@@ -65,6 +66,22 @@ export class ScriptRunner {
       signal?.removeEventListener("abort", cancel);
     }
   }
+}
+
+async function captureStderr(stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) {
+  let output = "";
+  const decoder = new TextDecoder();
+
+  for await (const chunk of stream) {
+    const text = decoder.decode(chunk, { stream: true });
+    output += text;
+    onText?.(text);
+  }
+
+  const tail = decoder.decode();
+  if (tail) onText?.(tail);
+
+  return output + tail;
 }
 
 async function terminateGroup(pid: number, graceMs: number): Promise<void> {

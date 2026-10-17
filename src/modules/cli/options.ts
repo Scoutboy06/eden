@@ -25,3 +25,14 @@ export type EdenExtensions = {
   dryRun: boolean;
   json: boolean;
 };
+
+export function requestsFlag(argv: string[], name: string): boolean {
+  let enabled = false;
+  for (const argument of argv) {
+    if (argument === "--") break;
+    if (argument === `--${name}` || argument === `--${name}=true`) enabled = true;
+    if (argument === `--${name}=false` || argument === `--no-${name}`) enabled = false;
+  }
+
+  return enabled;
+}

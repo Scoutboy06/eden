@@ -1,4 +1,5 @@
 import type { Args, Awaitable, CommandContext, SubCommandable } from "gunshi";
+import { createExecution } from "../execution";
 import type { EdenExtensions } from "./options";
 import { createCommandServices } from "./services";
 import type { CommandServices } from "./services";
@@ -16,10 +17,7 @@ export interface CommandDefinition<A extends Args = Args> {
   toKebab?: boolean;
   subCommands?: Record<string, SubCommandable> | Map<string, SubCommandable>;
 
-  run?(
-    ctx: Readonly<CommandContext<EdenParams<A>>>,
-    services: CommandServices,
-  ): Awaitable<string | void>;
+  run?(ctx: Readonly<CommandContext<EdenParams<A>>>, services: CommandServices): Awaitable<void>;
 }
 
 export function defineCommand<A extends Args = Args>(definition: CommandDefinition<A>) {
@@ -33,8 +31,12 @@ export function defineCommand<A extends Args = Args>(definition: CommandDefiniti
     toKebab: definition.toKebab,
     subCommands: definition.subCommands,
     run: run
-      ? (ctx: Readonly<CommandContext<EdenParams<A>>>) =>
-          run(ctx, createCommandServices(ctx.extensions.eden))
+      ? async (ctx: Readonly<CommandContext<EdenParams<A>>>) => {
+          const execution = createExecution({ dryRun: ctx.extensions.eden.dryRun });
+          const services = createCommandServices(ctx.extensions.eden, execution);
+          const result = await execution.run(async () => run(ctx, services));
+          await services.output.finish(result);
+        }
       : undefined,
   };
 }

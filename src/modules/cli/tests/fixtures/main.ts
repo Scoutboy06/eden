@@ -11,6 +11,14 @@ import {
 } from "./commands";
 
 await runCli({
+  silent: defineCommand({ name: "silent", run() {} }),
+  "late-failure": defineCommand({
+    name: "late-failure",
+    run(_ctx, { output }) {
+      output.write({ data: { result: "premature" }, human: () => "premature" });
+      throw new Error("Failed after preparing output");
+    },
+  }),
   nested: defineCommand({ name: "nested", subCommands: { echo } }),
   echo,
   "two-required-options": twoRequiredOptions,

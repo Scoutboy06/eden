@@ -12,9 +12,7 @@ export default defineCommand({
     },
   },
 
-  async run(ctx, { fs, output }) {
+  async run(ctx, { fs }) {
     await fs.mkdir(ctx.values.path);
-
-    await output.printOperations();
   },
 });

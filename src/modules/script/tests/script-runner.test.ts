@@ -84,6 +84,23 @@ test("throws when the executable cannot be launched", async () => {
   await expect(ScriptRunner.run(join(fixtures, "missing.ts"))).rejects.toThrow();
 });
 
+test("delivers stderr while the process is running and also captures it", async () => {
+  const controller = new AbortController();
+  const chunks: string[] = [];
+  const result = await ScriptRunner.run(fixture("stderr-ready"), null, {
+    signal: controller.signal,
+    timeoutMs: 3000,
+    killGraceMs: 10,
+    onStderr(text) {
+      chunks.push(text);
+      controller.abort();
+    },
+  });
+
+  expect(result).toMatchObject({ outcome: "cancelled", stderr: "ready\n" });
+  expect(chunks.join("")).toBe(result.stderr);
+});
+
 test("does not fall back to a shell for an executable without a shebang", async () => {
   await expect(ScriptRunner.run(fixture("no-shebang"))).rejects.toThrow();
 });

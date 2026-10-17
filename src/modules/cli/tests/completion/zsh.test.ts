@@ -114,6 +114,6 @@ test("unsupported shells fail enum validation without emitting a script", async 
   const result = await runCli("completion", "bash", "--stdout", "--json");
 
   expect(result.exitCode).toBe(1);
-  expect(result.stdout).toBe("");
-  expect(JSON.parse(result.stderr).error.code).toBe("err:arg:invalid-choice");
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout).error.code).toBe("err:arg:invalid-choice");
 });

@@ -2,18 +2,21 @@ import { expect, test } from "bun:test";
 import { lstat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createExecution } from "../../execution";
+import { HookService } from "../../hook/hook.service";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { git } from "../git";
 import { WorktreeService } from "../worktree.service";
-import { createRepository } from "./support/repository";
+import { createRepository, git } from "./support/repository";
 
 async function createFixture(directory: string, dryRun = false) {
   const repo = await createRepository(directory);
   const root = join(directory, "trees");
   const execution = createExecution({ dryRun });
-  const service = new WorktreeService(execution, {
-    read: async () => ({ worktree_root: root }),
-  });
+  const hooks = new HookService(execution, { directory: join(directory, "hooks") });
+  const service = new WorktreeService(
+    execution,
+    { read: async () => ({ worktree_root: root }) },
+    hooks,
+  );
 
   return { repo, root, execution, service };
 }
@@ -87,7 +90,7 @@ test("dry-run plans worktree creation without creating its parent directory or b
 });
 
 test.each(["branch", "directory", "symlink"])(
-  "rejects a %s collision before planning creation",
+  "dry-run leaves %s collision handling to Git during execution",
   async (collision) => {
     await withTemporaryDirectory(async (directory) => {
       const { repo, root, execution, service } = await createFixture(directory, true);
@@ -99,8 +102,8 @@ test.each(["branch", "directory", "symlink"])(
         else await symlink(join(directory, "missing"), path);
       }
 
-      await expect(service.create({ name: "taken" }, repo)).rejects.toThrow("already exists");
-      expect(execution.operations).toHaveLength(0);
+      await service.create({ name: "taken" }, repo);
+      expect(execution.operations).toHaveLength(1);
     });
   },
 );
@@ -112,7 +115,7 @@ test.each(["!!!", "..", "bad..ref", "name.lock"])(
       const { repo, execution, service } = await createFixture(directory);
 
       await expect(service.create({ name }, repo)).rejects.toThrow();
-      expect(execution.operations).toHaveLength(0);
+      expect(execution.operations).toHaveLength(["!!!", ".."].includes(name) ? 0 : 1);
     });
   },
 );

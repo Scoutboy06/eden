@@ -23,12 +23,12 @@ export default defineCommand({
   name: "completion",
   description: "Generate shell completions",
   args,
-  async run(ctx) {
+  async run(ctx, { output }) {
     const generator = new ZshCompletionGenerator();
     const globals = Object.fromEntries(
       Object.entries(ctx.args).filter(([name]) => !Object.hasOwn(args, name)),
     );
-    process.stdout.write(
+    output.raw(
       generator.generate({
         name: "eden",
         args: globals,

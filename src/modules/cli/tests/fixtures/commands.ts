@@ -1,16 +1,14 @@
 import { lazy } from "gunshi";
 import { defineCommand } from "../../command";
-import { writeOutput } from "../../output";
 
 export const echo = defineCommand({
   name: "echo",
   args: { value: { type: "positional", required: true } },
-  run(ctx) {
-    const { json, dryRun } = ctx.extensions.eden;
-    return writeOutput(
-      { json, destination: "stdout" },
-      { data: { value: ctx.values.value, dryRun }, human: () => ctx.values.value },
-    );
+  run(ctx, { output }) {
+    return output.write({
+      data: { value: ctx.values.value },
+      human: () => ctx.values.value,
+    });
   },
 });
 

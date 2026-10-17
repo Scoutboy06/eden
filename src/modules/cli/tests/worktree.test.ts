@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { git } from "../../worktree/git";
-import { createRepository } from "../../worktree/tests/support/repository";
+import { createRepository, git } from "../../worktree/tests/support/repository";
 import { runCliWith } from "./support/cli";
 
 test("worktree create wires the requested name to creation and reports the result as JSON", async () => {
@@ -20,7 +19,12 @@ test("worktree create wires the requested name to creation and reports the resul
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({ branch: "fix-login", path, base });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      dryRun: false,
+      result: { branch: "fix-login", path, base },
+      hooks: [],
+    });
     expect(await git(path, ["branch", "--show-current"])).toBe("fix-login");
   });
 });

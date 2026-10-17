@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { git } from "../../git";
+import { GitModule } from "../../../git/git.module";
 
 export async function createRepository(directory: string) {
   const repo = join(directory, "repo");
@@ -12,3 +12,5 @@ export async function createRepository(directory: string) {
 
   return repo;
 }
+
+export const git = GitModule.execute;

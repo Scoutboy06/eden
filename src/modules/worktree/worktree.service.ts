@@ -1,8 +1,9 @@
-import { lstat, mkdir } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { HookService, type HookInput } from "../hook/hook.service";
 import type { ConfigService } from "../config/config.service";
 import type { Execution } from "../execution";
-import { git } from "./git";
+import { GitModule } from "../git/git.module";
 
 export type CreateWorktreeInput = { name: string; baseBranch?: string };
 export type Worktree = { branch: string; path: string; base: string };
@@ -11,33 +12,71 @@ export class WorktreeService {
   constructor(
     private readonly execution: Execution,
     private readonly config: ConfigService,
+    private readonly hooks: HookService = new HookService(execution),
   ) {}
 
   async create(input: CreateWorktreeInput, cwd = process.cwd()): Promise<Worktree> {
     const branch = sanitizeName(input.name);
-    await git(cwd, ["check-ref-format", "--branch", branch]);
 
     const settings = await this.config.read();
-    const repositoryName = await resolveRepositoryName(cwd);
+    const repositoryName = await GitModule.repositoryName(cwd);
     const path = join(settings.worktree_root, repositoryName, branch);
-    const base = await resolveBase(cwd, input.baseBranch);
-    await assertAvailable(cwd, branch, path);
-
-    const result = { branch, path, base };
+    const base = await GitModule.resolveCommit(cwd, input.baseBranch);
+    const context = { cwd, repositoryName, worktreeRoot: settings.worktree_root };
+    const [pre, post] = await Promise.all([
+      this.hooks.discover("worktree.create.pre"),
+      this.hooks.discover("worktree.create.post"),
+    ]);
+    const proposed = { branch, path, base };
+    const result = await this.applyPreHook(pre, { request: input, context, proposed });
 
     await this.execution.mutate(
       {
         type: "git.worktree.create",
-        description: `Create worktree ${branch} at ${path}`,
+        description: `Create worktree ${result.branch} at ${result.path}`,
         input: result,
       },
       async () => {
-        await mkdir(dirname(path), { recursive: true });
-        await git(cwd, ["worktree", "add", "-b", branch, "--", path, base]);
+        await mkdir(dirname(resolve(cwd, result.path)), { recursive: true });
+        await GitModule.createWorktree(cwd, result);
       },
     );
 
+    await this.runPostHook(post, { request: input, context, result });
+
     return result;
+  }
+
+  private async applyPreHook(
+    path: string | undefined,
+    input: HookInput & { proposed: Worktree },
+  ): Promise<Worktree> {
+    if (!path) return input.proposed;
+
+    const response = await this.hooks.run(
+      "worktree.create.pre",
+      path,
+      input,
+      input.context.cwd,
+      "pre",
+    );
+
+    return { ...input.proposed, ...response.overwrites };
+  }
+
+  private async runPostHook(
+    path: string | undefined,
+    input: HookInput & { result: Worktree },
+  ): Promise<void> {
+    if (!path) return;
+
+    await this.hooks.run(
+      "worktree.create.post",
+      path,
+      input,
+      resolve(input.context.cwd, input.result.path),
+      "post",
+    );
   }
 }
 
@@ -51,42 +90,4 @@ function sanitizeName(name: string): string {
   if (!sanitized) throw new Error("Worktree name must contain letters or numbers");
 
   return sanitized;
-}
-
-async function resolveRepositoryName(cwd: string): Promise<string> {
-  const listing = await git(cwd, ["worktree", "list", "--porcelain", "-z"]);
-  const mainPath = listing.split("\0")[0]?.slice("worktree ".length);
-
-  if (!mainPath || (await git(cwd, ["rev-parse", "--is-bare-repository"])) === "true") {
-    throw new Error("Worktree creation requires a non-bare Git repository");
-  }
-
-  return basename(mainPath);
-}
-
-function resolveBase(cwd: string, ref = "HEAD"): Promise<string> {
-  return git(cwd, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]);
-}
-
-async function assertAvailable(cwd: string, branch: string, path: string): Promise<void> {
-  const branches = await git(cwd, ["for-each-ref", "--format=%(refname)", `refs/heads/${branch}`]);
-
-  if (branches.split("\n").includes(`refs/heads/${branch}`)) {
-    throw new Error(`Branch already exists: ${branch}`);
-  }
-
-  if (await destinationExists(path)) {
-    throw new Error(`Worktree destination already exists: ${path}`);
-  }
-}
-
-async function destinationExists(path: string): Promise<boolean> {
-  try {
-    await lstat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-
-    throw error;
-  }
 }

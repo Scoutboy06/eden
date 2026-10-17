@@ -40,6 +40,13 @@ Override the root with an absolute path or a path starting with `~/`:
 worktree_root: ~/.worktrees
 ```
 
+### Hooks
+
+Eden supports optional executable scripts that run before or after an action:
+
+- Pre-hooks run before an action and may modify its parameters or prevent execution.
+- Post-hooks run after an action and may inspect its result.
+
 ### Completions
 
 ```sh

@@ -41,7 +41,7 @@ test("human operation output preserves order and marks dry-run", async () => {
         { type: "fs.mkdir", description: "Create first", input: { path: "first" } },
         { type: "fs.mkdir", description: "Create second", input: { path: "second" } },
       ],
-      { json: false, dryRun: true },
+      { json: false, ok: true, dryRun: true },
     ),
   );
 
@@ -52,14 +52,18 @@ test("human operation output preserves order and marks dry-run", async () => {
 });
 
 test("empty human operation lists produce no output", async () => {
-  const result = await captureOutput(() => printOperations([], { json: false, dryRun: false }));
+  const result = await captureOutput(() =>
+    printOperations([], { json: false, ok: true, dryRun: false }),
+  );
 
   expect(result).toEqual({ stdout: "", stderr: "" });
 });
 
-test("JSON operation output has no success envelope", async () => {
-  const result = await captureOutput(() => printOperations([], { json: true, dryRun: false }));
+test("JSON operation output identifies success", async () => {
+  const result = await captureOutput(() =>
+    printOperations([], { json: true, ok: true, dryRun: false }),
+  );
 
-  expect(JSON.parse(result.stdout)).toEqual({ dryRun: false, operations: [] });
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, dryRun: false, operations: [] });
   expect(result.stderr).toBe("");
 });
