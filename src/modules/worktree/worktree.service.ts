@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { HookService, type HookInput } from "../hook/hook.service";
-import type { ConfigService } from "../config/config.service";
+import type { ConfigReader } from "../config/config.service";
 import type { Execution } from "../execution";
 import { GitModule } from "../git/git.module";
 
@@ -11,7 +11,7 @@ export type Worktree = { branch: string; path: string; base: string };
 export class WorktreeService {
   constructor(
     private readonly execution: Execution,
-    private readonly config: ConfigService,
+    private readonly config: ConfigReader,
     private readonly hooks: HookService = new HookService(execution),
   ) {}
 

@@ -23,8 +23,23 @@ const get = defineCommand({
   },
 });
 
+const set = defineCommand({
+  name: "set",
+  description: "Set a global configuration leaf setting",
+  args: {
+    key: { type: "positional", required: true, description: "Configuration path to set" },
+    value: { type: "positional", required: true, description: "Value for the setting" },
+  },
+
+  async run(ctx, { config, output }) {
+    await config.set(ctx.values.key, ctx.values.value);
+
+    output.write({ data: {}, human: () => "" });
+  },
+});
+
 export default defineCommand({
   name: "config",
   description: "Manage global configuration",
-  subCommands: { get },
+  subCommands: { get, set },
 });

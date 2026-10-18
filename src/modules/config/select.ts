@@ -4,10 +4,32 @@ import { ConfigSchema, type Config } from "./schema";
 export function selectConfig(config: Config, path?: string): unknown {
   if (path === undefined) return config;
 
-  let schema: v.GenericSchema = ConfigSchema;
   let value: unknown = config;
 
-  for (const key of path.split(".")) {
+  for (const key of resolveSetting(path).keys) {
+    value = value === undefined ? undefined : (value as Record<string, unknown>)[key];
+  }
+
+  return value;
+}
+
+export function configLeafPath(path: string): string[] {
+  const { keys, schema } = resolveSetting(path);
+
+  if (schemaEntries(schema)) {
+    throw Object.assign(new Error(`Configuration key is not a leaf setting: ${path}`), {
+      code: "CONFIG_KEY_NOT_LEAF",
+    });
+  }
+
+  return keys;
+}
+
+function resolveSetting(path: string): { keys: string[]; schema: v.GenericSchema } {
+  const keys = path.split(".");
+  let schema: v.GenericSchema = ConfigSchema;
+
+  for (const key of keys) {
     const entries = schemaEntries(schema);
 
     if (!entries || !Object.hasOwn(entries, key)) {
@@ -17,10 +39,9 @@ export function selectConfig(config: Config, path?: string): unknown {
     }
 
     schema = entries[key]!;
-    value = value === undefined ? undefined : (value as Record<string, unknown>)[key];
   }
 
-  return value;
+  return { keys, schema };
 }
 
 function schemaEntries(schema: v.GenericSchema): Record<string, v.GenericSchema> | undefined {

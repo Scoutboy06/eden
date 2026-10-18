@@ -1,6 +1,6 @@
 import type { Execution } from "../execution";
 import { FilesystemService } from "../fs";
-import { createConfigService } from "../config/config.service";
+import { createConfigService, type ConfigService } from "../config/config.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { HookService } from "../hook/hook.service";
 import type { EdenExtensions } from "./options";
@@ -12,17 +12,21 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
   const output = new CommandOutput(options, execution.operations);
   let fs: FilesystemService | undefined;
   let worktree: WorktreeService | undefined;
-  let config: ReturnType<typeof createConfigService> | undefined;
+  let config: ConfigService | undefined;
 
   return {
     output,
     get config() {
-      return (config ??= createConfigService());
+      return (config ??= createConfigService(execution));
     },
     get worktree() {
       output.includeHooks(hooks.records);
 
-      return (worktree ??= new WorktreeService(execution, createConfigService(), hooks));
+      return (worktree ??= new WorktreeService(
+        execution,
+        (config ??= createConfigService(execution)),
+        hooks,
+      ));
     },
     get fs() {
       return (fs ??= new FilesystemService(execution));

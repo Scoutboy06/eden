@@ -53,6 +53,18 @@ Dot-separated keys select a subtree or a single setting. Known but unset setting
 produce empty output (`null` in JSON); unknown keys fail. Objects print as YAML,
 while individual values print directly. Reading configuration never writes files.
 
+Set individual global settings with schema validation:
+
+```sh
+bun run cli config set agent.default claude
+bun run cli config set worktree_root '~/.worktrees'
+bun run cli config set agent.default opencode --dry-run
+```
+
+Only leaf settings can be set. Existing configuration must be valid before any
+change is made. Writes preserve comments and unrelated formatting, keep supplied
+values rather than expanded paths, and create missing files and directories.
+
 ### Hooks
 
 Eden supports optional executable scripts that run before or after an action:
