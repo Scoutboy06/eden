@@ -12,9 +12,13 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
   const output = new CommandOutput(options, execution.operations);
   let fs: FilesystemService | undefined;
   let worktree: WorktreeService | undefined;
+  let config: ReturnType<typeof createConfigService> | undefined;
 
   return {
     output,
+    get config() {
+      return (config ??= createConfigService());
+    },
     get worktree() {
       output.includeHooks(hooks.records);
 

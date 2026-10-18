@@ -40,6 +40,19 @@ Override the root with an absolute path or a path starting with `~/`:
 worktree_root: ~/.worktrees
 ```
 
+Inspect effective configuration, including defaults and expanded paths:
+
+```sh
+bun run cli config get
+bun run cli config get agent
+bun run cli config get agent.default
+bun run cli config get worktree_root --json
+```
+
+Dot-separated keys select a subtree or a single setting. Known but unset settings
+produce empty output (`null` in JSON); unknown keys fail. Objects print as YAML,
+while individual values print directly. Reading configuration never writes files.
+
 ### Hooks
 
 Eden supports optional executable scripts that run before or after an action:
