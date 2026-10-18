@@ -12,18 +12,40 @@ export interface ConfigReader {
   read(): Promise<Config>;
 }
 
-export interface ConfigService extends ConfigReader {
+export interface ResolvedConfigReader extends ConfigReader {
+  readWithProvenance(): Promise<ResolvedConfig>;
+}
+
+export type ConfigSource = { type: "file"; path: string } | { type: "default" };
+export type ResolvedConfig = { config: Config; provenance: Record<string, ConfigSource> };
+
+export interface ConfigService extends ResolvedConfigReader {
   set(key: string, value: string): Promise<void>;
 }
 
-export type FileConfigOptions = { pathsLowToHigh: readonly [string] };
+export type FileConfigOptions = { pathsLowToHigh: readonly [string, ...string[]] };
+export type ConfigContext = { repositoryPath?: string };
 
-export function createConfigService(execution: Execution): ConfigService;
-export function createConfigService(): ConfigReader;
-export function createConfigService(execution?: Execution): ConfigReader {
+export function createConfigService(execution: Execution, context?: ConfigContext): ConfigService;
+export function createConfigService(
+  execution?: undefined,
+  context?: ConfigContext,
+): ResolvedConfigReader;
+export function createConfigService(
+  execution?: Execution,
+  context: ConfigContext = {},
+): ResolvedConfigReader {
   const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
 
   const options: FileConfigOptions = { pathsLowToHigh: [join(configHome, "eden", "config.yaml")] };
+
+  if (context.repositoryPath !== undefined) {
+    options.pathsLowToHigh = [
+      ...options.pathsLowToHigh,
+      join(context.repositoryPath, ".eden", "config.yaml"),
+      join(context.repositoryPath, ".eden", "config.local.yaml"),
+    ];
+  }
 
   return execution
     ? createFileConfigService({ ...options, execution })
@@ -33,18 +55,34 @@ export function createConfigService(execution?: Execution): ConfigReader {
 export function createFileConfigService(
   options: FileConfigOptions & { execution: Execution },
 ): ConfigService;
-export function createFileConfigService(options: FileConfigOptions): ConfigReader;
+export function createFileConfigService(options: FileConfigOptions): ResolvedConfigReader;
 export function createFileConfigService(
   options: FileConfigOptions & { execution?: Execution },
-): ConfigReader {
+): ResolvedConfigReader {
   const [path] = options.pathsLowToHigh;
   const { execution } = options;
 
-  const reader: ConfigReader = {
+  const reader: ResolvedConfigReader = {
     async read() {
-      const { config } = await readValidatedConfig(path);
+      const { config } = await reader.readWithProvenance();
 
       return config;
+    },
+    async readWithProvenance() {
+      const merged: Record<string, unknown> = {};
+      const provenance: Record<string, ConfigSource> = {};
+
+      for (const layerPath of options.pathsLowToHigh) {
+        const { parsed } = await readValidatedConfig(layerPath);
+
+        mergeConfigLayer(merged, parsed, provenance, layerPath);
+      }
+
+      const config = validateConfig(merged, path);
+
+      if (!provenance.worktree_root) provenance.worktree_root = { type: "default" };
+
+      return { config, provenance };
     },
   };
 
@@ -69,6 +107,27 @@ export function createFileConfigService(
   return service;
 }
 
+function mergeConfigLayer(
+  target: Record<string, unknown>,
+  layer: Record<string, unknown>,
+  provenance: Record<string, ConfigSource>,
+  path: string,
+  prefix = "",
+): void {
+  for (const [key, value] of Object.entries(layer)) {
+    const leafPath = prefix ? `${prefix}.${key}` : key;
+
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const nested = (target[key] ??= {}) as Record<string, unknown>;
+
+      mergeConfigLayer(nested, value as Record<string, unknown>, provenance, path, leafPath);
+    } else {
+      target[key] = value;
+      provenance[leafPath] = { type: "file", path };
+    }
+  }
+}
+
 async function prepareConfigUpdate(path: string, key: string, value: string): Promise<string> {
   const { text } = await readValidatedConfig(path);
   const keys = configLeafPath(key);
@@ -81,11 +140,13 @@ async function prepareConfigUpdate(path: string, key: string, value: string): Pr
 
 async function readValidatedConfig(
   path: string,
-): Promise<{ text: string | undefined; config: Config }> {
+): Promise<{ text: string | undefined; parsed: Record<string, unknown> }> {
   const text = await readConfigFile(path);
   const parsed = parseConfigYaml(text ?? "{}", path);
 
-  return { text, config: validateConfig(parsed, path) };
+  validateConfig(parsed, path);
+
+  return { text, parsed: parsed as Record<string, unknown> };
 }
 
 async function writeConfigFile(path: string, text: string): Promise<void> {

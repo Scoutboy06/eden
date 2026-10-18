@@ -53,6 +53,16 @@ Dot-separated keys select a subtree or a single setting. Known but unset setting
 produce empty output (`null` in JSON); unknown keys fail. Objects print as YAML,
 while individual values print directly. Reading configuration never writes files.
 
+The configuration service also supports explicit repository context. When a caller
+supplies a repository path, settings merge in this order (highest priority last):
+
+1. Global configuration
+2. `<repository>/.eden/config.yaml`
+3. `<repository>/.eden/config.local.yaml`
+
+Mappings merge recursively and higher-priority leaves win. Defaults apply after
+merging.
+
 Set individual global settings with schema validation:
 
 ```sh
