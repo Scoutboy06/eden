@@ -1,10 +1,15 @@
 import type { Execution } from "../execution";
+import type { ConfigReader } from "../config/config.service";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
 import type { CreateSandboxInput, SandboxProvider, SandboxProviderName } from "./provider";
 import { DockerSandboxProvider } from "./providers/docker-sbx";
 
 export class SandboxService {
+  get providerName(): SandboxProviderName {
+    return this.provider.name;
+  }
+
   constructor(
     private readonly execution: Execution,
     private readonly provider: SandboxProvider,
@@ -31,15 +36,25 @@ export class SandboxService {
   }
 }
 
-export function createSandboxService(
+export async function createSandboxService(
   execution: Execution,
-  providerName: SandboxProviderName,
+  providerName: SandboxProviderName | undefined,
+  config: ConfigReader,
   onCreateOutput?: (text: string) => void,
-): SandboxService {
-  return new SandboxService(execution, resolveSandboxProvider(providerName, onCreateOutput));
+): Promise<SandboxService> {
+  const name = providerName ?? (await config.read()).sandbox?.default_provider;
+
+  if (name === undefined) {
+    throw new SandboxError(
+      "SANDBOX_INVALID_INPUT",
+      "Choose a sandbox provider with --provider, or set a default with eden setup.",
+    );
+  }
+
+  return new SandboxService(execution, createSandboxProvider(name, onCreateOutput));
 }
 
-function resolveSandboxProvider(
+export function createSandboxProvider(
   name: SandboxProviderName,
   onCreateOutput?: (text: string) => void,
 ): SandboxProvider {

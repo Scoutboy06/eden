@@ -11,6 +11,7 @@ Requires [Bun](https://bun.sh). Sandbox creation also requires Docker's standalo
 ```sh
 bun install
 bun run cli --help
+bun run cli setup
 
 bun run cli worktree create --name fix-login
 bun run cli sbx create --provider docker-sbx --name eden-dev

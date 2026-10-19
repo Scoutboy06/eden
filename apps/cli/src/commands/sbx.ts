@@ -9,21 +9,21 @@ const create = defineCommand({
     provider: {
       type: "enum",
       choices: sandboxProviderNames,
-      required: true,
-      description: "Sandbox provider",
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
     name: { type: "string", required: true, description: "Sandbox name" },
     image: { type: "string", description: "Sandbox container image (defaults to provider choice)" },
   },
 
   async run(ctx, { sandbox, output }) {
-    await sandbox(ctx.values.provider).create({ name: ctx.values.name, image: ctx.values.image });
+    const service = await sandbox(ctx.values.provider);
+    await service.create({ name: ctx.values.name, image: ctx.values.image });
 
     output.write({
       data: {},
       human: () =>
         formatMessage(
-          `Created sandbox ${ctx.values.name} using ${ctx.values.provider}.`,
+          `Created sandbox ${ctx.values.name} using ${service.providerName}.`,
           "success",
           "stdout",
         ),

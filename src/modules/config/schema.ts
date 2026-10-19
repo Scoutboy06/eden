@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
+import { sandboxProviderNames } from "../sandbox/provider";
 
 const AGENTS = ["codex", "claude", "opencode", "omp"] as const;
 
@@ -34,6 +35,9 @@ export const ConfigSchema = v.pipe(
   v.strictObject(
     {
       agent: v.optional(agentSchema),
+      sandbox: v.optional(
+        v.strictObject({ default_provider: v.optional(v.picklist(sandboxProviderNames)) }),
+      ),
       worktree_root: v.optional(worktreeRootSchema, () => join(homedir(), ".worktrees")),
     },
     "Expected a configuration object containing only recognized settings",

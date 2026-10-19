@@ -13,6 +13,8 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@clack/core": "^1.5.1",
+    "@clack/prompts": "^1.8.1",
     "gunshi": "^0.37.3",
     "valibot": "^1.5.0",
     "yaml": "^2.9.1"

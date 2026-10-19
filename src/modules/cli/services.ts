@@ -7,6 +7,8 @@ import type { EdenExtensions } from "./options";
 import { CommandOutput } from "./output";
 import { createSandboxService, type SandboxService } from "../sandbox/sandbox.service";
 import type { SandboxProviderName } from "../sandbox/provider";
+import { findRepositoryPath } from "../config/repository";
+import { SetupService } from "../setup/setup.service";
 
 export function createCommandServices(options: EdenExtensions, execution: Execution) {
   const onStderr = options.json ? undefined : streamStderr;
@@ -18,8 +20,19 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
 
   return {
     output,
-    sandbox(providerName: SandboxProviderName): SandboxService {
-      return createSandboxService(execution, providerName, options.json ? undefined : streamStdout);
+    async sandbox(providerName?: SandboxProviderName): Promise<SandboxService> {
+      const repositoryPath =
+        providerName === undefined ? await findRepositoryPath(process.cwd()) : undefined;
+
+      return createSandboxService(
+        execution,
+        providerName,
+        createConfigService(undefined, { repositoryPath }),
+        options.json ? undefined : streamStdout,
+      );
+    },
+    get setup() {
+      return new SetupService((config ??= createConfigService(execution)));
     },
     get config() {
       return (config ??= createConfigService(execution));

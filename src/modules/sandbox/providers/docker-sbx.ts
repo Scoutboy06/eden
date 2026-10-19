@@ -1,10 +1,75 @@
 import { SandboxError } from "../errors";
 import type { CreateSandboxInput, SandboxProvider } from "../provider";
+import type { ReadinessCheck, ReadinessResult } from "../readiness";
+
+export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
+export type DockerCommandRunner = (
+  args: string[],
+  options: { signal?: AbortSignal; onOutput?: (text: string) => void; sandboxName?: string },
+) => Promise<DockerCommandResult>;
 
 export class DockerSandboxProvider implements SandboxProvider {
   readonly name = "docker-sbx";
 
-  constructor(private readonly onCreateOutput?: (text: string) => void) {}
+  constructor(
+    private readonly onCreateOutput?: (text: string) => void,
+    private readonly dependencies: { run?: DockerCommandRunner; isInstalled?: () => boolean } = {},
+  ) {}
+
+  readinessChecks(): readonly ReadinessCheck[] {
+    return [
+      {
+        id: "installation",
+        checkingLabel: "Checking installation",
+        skippedLabel: "Installation not checked",
+        dependencies: [],
+        run: async () =>
+          (this.dependencies.isInstalled ?? (() => Bun.which("sbx") !== null))()
+            ? { state: "ready", label: "Installed" }
+            : {
+                state: "missing",
+                label: "Not installed",
+                instructions: ["Install sbx and add it to PATH."],
+              },
+      },
+      {
+        id: "login",
+        checkingLabel: "Checking login",
+        skippedLabel: "Login not checked",
+        dependencies: ["installation"],
+        instructions: ["Check it separately:", "  sbx ls"],
+        run: (signal) => this.check(["ls", "--format", "json"], "Signed in", "Login", signal),
+      },
+      {
+        id: "policy",
+        checkingLabel: "Checking policy",
+        skippedLabel: "Policy not checked",
+        dependencies: ["installation"],
+        instructions: ["Check it separately:", "  sbx policy ls"],
+        run: (signal) =>
+          this.check(["policy", "ls", "--json"], "Policy configured", "Policy", signal),
+      },
+    ];
+  }
+
+  private async check(
+    args: string[],
+    readyLabel: string,
+    subject: string,
+    signal: AbortSignal,
+  ): Promise<ReadinessResult> {
+    try {
+      const result = await (this.dependencies.run ?? runDockerCommand)(args, { signal });
+
+      if (result.exitCode === 0) return { state: "ready", label: readyLabel };
+
+      throw diagnoseFailure(undefined, result.exitCode, `${result.stdout}\n${result.stderr}`);
+    } catch (error) {
+      if (signal.aborted) throw error;
+
+      return readinessFailure(error, subject);
+    }
+  }
 
   async preflight(): Promise<void> {
     await this.execute(["ls", "--format", "json"]);
@@ -28,46 +93,95 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   private async execute(args: string[], sandboxName?: string): Promise<void> {
-    let child;
+    const { exitCode, stdout, stderr } = await (this.dependencies.run ?? runDockerCommand)(args, {
+      sandboxName,
+      onOutput: sandboxName === undefined ? undefined : this.onCreateOutput,
+    });
 
-    try {
-      child = Bun.spawn(["sbx", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    } catch {
+    if (exitCode !== 0) throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`);
+  }
+}
+
+function readinessFailure(error: unknown, subject: string): ReadinessResult {
+  const code = error instanceof SandboxError ? error.code : undefined;
+
+  switch (code) {
+    case "SANDBOX_AUTH_REQUIRED":
+      return subject === "Policy"
+        ? { state: "skipped", label: "Policy not checked" }
+        : {
+            state: "missing",
+            label: "Sign-in required",
+            instructions: ["Sign in with:", "  sbx login"],
+          };
+    case "SANDBOX_NETWORK_POLICY_REQUIRED":
+      return {
+        state: "missing",
+        label: "Policy required",
+        instructions: [
+          "Choose a global network policy:",
+          "  sbx policy init <allow-all|balanced|deny-all>",
+          "This affects all local Docker Sandboxes, not just Eden.",
+        ],
+      };
+    default:
+      return {
+        state: "unknown",
+        label: `${subject} unknown`,
+        instructions: [
+          "Could not check Docker Sandboxes.",
+          error instanceof Error ? error.message : String(error),
+          "Check it separately:",
+          `  ${subject === "Login" ? "sbx ls" : "sbx policy ls"}`,
+        ],
+      };
+  }
+}
+
+async function runDockerCommand(
+  args: string[],
+  options: { signal?: AbortSignal; onOutput?: (text: string) => void; sandboxName?: string },
+): Promise<DockerCommandResult> {
+  options.signal?.throwIfAborted();
+  let child;
+
+  try {
+    child = Bun.spawn(["sbx", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  } catch {
+    throw new SandboxError(
+      "SANDBOX_PROVIDER_UNAVAILABLE",
+      "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
+    );
+  }
+
+  let cancelled = false;
+  const interrupt = () => {
+    cancelled = true;
+    child.kill(options.signal ? "SIGKILL" : "SIGINT");
+  };
+  if (options.signal) options.signal.addEventListener("abort", interrupt, { once: true });
+  else process.on("SIGINT", interrupt);
+
+  try {
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      captureOutput(child.stdout, options.onOutput),
+      new Response(child.stderr).text(),
+    ]);
+
+    if (cancelled || child.signalCode === "SIGINT") {
       throw new SandboxError(
-        "SANDBOX_PROVIDER_UNAVAILABLE",
-        "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
+        "CANCELLED",
+        options.sandboxName === undefined
+          ? "Sandbox prerequisite check cancelled."
+          : `Sandbox creation cancelled. Sandbox ${options.sandboxName} may already exist; no cleanup was attempted.`,
       );
     }
 
-    let cancelled = false;
-    const interrupt = () => {
-      cancelled = true;
-      child.kill("SIGINT");
-    };
-    process.on("SIGINT", interrupt);
-
-    try {
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        captureOutput(child.stdout, sandboxName === undefined ? undefined : this.onCreateOutput),
-        new Response(child.stderr).text(),
-      ]);
-
-      if (cancelled || child.signalCode === "SIGINT") {
-        throw new SandboxError(
-          "CANCELLED",
-          sandboxName === undefined
-            ? "Sandbox prerequisite check cancelled."
-            : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
-        );
-      }
-
-      if (exitCode === 0) return;
-
-      throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`);
-    } finally {
-      process.off("SIGINT", interrupt);
-    }
+    return { exitCode, stdout, stderr };
+  } finally {
+    if (options.signal) options.signal.removeEventListener("abort", interrupt);
+    else process.off("SIGINT", interrupt);
   }
 }
 

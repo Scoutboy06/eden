@@ -1,7 +1,8 @@
 import { homedir } from "node:os";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as v from "valibot";
+import { Document, parseDocument } from "yaml";
 import type { Execution } from "../execution";
 import { ConfigYamlEditor } from "./edit";
 import { ConfigError } from "./errors";
@@ -21,6 +22,17 @@ export type ResolvedConfig = { config: Config; provenance: Record<string, Config
 
 export interface ConfigService extends ResolvedConfigReader {
   set(key: string, value: string): Promise<void>;
+  editGlobal(): Promise<ConfigDraft>;
+}
+
+export type ConfigChanges = Readonly<Record<string, string | undefined>>;
+export type ConfigSaveResult = "saved" | "previewed" | "unchanged" | "cancelled";
+
+export interface ConfigDraft {
+  readonly path: string;
+  readonly config: Config;
+  get(key: string): string | undefined;
+  save(changes: ConfigChanges, confirmOverwrite: () => Promise<boolean>): Promise<ConfigSaveResult>;
 }
 
 export type FileConfigOptions = { pathsLowToHigh: readonly [string, ...string[]] };
@@ -90,6 +102,57 @@ export function createFileConfigService(
 
   const service: ConfigService = {
     ...reader,
+    async editGlobal() {
+      const { text, parsed } = await readValidatedConfig(path);
+
+      return {
+        path,
+        config: validateConfig(parsed, path),
+        get(key) {
+          let value: unknown = parsed;
+
+          for (const part of configLeafPath(key)) {
+            value =
+              value && typeof value === "object"
+                ? (value as Record<string, unknown>)[part]
+                : undefined;
+          }
+
+          return typeof value === "string" ? value : undefined;
+        },
+        async save(changes, confirmOverwrite) {
+          const { edited, changed } = editDraft(text, changes);
+
+          if (Object.keys(changed).length === 0) return "unchanged";
+
+          validateConfig(parseConfigYaml(edited, path), path);
+
+          if (
+            !execution.dryRun &&
+            (await readConfigFile(path)) !== text &&
+            !(await confirmOverwrite())
+          ) {
+            return "cancelled";
+          }
+
+          await execution.mutate(
+            {
+              type: "config.setup",
+              description: `Update global preferences in ${path}`,
+              input: {
+                path,
+                changes: Object.fromEntries(
+                  Object.entries(changed).map(([key, value]) => [key, value ?? null]),
+                ),
+              },
+            },
+            () => writeConfigFile(path, edited),
+          );
+
+          return execution.dryRun ? "previewed" : "saved";
+        },
+      };
+    },
     async set(key, value) {
       const edited = await prepareConfigUpdate(path, key, value);
 
@@ -105,6 +168,23 @@ export function createFileConfigService(
   };
 
   return service;
+}
+
+function editDraft(text: string | undefined, changes: ConfigChanges) {
+  const document = text === undefined ? new Document({}) : parseDocument(text);
+  const changed: Record<string, string | undefined> = {};
+
+  for (const [key, value] of Object.entries(changes)) {
+    const keys = configLeafPath(key);
+
+    if (document.getIn(keys) === value) continue;
+
+    changed[key] = value;
+    if (value === undefined) document.deleteIn(keys);
+    else document.setIn(keys, value);
+  }
+
+  return { edited: document.toString(), changed };
 }
 
 function mergeConfigLayer(
@@ -150,11 +230,38 @@ async function readValidatedConfig(
 }
 
 async function writeConfigFile(path: string, text: string): Promise<void> {
+  let temporary: string | undefined;
+
   try {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, text);
+    const destination = await realpath(path).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return path;
+
+      throw error;
+    });
+    await mkdir(dirname(destination), { recursive: true });
+    const mode = await stat(destination)
+      .then((info) => info.mode & 0o777)
+      .catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return 0o600;
+
+        throw error;
+      });
+    temporary = join(dirname(destination), `.eden-config-${crypto.randomUUID()}.tmp`);
+    const file = await open(temporary, "wx", mode);
+
+    try {
+      await file.chmod(mode);
+      await file.writeFile(text);
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+
+    await rename(temporary, destination);
   } catch {
     throw new ConfigError("CONFIG_WRITE_FAILED", path);
+  } finally {
+    if (temporary) await rm(temporary, { force: true }).catch(() => {});
   }
 }
 
