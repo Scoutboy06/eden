@@ -15,9 +15,28 @@
       devShells = nixpkgs.lib.genAttrs systems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          eden = pkgs.writeShellScriptBin "eden" ''
+            if [ -z "''${EDEN_DEV_ROOT:-}" ]; then
+              echo "eden: enter the development shell from the Eden checkout first." >&2
+              exit 1
+            fi
+
+            exec ${pkgs.bun}/bin/bun run "$EDEN_DEV_ROOT/apps/cli/src/main.ts" "$@"
+          '';
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.bun pkgs.zsh pkgs.coreutils ];
+            packages = [ eden pkgs.bun pkgs.zsh pkgs.coreutils ];
+            shellHook = ''
+              eden_root="$PWD"
+              while [ ! -f "$eden_root/apps/cli/src/main.ts" ] && [ "$eden_root" != / ]; do
+                eden_root="$(dirname "$eden_root")"
+              done
+
+              if [ -f "$eden_root/apps/cli/src/main.ts" ]; then
+                export EDEN_DEV_ROOT="$eden_root"
+              fi
+              unset eden_root
+            '';
           };
         });
     };
