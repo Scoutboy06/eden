@@ -1,101 +1,43 @@
 # Eden
 
-## Folder structure
+A CLI for streamlining development workflows with Git worktrees, sandbox creation,
+configuration, and hooks.
 
-```
-src/
-  external/     # Adapters and integrations with third-party systems
-  modules/      # Reusable Eden features, services, and their command definitions
-apps/
-  cli/          # The Eden CLI
-  web/          # (future) web control plane
-```
+## Get started
 
-## Local Development
+Requires [Bun](https://bun.sh). Sandbox creation also requires Docker's standalone
+`sbx` CLI, signed in and configured with a network policy.
 
-Read [CODE.md](CODE.md) for project coding standards.
-
-To install dependencies:
-
-```bash
+```sh
 bun install
-```
-
-To run:
-
-```bash
 bun run cli --help
-bun run cli mkdir ./example --dry-run --json
-bun run cli worktree create --name "Fix login" --dry-run --json
+
+bun run cli worktree create --name fix-login
+bun run cli sbx create --provider docker-sbx --name eden-dev
 ```
 
-### Configuration
+Use `--dry-run` to preview changes and `--json` for scripting. Sandbox previews
+also check provider readiness.
 
-Put global configuration in `$XDG_CONFIG_HOME/eden/config.yaml` (default: `~/.config/eden/config.yaml`).
+## Make it yours
 
-Configuration is optional. Worktrees default to `~/.worktrees/<repository>/<name>`.
-Override the root with an absolute path or a path starting with `~/`:
-
-```yaml
-worktree_root: ~/.worktrees
-```
-
-Inspect effective configuration, including defaults and expanded paths:
+Global settings live in `~/.config/eden/config.yaml` (or `$XDG_CONFIG_HOME/eden/config.yaml`).
 
 ```sh
-bun run cli config get
-bun run cli config get agent
-bun run cli config get agent.default
-bun run cli config get worktree_root --json
-```
-
-Dot-separated keys select a subtree or a single setting. Known but unset settings
-produce empty output (`null` in JSON); unknown keys fail. Objects print as YAML,
-while individual values print directly. Reading configuration never writes files.
-
-The configuration service also supports explicit repository context. When a caller
-supplies a repository path, settings merge in this order (highest priority last):
-
-1. Global configuration
-2. `<repository>/.eden/config.yaml`
-3. `<repository>/.eden/config.local.yaml`
-
-Mappings merge recursively and higher-priority leaves win. Defaults apply after
-merging.
-
-Set individual global settings with schema validation:
-
-```sh
-bun run cli config set agent.default claude
 bun run cli config set worktree_root '~/.worktrees'
-bun run cli config set agent.default opencode --dry-run
-```
-
-Only leaf settings can be set. Existing configuration must be valid before any
-change is made. Writes preserve comments and unrelated formatting, keep supplied
-values rather than expanded paths, and create missing files and directories.
-
-### Hooks
-
-Eden supports optional executable scripts that run before or after an action:
-
-- Pre-hooks run before an action and may modify its parameters or prevent execution.
-- Post-hooks run after an action and may inspect its result.
-
-### Completions
-
-```sh
+bun run cli config get
 bun run cli completion zsh --stdout
 ```
 
-### Checks
+Explore each command with `--help`.
 
-```bash
-bun run lint      # Oxlint
-bun run fmt       # Oxfmt
-bun run fmt:check # Check formatting
-bun run analyze   # Fallow code analysis
-bun run check     # Run lint, formatting, and code analysis
-bun run test      # Run automated tests
-bunx tsc --noEmit # Typecheck
+## Development
+
+Code lives in `src/modules/`; CLI commands live in `apps/cli/src/commands/`.
+See [CODE.md](CODE.md) for coding standards.
+
+```sh
+bun run check
+bun test
+bunx tsc --noEmit
 ```

@@ -5,6 +5,8 @@ import { WorktreeService } from "../worktree/worktree.service";
 import { HookService } from "../hook/hook.service";
 import type { EdenExtensions } from "./options";
 import { CommandOutput } from "./output";
+import { createSandboxService, type SandboxService } from "../sandbox/sandbox.service";
+import type { SandboxProviderName } from "../sandbox/provider";
 
 export function createCommandServices(options: EdenExtensions, execution: Execution) {
   const onStderr = options.json ? undefined : streamStderr;
@@ -16,6 +18,9 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
 
   return {
     output,
+    sandbox(providerName: SandboxProviderName): SandboxService {
+      return createSandboxService(execution, providerName, options.json ? undefined : streamStdout);
+    },
     get config() {
       return (config ??= createConfigService(execution));
     },
@@ -36,6 +41,10 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
 
 function streamStderr(text: string): void {
   process.stderr.write(text);
+}
+
+function streamStdout(text: string): void {
+  process.stdout.write(text);
 }
 
 export type CommandServices = ReturnType<typeof createCommandServices>;

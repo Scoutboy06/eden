@@ -2,6 +2,7 @@ import type { Operation } from "../execution";
 import type { ExecutionResult } from "../execution/types";
 import { HookFailure, type HookExecution } from "../hook/hook.service";
 import { describeError } from "./error-description";
+import { formatMessage } from "./format";
 
 type Presentation = { data: Record<string, unknown>; human: () => string | Promise<string> };
 
@@ -94,7 +95,8 @@ async function writeFailure(
     { json, destination: json ? "stdout" : "stderr" },
     {
       data: { ok: result.ok, dryRun: result.dryRun, error, ...details },
-      human: () => failureMessage(error.message, details.hooks ?? []),
+      human: () =>
+        formatMessage(failureMessage(error.message, details.hooks ?? []), "error", "stderr"),
     },
   );
 }
