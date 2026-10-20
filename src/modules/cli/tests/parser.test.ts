@@ -40,6 +40,34 @@ test("routes positional input to the command", async () => {
   expect(result).toEqual({ exitCode: 0, stdout: "hello\n", stderr: "" });
 });
 
+test("does not validate rest arguments after -- as options", async () => {
+  const result = await runFixture("echo", "hello", "--json", "--", "--dryrun", "--bogus");
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, value: "hello", dryRun: false });
+});
+
+test.each(["--bogus", "--dryrun"])(
+  "rejects unknown option %s before executing a mutation",
+  async (option) => {
+    await withTemporaryDirectory(async (directory) => {
+      const path = join(directory, "not-created");
+
+      const result = await runCli("mkdir", path, option, "--json");
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        dryRun: false,
+        error: { code: "err:arg:unknown-option" },
+      });
+      await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  },
+);
+
 test.each([
   ["before", ["--json", "echo", "hello"]],
   ["after", ["echo", "hello", "--json"]],

@@ -14,6 +14,7 @@ export async function runCli(commands: CliSubCommands, argv = process.argv.slice
     cli(argv, entry, {
       name: "eden",
       version: "0.1.0",
+      strict: true,
       renderHeader: null,
       renderValidationErrors: captureValidationError,
       subCommands: commands,
