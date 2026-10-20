@@ -44,11 +44,7 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
     get worktree() {
       output.includeHooks(hooks.records);
 
-      return (worktree ??= new WorktreeService(
-        execution,
-        (config ??= createConfigService(execution)),
-        hooks,
-      ));
+      return (worktree ??= new WorktreeService(execution, { read: readConfig }, hooks));
     },
     get fs() {
       return (fs ??= new FilesystemService(execution));
