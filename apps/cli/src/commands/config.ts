@@ -8,8 +8,8 @@ const get = defineCommand({
     key: { type: "positional", required: false, description: "Configuration path to read" },
   },
 
-  async run(ctx, { config, output }) {
-    const value = selectConfig(await config.read(), ctx.values.key);
+  async run(ctx, { readConfig, output }) {
+    const value = selectConfig(await readConfig(), ctx.values.key);
 
     output.write({
       data: { value: value ?? null },
@@ -40,6 +40,6 @@ const set = defineCommand({
 
 export default defineCommand({
   name: "config",
-  description: "Manage global configuration",
+  description: "Read effective configuration and manage global settings",
   subCommands: { get, set },
 });

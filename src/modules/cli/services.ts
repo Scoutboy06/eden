@@ -18,16 +18,20 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
   let worktree: WorktreeService | undefined;
   let config: ConfigService | undefined;
 
+  const readConfig = async () => {
+    const repositoryPath = await findRepositoryPath(process.cwd());
+
+    return createConfigService(undefined, { repositoryPath }).read();
+  };
+
   return {
     output,
+    readConfig,
     async sandbox(providerName?: SandboxProviderName): Promise<SandboxService> {
-      const repositoryPath =
-        providerName === undefined ? await findRepositoryPath(process.cwd()) : undefined;
-
       return createSandboxService(
         execution,
         providerName,
-        createConfigService(undefined, { repositoryPath }),
+        { read: readConfig },
         options.json ? undefined : streamStdout,
       );
     },
