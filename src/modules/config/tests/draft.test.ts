@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmod, lstat, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readlink, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createExecution } from "../../execution";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
@@ -200,6 +200,42 @@ test("atomic writes preserve an existing symlink and file permissions", async ()
     expect((await readdir(directory)).sort()).toEqual(["config.yaml", "managed.yaml"]);
   });
 });
+
+for (const absolute of [false, true]) {
+  for (const dryRun of [false, true]) {
+    test.each(["set", "setup"] as const)(
+      `dangling symlinks stay intact for %s with absolute=${absolute}, dryRun=${dryRun}`,
+      async (method) => {
+        await withTemporaryDirectory(async (directory) => {
+          const path = join(directory, "config.yaml");
+          const target = join(directory, "missing.yaml");
+          const link = absolute ? target : "missing.yaml";
+          await symlink(link, path);
+          const execution = createExecution({ dryRun });
+          const service = createFileConfigService({ pathsLowToHigh: [path], execution });
+
+          const write =
+            method === "set"
+              ? service.set("worktree_root", "~/.new")
+              : (await service.editGlobal()).save({ worktree_root: "~/.new" }, async () => {
+                  throw new Error("Unexpected conflict prompt");
+                });
+
+          if (dryRun) {
+            expect(await write).toBe(method === "set" ? undefined : "previewed");
+          } else {
+            await expect(write).rejects.toMatchObject({ code: "CONFIG_WRITE_FAILED", path });
+          }
+          expect((await lstat(path)).isSymbolicLink()).toBe(true);
+          expect(await readlink(path)).toBe(link);
+          await expect(lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+          expect(await readdir(directory)).toEqual(["config.yaml"]);
+          expect(execution.operations).toHaveLength(1);
+        });
+      },
+    );
+  }
+}
 
 test.each(["agent: [", "sandbox: { default_provider: unknown }", "unexpected: true", ""])(
   "invalid config fails before editing: %j",

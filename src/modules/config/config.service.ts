@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as v from "valibot";
 import { Document, parseDocument } from "yaml";
@@ -233,10 +233,18 @@ async function writeConfigFile(path: string, text: string): Promise<void> {
   let temporary: string | undefined;
 
   try {
-    const destination = await realpath(path).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return path;
+    const destination = await realpath(path).catch(async (error: unknown) => {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 
-      throw error;
+      const entry = await lstat(path).catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+
+        throw error;
+      });
+
+      if (entry?.isSymbolicLink()) throw error;
+
+      return path;
     });
     await mkdir(dirname(destination), { recursive: true });
     const mode = await stat(destination)
