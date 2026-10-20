@@ -101,6 +101,24 @@ test("delivers stderr while the process is running and also captures it", async 
   expect(chunks.join("")).toBe(result.stderr);
 });
 
+test("delivers stdout while the process is running and also captures it", async () => {
+  const controller = new AbortController();
+  const chunks: string[] = [];
+
+  const result = await ScriptRunner.run(fixture("wait"), null, {
+    signal: controller.signal,
+    timeoutMs: 3000,
+    killGraceMs: 10,
+    onStdout(text) {
+      chunks.push(text);
+      controller.abort();
+    },
+  });
+
+  expect(result).toMatchObject({ outcome: "cancelled", stdout: "ready\n" });
+  expect(chunks.join("")).toBe(result.stdout);
+});
+
 test("does not fall back to a shell for an executable without a shebang", async () => {
   await expect(ScriptRunner.run(fixture("no-shebang"))).rejects.toThrow();
 });

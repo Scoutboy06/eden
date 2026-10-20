@@ -1,3 +1,5 @@
+import { constants } from "node:os";
+import { ScriptRunner, type RunResult } from "../../script";
 import { SandboxError } from "../errors";
 import type { CreateSandboxInput, SandboxProvider } from "../provider";
 import type { ReadinessCheck, ReadinessResult } from "../readiness";
@@ -143,66 +145,50 @@ async function runDockerCommand(
   options: { signal?: AbortSignal; onOutput?: (text: string) => void; sandboxName?: string },
 ): Promise<DockerCommandResult> {
   options.signal?.throwIfAborted();
-  let child;
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  if (!options.signal) process.on("SIGINT", interrupt);
 
   try {
-    child = Bun.spawn(["sbx", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  } catch {
-    throw new SandboxError(
-      "SANDBOX_PROVIDER_UNAVAILABLE",
-      "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
-    );
-  }
-
-  let cancelled = false;
-  const interrupt = () => {
-    cancelled = true;
-    child.kill(options.signal ? "SIGKILL" : "SIGINT");
-  };
-  if (options.signal) options.signal.addEventListener("abort", interrupt, { once: true });
-  else process.on("SIGINT", interrupt);
-
-  try {
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      captureOutput(child.stdout, options.onOutput),
-      new Response(child.stderr).text(),
-    ]);
-
-    if (cancelled || child.signalCode === "SIGINT") {
+    const result = await ScriptRunner.run("sbx", null, {
+      args,
+      signal: options.signal ?? controller.signal,
+      killSignal: options.signal ? "SIGKILL" : "SIGINT",
+      onStdout: options.onOutput,
+    }).catch(() => {
       throw new SandboxError(
-        "CANCELLED",
-        options.sandboxName === undefined
-          ? "Sandbox prerequisite check cancelled."
-          : `Sandbox creation cancelled. Sandbox ${options.sandboxName} may already exist; no cleanup was attempted.`,
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
       );
-    }
+    });
 
-    return { exitCode, stdout, stderr };
+    return dockerCommandResult(result, options.sandboxName);
   } finally {
-    if (options.signal) options.signal.removeEventListener("abort", interrupt);
-    else process.off("SIGINT", interrupt);
+    if (!options.signal) process.off("SIGINT", interrupt);
   }
 }
 
-async function captureOutput(
-  stream: ReadableStream<Uint8Array>,
-  onOutput?: (text: string) => void,
-): Promise<string> {
-  const decoder = new TextDecoder();
-  let output = "";
-
-  for await (const chunk of stream) {
-    const text = decoder.decode(chunk, { stream: true });
-    output += text;
-    onOutput?.(text);
+function dockerCommandResult(result: RunResult, sandboxName?: string): DockerCommandResult {
+  switch (result.outcome) {
+    case "exited":
+      return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+    case "signaled":
+      if (result.signal !== "SIGINT") {
+        return {
+          exitCode: 128 + constants.signals[result.signal as NodeJS.Signals],
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      }
+      break;
   }
 
-  const remaining = decoder.decode();
-  output += remaining;
-  if (remaining) onOutput?.(remaining);
-
-  return output;
+  throw new SandboxError(
+    "CANCELLED",
+    sandboxName === undefined
+      ? "Sandbox prerequisite check cancelled."
+      : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
+  );
 }
 
 function diagnoseFailure(

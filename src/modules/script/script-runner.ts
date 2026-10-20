@@ -4,7 +4,9 @@ export type RunOptions = {
   env?: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
+  killSignal?: "SIGTERM" | "SIGINT" | "SIGKILL";
   killGraceMs?: number;
+  onStdout?: (text: string) => void;
   onStderr?: (text: string) => void;
 };
 
@@ -21,7 +23,17 @@ export class ScriptRunner {
     input?: string | null,
     options?: RunOptions | null,
   ): Promise<RunResult> {
-    const { args = [], cwd, env, timeoutMs, signal, killGraceMs = 1000, onStderr } = options ?? {};
+    const {
+      args = [],
+      cwd,
+      env,
+      timeoutMs,
+      signal,
+      killSignal = "SIGTERM",
+      killGraceMs = 1000,
+      onStdout,
+      onStderr,
+    } = options ?? {};
 
     if (signal?.aborted) return { outcome: "cancelled", stdout: "", stderr: "" };
 
@@ -39,7 +51,7 @@ export class ScriptRunner {
       if (outcome) return;
 
       outcome = reason;
-      termination = terminateGroup(child.pid, killGraceMs);
+      termination = terminateGroup(child.pid, killSignal, killGraceMs);
     };
     const cancel = () => terminate("cancelled");
     const timeout =
@@ -50,8 +62,8 @@ export class ScriptRunner {
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited,
-        new Response(child.stdout).text(),
-        captureStderr(child.stderr, onStderr),
+        captureOutput(child.stdout, onStdout),
+        captureOutput(child.stderr, onStderr),
       ]);
 
       if (termination) await termination;
@@ -68,7 +80,7 @@ export class ScriptRunner {
   }
 }
 
-async function captureStderr(stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) {
+async function captureOutput(stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) {
   let output = "";
   const decoder = new TextDecoder();
 
@@ -84,8 +96,14 @@ async function captureStderr(stream: ReadableStream<Uint8Array>, onText?: (text:
   return output + tail;
 }
 
-async function terminateGroup(pid: number, graceMs: number): Promise<void> {
-  signalGroup(pid, "SIGTERM");
+async function terminateGroup(
+  pid: number,
+  signal: NonNullable<RunOptions["killSignal"]>,
+  graceMs: number,
+): Promise<void> {
+  signalGroup(pid, signal);
+  if (signal === "SIGKILL") return;
+
   await Bun.sleep(graceMs);
   signalGroup(pid, "SIGKILL");
 }
