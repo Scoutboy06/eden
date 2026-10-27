@@ -3,6 +3,37 @@ import { DockerSandboxProvider, type DockerCommandRunner } from "../providers/do
 
 const success = { exitCode: 0, stdout: "[]", stderr: "" };
 
+test("stop passes a literal sandbox name without streaming provider output", async () => {
+  const commands: string[][] = [];
+  const output: string[] = [];
+  const provider = new DockerSandboxProvider((text) => output.push(text), {
+    run: async (args, options) => {
+      commands.push(args);
+      options.onOutput?.("provider output");
+      return success;
+    },
+  });
+
+  await provider.stop("--all; not-a-command");
+
+  expect(commands).toEqual([["stop", "--", "--all; not-a-command"]]);
+  expect(output).toEqual([]);
+});
+
+test.each([
+  ["not signed in to Docker", "SANDBOX_AUTH_REQUIRED"],
+  ["unexpected stop failure", "SANDBOX_STOP_FAILED"],
+])("stop classifies provider failure: %s", async (diagnostic, code) => {
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async () => ({ exitCode: 7, stdout: "", stderr: diagnostic }),
+  });
+
+  await expect(provider.stop("example")).rejects.toMatchObject({ code });
+  if (code === "SANDBOX_STOP_FAILED") {
+    await expect(provider.stop("example")).rejects.toThrow(diagnostic);
+  }
+});
+
 test("provider construction runs no checks", () => {
   let calls = 0;
 

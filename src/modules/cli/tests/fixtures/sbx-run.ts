@@ -47,6 +47,19 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--format", "json"])) {
   }
 
   process.stdout.write("created\n");
+} else if (JSON.stringify(args) === JSON.stringify(["stop", "--", name])) {
+  if (process.env.EDEN_SBX_STOP_FAILURE) {
+    process.stderr.write(process.env.EDEN_SBX_STOP_FAILURE);
+    process.exit(7);
+  }
+
+  if (mode === "interrupt") {
+    process.on("SIGINT", () => process.exit(130));
+    await Bun.write(process.env.EDEN_SBX_RUN_READY!, String(process.pid));
+    setInterval(() => {}, 1000);
+  } else {
+    process.stdout.write("stopped\n");
+  }
 } else if (JSON.stringify(args) === JSON.stringify(["run", "--name", name])) {
   if (mode === "interrupt" || mode === "ignore" || mode === "terminal") {
     if (mode === "terminal") process.stdin.setRawMode(true);

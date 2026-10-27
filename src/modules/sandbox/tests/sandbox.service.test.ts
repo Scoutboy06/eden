@@ -8,6 +8,44 @@ import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directo
 import { createSandboxService, SandboxService } from "../sandbox.service";
 import type { SandboxProvider } from "../provider";
 
+test.each([
+  ["running", false, true],
+  ["stopped", false, false],
+  ["running", true, false],
+  ["stopped", true, false],
+] as const)("stop handles status=%s, dryRun=%s", async (status, dryRun, shouldStop) => {
+  const execution = createExecution({ dryRun });
+  const calls: string[] = [];
+  const provider: SandboxProvider = {
+    name: "docker-sbx",
+    readinessChecks: () => [],
+    preflight: async () => {
+      throw new Error("Stop must not check creation prerequisites");
+    },
+    list: async () => [{ provider: "docker-sbx", name: "example", status }],
+    run: async () => {
+      throw new Error("Stop must not attach");
+    },
+    create: async () => {
+      throw new Error("Stop must not create");
+    },
+    stop: async (name) => {
+      calls.push(name);
+    },
+  };
+
+  await new SandboxService(execution, provider).stop("example");
+
+  expect(calls).toEqual(shouldStop ? ["example"] : []);
+  expect(execution.operations).toEqual([
+    {
+      type: "sandbox.stop",
+      description: "Stop sandbox example using docker-sbx",
+      input: { provider: "docker-sbx", name: "example" },
+    },
+  ]);
+});
+
 test("dry-run checks prerequisites but never calls creation", async () => {
   const execution = createExecution({ dryRun: true });
   const calls: string[] = [];
@@ -19,6 +57,7 @@ test("dry-run checks prerequisites but never calls creation", async () => {
     },
     list: async () => [],
     run: async () => 0,
+    stop: async () => {},
     create: async () => {
       calls.push("create");
     },

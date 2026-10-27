@@ -8,7 +8,12 @@ import type { ReadinessCheck, ReadinessResult } from "../readiness";
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
 export type DockerCommandRunner = (
   args: string[],
-  options: { signal?: AbortSignal; onOutput?: (text: string) => void; sandboxName?: string },
+  options: {
+    signal?: AbortSignal;
+    onOutput?: (text: string) => void;
+    sandboxName?: string;
+    operation?: "create" | "stop";
+  },
 ) => Promise<DockerCommandResult>;
 
 export class DockerSandboxProvider implements SandboxProvider {
@@ -124,6 +129,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     return (this.dependencies.attach ?? attachDockerSandbox)(name);
   }
 
+  async stop(name: string): Promise<void> {
+    await this.execute(["stop", "--", name], name, "stop");
+  }
+
   async create(input: CreateSandboxInput): Promise<void> {
     await this.execute(
       [
@@ -140,13 +149,20 @@ export class DockerSandboxProvider implements SandboxProvider {
     );
   }
 
-  private async execute(args: string[], sandboxName?: string): Promise<void> {
+  private async execute(
+    args: string[],
+    sandboxName?: string,
+    operation: "create" | "stop" = "create",
+  ): Promise<void> {
     const { exitCode, stdout, stderr } = await (this.dependencies.run ?? runDockerCommand)(args, {
       sandboxName,
-      onOutput: sandboxName === undefined ? undefined : this.onCreateOutput,
+      operation,
+      onOutput:
+        sandboxName === undefined || operation !== "create" ? undefined : this.onCreateOutput,
     });
 
-    if (exitCode !== 0) throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`);
+    if (exitCode !== 0)
+      throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`, operation);
   }
 }
 
@@ -195,7 +211,7 @@ function readinessFailure(error: unknown, subject: string): ReadinessResult {
 
 async function runDockerCommand(
   args: string[],
-  options: { signal?: AbortSignal; onOutput?: (text: string) => void; sandboxName?: string },
+  options: Parameters<DockerCommandRunner>[1],
 ): Promise<DockerCommandResult> {
   options.signal?.throwIfAborted();
   const controller = new AbortController();
@@ -215,13 +231,17 @@ async function runDockerCommand(
       );
     });
 
-    return dockerCommandResult(result, options.sandboxName);
+    return dockerCommandResult(result, options.sandboxName, options.operation);
   } finally {
     if (!options.signal) process.off("SIGINT", interrupt);
   }
 }
 
-function dockerCommandResult(result: RunResult, sandboxName?: string): DockerCommandResult {
+function dockerCommandResult(
+  result: RunResult,
+  sandboxName?: string,
+  operation: "create" | "stop" = "create",
+): DockerCommandResult {
   switch (result.outcome) {
     case "exited":
       return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
@@ -240,7 +260,9 @@ function dockerCommandResult(result: RunResult, sandboxName?: string): DockerCom
     "CANCELLED",
     sandboxName === undefined
       ? "Sandbox prerequisite check cancelled."
-      : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
+      : operation === "stop"
+        ? `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`
+        : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
   );
 }
 
@@ -248,6 +270,7 @@ function diagnoseFailure(
   name: string | undefined,
   exitCode: number,
   diagnostics: string,
+  operation: "create" | "stop" = "create",
 ): SandboxError {
   if (/\bnot signed in to Docker\b/i.test(diagnostics)) {
     return new SandboxError(
@@ -277,6 +300,13 @@ function diagnoseFailure(
     return new SandboxError(
       "SANDBOX_PREFLIGHT_FAILED",
       `Could not check Docker Sandboxes prerequisites (exit ${exitCode}).${providerDetails}`,
+    );
+  }
+
+  if (operation === "stop") {
+    return new SandboxError(
+      "SANDBOX_STOP_FAILED",
+      `Docker Sandboxes could not stop sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
     );
   }
 

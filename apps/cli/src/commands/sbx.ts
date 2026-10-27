@@ -68,6 +68,34 @@ const run = defineCommand({
   },
 });
 
+const stop = defineCommand({
+  name: "stop",
+  description: "Stop a named sandbox without removing it or its data",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: { type: "string", required: true, description: "Sandbox name" },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const service = await sandbox(ctx.values.provider);
+    await service.stop(ctx.values.name);
+
+    output.write({
+      data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
+      human: () =>
+        formatMessage(
+          `Sandbox ${ctx.values.name} is stopped using ${service.providerName}. Its data is preserved.`,
+          "success",
+          "stdout",
+        ),
+    });
+  },
+});
+
 const list = defineCommand({
   name: "list",
   description: "List sandboxes for a provider",
@@ -93,7 +121,7 @@ const list = defineCommand({
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, list },
+  subCommands: { create, run, list, stop },
 });
 
 function quoteShellArgument(value: string): string {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { isRunning, waitForExit, waitForPid } from "../../script/tests/support/process";
 
-for (const operation of ["create", "readiness"] as const) {
+for (const operation of ["create", "stop", "readiness"] as const) {
   test.each(["ignore", "descendant"])(
     `${operation} cancellation terminates an uncooperative %s process group`,
     async (mode) => {
@@ -17,7 +17,7 @@ for (const operation of ["create", "readiness"] as const) {
         try {
           pid = await waitForPid(ready);
 
-          child.kill(operation === "create" ? "SIGINT" : "SIGUSR1");
+          child.kill(operation === "readiness" ? "SIGUSR1" : "SIGINT");
           const response = await result;
           await waitForExit(pid);
 
@@ -31,6 +31,11 @@ for (const operation of ["create", "readiness"] as const) {
           if (operation === "create") {
             expect(JSON.parse(response.stdout).error.message).toContain(
               "Sandbox test may already exist; no cleanup was attempted.",
+            );
+          }
+          if (operation === "stop") {
+            expect(JSON.parse(response.stdout).error.message).toContain(
+              "It may already be stopped; no removal or cleanup was attempted.",
             );
           }
           expect(await isRunning(pid)).toBe(false);

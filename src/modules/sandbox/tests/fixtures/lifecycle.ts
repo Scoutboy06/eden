@@ -13,6 +13,7 @@ if (readiness) process.on("SIGUSR1", abort);
 
 try {
   if (readiness) await provider.readinessChecks()[1]!.run(controller.signal);
+  else if (process.argv[2] === "stop") await provider.stop("test");
   else await provider.create({ name: "test" });
 } catch (cause) {
   error = {

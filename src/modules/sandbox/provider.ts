@@ -21,5 +21,6 @@ export interface SandboxProvider {
   create(input: CreateSandboxInput): Promise<void>;
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
+  stop(name: string): Promise<void>;
 }
 import type { ReadinessCheck } from "./readiness";

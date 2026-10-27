@@ -17,6 +17,7 @@ bun run cli worktree create --name fix-login
 bun run cli sbx create --provider docker-sbx --name eden-dev
 bun run cli sbx run --provider docker-sbx --name eden-dev
 bun run cli sbx list --provider docker-sbx
+bun run cli sbx stop --provider docker-sbx --name eden-dev
 ```
 
 Use `--dry-run` to preview changes and `--json` for scripting. Sandbox previews
@@ -25,6 +26,11 @@ starts it if stopped, and attaches. Use `--image` only when creating a new sandb
 omitting it uses the provider default. An existing sandbox rejects `--image`
 because its image cannot be verified. Interactive attachment does not support
 `--json`; use `--dry-run --json` to preview it.
+
+`sbx stop --name <name>` stops an existing sandbox without removing it or its
+data. Already-stopped sandboxes succeed without another stop request; missing
+sandboxes fail. Use `sbx run` to restart and attach later. Stop previews list
+sandboxes but never send a stop request.
 
 ## Make it yours
 

@@ -25,6 +25,29 @@ export class SandboxService {
     return this.provider.list();
   }
 
+  async stop(name: string): Promise<void> {
+    validateSandboxInput(name);
+    const sandbox = (await this.provider.list()).find((sandbox) => sandbox.name === name);
+
+    if (!sandbox) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} was not found using ${this.provider.name}.`,
+      );
+    }
+
+    await this.execution.mutate(
+      {
+        type: "sandbox.stop",
+        description: `Stop sandbox ${name} using ${this.provider.name}`,
+        input: { provider: this.provider.name, name },
+      },
+      async () => {
+        if (sandbox.status !== "stopped") await this.provider.stop(name);
+      },
+    );
+  }
+
   async run(input: RunSandboxInput): Promise<number> {
     validateSandboxInput(input.name, input.image);
     const { name, image } = input;
