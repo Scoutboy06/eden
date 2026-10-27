@@ -15,7 +15,11 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   constructor(
     private readonly onCreateOutput?: (text: string) => void,
-    private readonly dependencies: { run?: DockerCommandRunner; isInstalled?: () => boolean } = {},
+    private readonly dependencies: {
+      run?: DockerCommandRunner;
+      attach?: (name: string) => Promise<number>;
+      isInstalled?: () => boolean;
+    } = {},
   ) {}
 
   readinessChecks(): readonly ReadinessCheck[] {
@@ -76,6 +80,51 @@ export class DockerSandboxProvider implements SandboxProvider {
   async preflight(): Promise<void> {
     await this.execute(["ls", "--format", "json"]);
     await this.execute(["policy", "ls", "--json"]);
+  }
+
+  async requireExisting(name: string): Promise<void> {
+    const result = await (this.dependencies.run ?? runDockerCommand)(
+      ["ls", "--format", "json"],
+      {},
+    );
+
+    if (result.exitCode !== 0) {
+      throw diagnoseFailure(undefined, result.exitCode, `${result.stdout}\n${result.stderr}`);
+    }
+
+    let sandboxes: unknown;
+
+    try {
+      sandboxes = JSON.parse(result.stdout);
+    } catch {
+      throw new SandboxError(
+        "SANDBOX_LOOKUP_FAILED",
+        "Docker Sandboxes returned invalid sandbox listing JSON.",
+      );
+    }
+
+    if (
+      !Array.isArray(sandboxes) ||
+      !sandboxes.every(
+        (entry) => entry !== null && typeof entry === "object" && typeof entry.name === "string",
+      )
+    ) {
+      throw new SandboxError(
+        "SANDBOX_LOOKUP_FAILED",
+        "Docker Sandboxes returned an invalid sandbox listing.",
+      );
+    }
+
+    if (!sandboxes.some((entry) => entry.name === name)) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} does not exist. Create it with eden sbx create first.`,
+      );
+    }
+  }
+
+  run(name: string): Promise<number> {
+    return (this.dependencies.attach ?? attachDockerSandbox)(name);
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
@@ -231,4 +280,65 @@ function diagnoseFailure(
     "SANDBOX_CREATE_FAILED",
     `Docker Sandboxes could not create sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
   );
+}
+
+async function attachDockerSandbox(name: string): Promise<number> {
+  const terminalState = process.stdin.isTTY
+    ? Bun.spawnSync(["stty", "-g"], { stdin: "inherit", stdout: "pipe", stderr: "pipe" })
+    : undefined;
+
+  if (terminalState && terminalState.exitCode !== 0) {
+    throw new SandboxError(
+      "SANDBOX_INVALID_INPUT",
+      "Could not save terminal settings before attaching.",
+    );
+  }
+
+  let child: ReturnType<typeof Bun.spawn>;
+
+  try {
+    child = Bun.spawn(["sbx", "run", "--name", name], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+  } catch {
+    throw new SandboxError(
+      "SANDBOX_PROVIDER_UNAVAILABLE",
+      "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
+    );
+  }
+
+  let cancellationExitCode: number | undefined;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = (signal: "SIGINT" | "SIGTERM") => {
+    if (cancellationExitCode !== undefined) return;
+
+    cancellationExitCode = 128 + constants.signals[signal];
+    child.kill(signal);
+    killTimer = setTimeout(() => child.kill("SIGKILL"), 1000);
+    killTimer.unref();
+  };
+  const interrupt = () => cancel("SIGINT");
+  const terminate = () => cancel("SIGTERM");
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", terminate);
+
+  try {
+    const exitCode = await child.exited;
+
+    return cancellationExitCode ?? exitCode;
+  } finally {
+    clearTimeout(killTimer);
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", terminate);
+
+    if (terminalState) {
+      Bun.spawnSync(["stty", terminalState.stdout.toString().trim()], {
+        stdin: "inherit",
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+    }
+  }
 }

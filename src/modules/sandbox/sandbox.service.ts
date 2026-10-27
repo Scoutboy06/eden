@@ -15,6 +15,28 @@ export class SandboxService {
     private readonly provider: SandboxProvider,
   ) {}
 
+  async run(name: string): Promise<number> {
+    if (!name.trim()) {
+      throw new SandboxError("SANDBOX_INVALID_INPUT", "Sandbox name must not be empty.");
+    }
+
+    await this.provider.requireExisting(name);
+    let exitCode = 0;
+
+    await this.execution.mutate(
+      {
+        type: "sandbox.run",
+        description: `Attach to sandbox ${name} using ${this.provider.name}`,
+        input: { provider: this.provider.name, name },
+      },
+      async () => {
+        exitCode = await this.provider.run(name);
+      },
+    );
+
+    return exitCode;
+  }
+
   async create(input: CreateSandboxInput): Promise<void> {
     if (!input.name.trim() || (input.image !== undefined && !input.image.trim())) {
       throw new SandboxError(

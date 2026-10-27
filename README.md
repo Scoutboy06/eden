@@ -15,10 +15,13 @@ bun run cli setup
 
 bun run cli worktree create --name fix-login
 bun run cli sbx create --provider docker-sbx --name eden-dev
+bun run cli sbx run --provider docker-sbx --name eden-dev
 ```
 
 Use `--dry-run` to preview changes and `--json` for scripting. Sandbox previews
-also check provider readiness.
+also check provider readiness. `sbx run` attaches to an existing sandbox and starts
+it if stopped; it does not create missing sandboxes. Interactive attachment does
+not support `--json`; use `--dry-run --json` to preview it.
 
 ## Make it yours
 

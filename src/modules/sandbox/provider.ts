@@ -13,5 +13,7 @@ export interface SandboxProvider {
   readinessChecks(): readonly ReadinessCheck[];
 
   create(input: CreateSandboxInput): Promise<void>;
+  requireExisting(name: string): Promise<void>;
+  run(name: string): Promise<number>;
 }
 import type { ReadinessCheck } from "./readiness";

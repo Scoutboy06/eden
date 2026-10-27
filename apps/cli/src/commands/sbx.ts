@@ -1,5 +1,6 @@
 import { defineCommand } from "../../../../src/modules/cli";
 import { sandboxProviderNames } from "../../../../src/modules/sandbox/provider";
+import { SandboxError } from "../../../../src/modules/sandbox/errors";
 import { formatMessage } from "../../../../src/modules/cli/format";
 
 const create = defineCommand({
@@ -23,7 +24,7 @@ const create = defineCommand({
       data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
       human: () =>
         formatMessage(
-          `Created sandbox ${ctx.values.name} using ${service.providerName}.\n\nAttach with Docker Sandboxes:\n  sbx run --name ${quoteShellArgument(ctx.values.name)}`,
+          `Created sandbox ${ctx.values.name} using ${service.providerName}.\n\nAttach with Eden:\n  eden sbx run --provider ${service.providerName} --name ${quoteShellArgument(ctx.values.name)}`,
           "success",
           "stdout",
         ),
@@ -31,10 +32,42 @@ const create = defineCommand({
   },
 });
 
+const run = defineCommand({
+  name: "run",
+  description: "Attach to an existing sandbox, starting it if stopped",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: { type: "string", required: true, description: "Existing sandbox name" },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const { json, dryRun } = ctx.extensions.eden;
+
+    if (json && !dryRun) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "Interactive sandbox attachment does not support --json. Use --dry-run --json to preview it.",
+      );
+    }
+
+    const service = await sandbox(ctx.values.provider);
+    const exitCode = await service.run(ctx.values.name);
+
+    if (!dryRun) {
+      process.exitCode = exitCode;
+      output.raw("");
+    }
+  },
+});
+
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create },
+  subCommands: { create, run },
 });
 
 function quoteShellArgument(value: string): string {
