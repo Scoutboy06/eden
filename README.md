@@ -20,9 +20,11 @@ bun run cli sbx list --provider docker-sbx
 ```
 
 Use `--dry-run` to preview changes and `--json` for scripting. Sandbox previews
-also check provider readiness. `sbx run` attaches to an existing sandbox and starts
-it if stopped; it does not create missing sandboxes. Interactive attachment does
-not support `--json`; use `--dry-run --json` to preview it.
+also check provider readiness. `sbx run` creates the named sandbox if absent,
+starts it if stopped, and attaches. Use `--image` only when creating a new sandbox;
+omitting it uses the provider default. An existing sandbox rejects `--image`
+because its image cannot be verified. Interactive attachment does not support
+`--json`; use `--dry-run --json` to preview it.
 
 ## Make it yours
 

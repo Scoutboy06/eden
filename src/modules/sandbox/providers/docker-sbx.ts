@@ -1,4 +1,5 @@
 import { constants } from "node:os";
+import * as v from "valibot";
 import { ScriptRunner, type RunResult } from "../../script";
 import { SandboxError } from "../errors";
 import type { CreateSandboxInput, SandboxProvider, SandboxSummary } from "../provider";
@@ -103,23 +104,16 @@ export class DockerSandboxProvider implements SandboxProvider {
       );
     }
 
-    if (
-      !Array.isArray(sandboxes) ||
-      !sandboxes.every(
-        (entry) =>
-          entry !== null &&
-          typeof entry === "object" &&
-          typeof entry.name === "string" &&
-          typeof entry.status === "string",
-      )
-    ) {
+    const parsed = v.safeParse(DockerSandboxListSchema, sandboxes);
+
+    if (!parsed.success) {
       throw new SandboxError(
         "SANDBOX_LOOKUP_FAILED",
         "Docker Sandboxes returned an invalid sandbox listing.",
       );
     }
 
-    return sandboxes.map((entry) => ({
+    return parsed.output.map((entry) => ({
       provider: this.name,
       name: entry.name,
       status: entry.status,
@@ -155,6 +149,13 @@ export class DockerSandboxProvider implements SandboxProvider {
     if (exitCode !== 0) throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`);
   }
 }
+
+const DockerSandboxListSchema = v.array(
+  v.object({
+    name: v.string(),
+    status: v.string(),
+  }),
+);
 
 function readinessFailure(error: unknown, subject: string): ReadinessResult {
   const code = error instanceof SandboxError ? error.code : undefined;

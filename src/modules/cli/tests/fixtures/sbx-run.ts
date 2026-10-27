@@ -22,6 +22,31 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--format", "json"])) {
         ? "invalid json"
         : JSON.stringify(mode === "missing" ? [] : [{ name, status: mode ?? "running" }])),
   );
+} else if (JSON.stringify(args) === JSON.stringify(["policy", "ls", "--json"])) {
+  if (process.env.EDEN_SBX_POLICY_FAILURE) {
+    process.stderr.write(process.env.EDEN_SBX_POLICY_FAILURE);
+    process.exit(1);
+  }
+
+  process.stdout.write("[]");
+} else if (
+  JSON.stringify(args) ===
+  JSON.stringify([
+    "create",
+    "--name",
+    name,
+    ...(process.env.EDEN_SBX_RUN_IMAGE ? ["--template", process.env.EDEN_SBX_RUN_IMAGE] : []),
+    "--skills",
+    "off",
+    "shell",
+  ])
+) {
+  if (process.env.EDEN_SBX_CREATE_FAILURE) {
+    process.stderr.write(process.env.EDEN_SBX_CREATE_FAILURE);
+    process.exit(1);
+  }
+
+  process.stdout.write("created\n");
 } else if (JSON.stringify(args) === JSON.stringify(["run", "--name", name])) {
   if (mode === "interrupt" || mode === "ignore" || mode === "terminal") {
     if (mode === "terminal") process.stdin.setRawMode(true);

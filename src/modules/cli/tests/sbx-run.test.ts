@@ -28,17 +28,15 @@ test.each(["running", "stopped", "failure"])(
   },
 );
 
-test.each(["missing", "malformed"])("run refuses %s listing without attachment", async (mode) => {
+test("run refuses malformed listing without creation or attachment", async () => {
   await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, mode);
+    const options = await prepareSandboxCli(directory, "malformed");
 
     const result = await runCliWith(options, "sbx", "run", "--name", "example");
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain(
-      mode === "missing" ? "does not exist" : "invalid sandbox listing JSON",
-    );
+    expect(result.stderr).toContain("invalid sandbox listing JSON");
     expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
   });
 });

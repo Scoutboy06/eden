@@ -10,6 +10,7 @@ export type SandboxSummary = {
   status: string;
 };
 export type CreateSandboxInput = { name: string; image?: string };
+export type RunSandboxInput = { name: string; image?: string };
 
 export interface SandboxProvider {
   readonly name: SandboxProviderName;

@@ -37,14 +37,15 @@ const create = defineCommand({
 
 const run = defineCommand({
   name: "run",
-  description: "Attach to an existing sandbox, starting it if stopped",
+  description: "Create a sandbox if absent, then attach; start it if stopped",
   args: {
     provider: {
       type: "enum",
       choices: sandboxProviderNames,
       description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
-    name: { type: "string", required: true, description: "Existing sandbox name" },
+    name: { type: "string", required: true, description: "Sandbox name" },
+    image: { type: "string", description: "Container image when creating a new sandbox" },
   },
 
   async run(ctx, { sandbox, output }) {
@@ -58,7 +59,7 @@ const run = defineCommand({
     }
 
     const service = await sandbox(ctx.values.provider);
-    const exitCode = await service.run(ctx.values.name);
+    const exitCode = await service.run({ name: ctx.values.name, image: ctx.values.image });
 
     if (!dryRun) {
       process.exitCode = exitCode;

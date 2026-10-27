@@ -4,6 +4,7 @@ import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
 import type {
   CreateSandboxInput,
+  RunSandboxInput,
   SandboxProvider,
   SandboxProviderName,
   SandboxSummary,
@@ -24,19 +25,20 @@ export class SandboxService {
     return this.provider.list();
   }
 
-  async run(name: string): Promise<number> {
-    if (!name.trim()) {
-      throw new SandboxError("SANDBOX_INVALID_INPUT", "Sandbox name must not be empty.");
-    }
-
+  async run(input: RunSandboxInput): Promise<number> {
+    validateSandboxInput(input.name, input.image);
+    const { name, image } = input;
     const sandboxes = await this.provider.list();
+    const exists = sandboxes.some((sandbox) => sandbox.name === name);
 
-    if (!sandboxes.some((sandbox) => sandbox.name === name)) {
+    if (exists && image !== undefined) {
       throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} does not exist. Create it with eden sbx create first.`,
+        "SANDBOX_INVALID_INPUT",
+        "--image only applies when creating a sandbox. The existing sandbox's image cannot be verified; omit --image to attach to it, or choose a new name.",
       );
     }
+
+    if (!exists) await this.create({ name, image });
 
     let exitCode = 0;
 
@@ -55,13 +57,7 @@ export class SandboxService {
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
-    if (!input.name.trim() || (input.image !== undefined && !input.image.trim())) {
-      throw new SandboxError(
-        "SANDBOX_INVALID_INPUT",
-        "Sandbox name and supplied image must not be empty.",
-      );
-    }
-
+    validateSandboxInput(input.name, input.image);
     await this.provider.preflight();
 
     await this.execution.mutate(
@@ -102,5 +98,14 @@ export function createSandboxProvider(
       return new DockerSandboxProvider(onCreateOutput);
     default:
       return assertUnreachable(name, "Unsupported sandbox provider");
+  }
+}
+
+function validateSandboxInput(name: string, image?: string): void {
+  if (!name.trim() || (image !== undefined && !image.trim())) {
+    throw new SandboxError(
+      "SANDBOX_INVALID_INPUT",
+      "Sandbox name and supplied image must not be empty.",
+    );
   }
 }
