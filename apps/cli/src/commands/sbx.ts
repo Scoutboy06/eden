@@ -20,10 +20,10 @@ const create = defineCommand({
     await service.create({ name: ctx.values.name, image: ctx.values.image });
 
     output.write({
-      data: {},
+      data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
       human: () =>
         formatMessage(
-          `Created sandbox ${ctx.values.name} using ${service.providerName}.`,
+          `Created sandbox ${ctx.values.name} using ${service.providerName}.\n\nAttach with Docker Sandboxes:\n  sbx run --name ${quoteShellArgument(ctx.values.name)}`,
           "success",
           "stdout",
         ),
@@ -36,3 +36,7 @@ export default defineCommand({
   description: "Manage sandboxes",
   subCommands: { create },
 });
+
+function quoteShellArgument(value: string): string {
+  return /^[a-zA-Z0-9_./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
