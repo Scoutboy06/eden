@@ -1,5 +1,8 @@
 import { defineCommand } from "../../../../src/modules/cli";
-import { sandboxProviderNames } from "../../../../src/modules/sandbox/provider";
+import {
+  sandboxProviderNames,
+  type SandboxSummary,
+} from "../../../../src/modules/sandbox/provider";
 import { SandboxError } from "../../../../src/modules/sandbox/errors";
 import { formatMessage } from "../../../../src/modules/cli/format";
 
@@ -64,12 +67,53 @@ const run = defineCommand({
   },
 });
 
+const list = defineCommand({
+  name: "list",
+  description: "List sandboxes for a provider",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const service = await sandbox(ctx.values.provider);
+    const sandboxes = await service.list();
+
+    output.write({
+      data: { sandboxes },
+      human: () => formatSandboxes(sandboxes),
+    });
+  },
+});
+
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run },
+  subCommands: { create, run, list },
 });
 
 function quoteShellArgument(value: string): string {
   return /^[a-zA-Z0-9_./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function formatSandboxes(sandboxes: readonly SandboxSummary[]): string {
+  if (sandboxes.length === 0) return "No sandboxes found.";
+
+  const rows = [
+    ["NAME", "STATUS", "PROVIDER"],
+    ...sandboxes.map(({ name, status, provider }) => [name, status, provider]),
+  ];
+  const widths = [0, 1, 2].map((column) => Math.max(...rows.map((row) => row[column]!.length)));
+
+  return rows
+    .map((row) =>
+      row
+        .map((value, column) => value.padEnd(widths[column]!))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n");
 }

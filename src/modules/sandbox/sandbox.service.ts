@@ -2,7 +2,12 @@ import type { Execution } from "../execution";
 import type { ConfigReader } from "../config/config.service";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
-import type { CreateSandboxInput, SandboxProvider, SandboxProviderName } from "./provider";
+import type {
+  CreateSandboxInput,
+  SandboxProvider,
+  SandboxProviderName,
+  SandboxSummary,
+} from "./provider";
 import { DockerSandboxProvider } from "./providers/docker-sbx";
 
 export class SandboxService {
@@ -15,12 +20,24 @@ export class SandboxService {
     private readonly provider: SandboxProvider,
   ) {}
 
+  list(): Promise<SandboxSummary[]> {
+    return this.provider.list();
+  }
+
   async run(name: string): Promise<number> {
     if (!name.trim()) {
       throw new SandboxError("SANDBOX_INVALID_INPUT", "Sandbox name must not be empty.");
     }
 
-    await this.provider.requireExisting(name);
+    const sandboxes = await this.provider.list();
+
+    if (!sandboxes.some((sandbox) => sandbox.name === name)) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} does not exist. Create it with eden sbx create first.`,
+      );
+    }
+
     let exitCode = 0;
 
     await this.execution.mutate(

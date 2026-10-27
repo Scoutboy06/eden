@@ -1,7 +1,7 @@
 import { constants } from "node:os";
 import { ScriptRunner, type RunResult } from "../../script";
 import { SandboxError } from "../errors";
-import type { CreateSandboxInput, SandboxProvider } from "../provider";
+import type { CreateSandboxInput, SandboxProvider, SandboxSummary } from "../provider";
 import type { ReadinessCheck, ReadinessResult } from "../readiness";
 
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
@@ -82,7 +82,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     await this.execute(["policy", "ls", "--json"]);
   }
 
-  async requireExisting(name: string): Promise<void> {
+  async list(): Promise<SandboxSummary[]> {
     const result = await (this.dependencies.run ?? runDockerCommand)(
       ["ls", "--format", "json"],
       {},
@@ -106,7 +106,11 @@ export class DockerSandboxProvider implements SandboxProvider {
     if (
       !Array.isArray(sandboxes) ||
       !sandboxes.every(
-        (entry) => entry !== null && typeof entry === "object" && typeof entry.name === "string",
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          typeof entry.name === "string" &&
+          typeof entry.status === "string",
       )
     ) {
       throw new SandboxError(
@@ -115,12 +119,11 @@ export class DockerSandboxProvider implements SandboxProvider {
       );
     }
 
-    if (!sandboxes.some((entry) => entry.name === name)) {
-      throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} does not exist. Create it with eden sbx create first.`,
-      );
-    }
+    return sandboxes.map((entry) => ({
+      provider: this.name,
+      name: entry.name,
+      status: entry.status,
+    }));
   }
 
   run(name: string): Promise<number> {

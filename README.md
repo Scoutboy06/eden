@@ -16,6 +16,7 @@ bun run cli setup
 bun run cli worktree create --name fix-login
 bun run cli sbx create --provider docker-sbx --name eden-dev
 bun run cli sbx run --provider docker-sbx --name eden-dev
+bun run cli sbx list --provider docker-sbx
 ```
 
 Use `--dry-run` to preview changes and `--json` for scripting. Sandbox previews

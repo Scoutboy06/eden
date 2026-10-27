@@ -11,10 +11,16 @@ if (log) {
 }
 
 if (JSON.stringify(args) === JSON.stringify(["ls", "--format", "json"])) {
+  if (process.env.EDEN_SBX_LIST_FAILURE) {
+    process.stderr.write(process.env.EDEN_SBX_LIST_FAILURE);
+    process.exit(1);
+  }
+
   process.stdout.write(
-    mode === "malformed"
-      ? "invalid json"
-      : JSON.stringify(mode === "missing" ? [] : [{ name, status: mode ?? "running" }]),
+    process.env.EDEN_SBX_LIST_RESULT ??
+      (mode === "malformed"
+        ? "invalid json"
+        : JSON.stringify(mode === "missing" ? [] : [{ name, status: mode ?? "running" }])),
   );
 } else if (JSON.stringify(args) === JSON.stringify(["run", "--name", name])) {
   if (mode === "interrupt" || mode === "ignore" || mode === "terminal") {

@@ -17,7 +17,7 @@ test("dry-run checks prerequisites but never calls creation", async () => {
     preflight: async () => {
       calls.push("preflight");
     },
-    requireExisting: async () => {},
+    list: async () => [],
     run: async () => 0,
     create: async () => {
       calls.push("create");
