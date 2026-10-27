@@ -1,6 +1,7 @@
 import type { CompletionCommand, CompletionGenerator } from "../generator";
+import { quote } from "../shell";
 import { renderArguments } from "./arguments";
-import { describeEntry, quote } from "./syntax";
+import { describeEntry } from "./syntax";
 
 export class ZshCompletionGenerator implements CompletionGenerator {
   generate(command: CompletionCommand): string {
