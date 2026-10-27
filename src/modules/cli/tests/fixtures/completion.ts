@@ -30,6 +30,28 @@ const create = defineCommand({
 
 await runCli({
   completion,
+  internal: defineCommand({ name: "internal", internal: true }),
+  choose: defineCommand({
+    name: "choose",
+    args: {
+      target: {
+        type: "positional",
+        choices: [
+          "alpha",
+          "--dash",
+          "multi\nline",
+          "*literal",
+          "spaces and 'quotes' $(printf INJECTED) `printf INJECTED`",
+        ],
+      },
+      next: { type: "positional", choices: ["two"] },
+      format: { type: "enum", choices: ["json", "table"] },
+      secret: { type: "string", hidden: true },
+    },
+    run() {
+      throw new Error("Completion must not invoke command handlers");
+    },
+  }),
   "odd:command": defineCommand({
     name: "odd:command",
     description: "A command with punctuation",

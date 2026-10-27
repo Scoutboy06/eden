@@ -111,7 +111,7 @@ test("Zsh displays option descriptions without interpreting their punctuation", 
 });
 
 test("unsupported shells fail enum validation without emitting a script", async () => {
-  const result = await runCli("completion", "bash", "--stdout", "--json");
+  const result = await runCli("completion", "unsupported", "--stdout", "--json");
 
   expect(result.exitCode).toBe(1);
   expect(result.stderr).toBe("");

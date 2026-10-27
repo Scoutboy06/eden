@@ -1,6 +1,4 @@
-export function quote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
+import { quote } from "../shell";
 
 // Shell quoting and _arguments' specification grammar are separate layers.
 export function specText(value: string): string {

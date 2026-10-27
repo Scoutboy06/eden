@@ -39,10 +39,15 @@ Global settings live in `~/.config/eden/config.yaml` (or `$XDG_CONFIG_HOME/eden/
 ```sh
 bun run cli config set worktree_root '~/.worktrees'
 bun run cli config get
-bun run cli completion zsh --stdout
 ```
 
 Explore each command with `--help`.
+
+Enable completions in your current Bash session:
+
+```bash
+source <(bun run cli completion bash --stdout)
+```
 
 ## Development
 

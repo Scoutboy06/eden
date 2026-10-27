@@ -1,5 +1,6 @@
 import type { Args, ArgSchema } from "gunshi";
-import { quote, specText } from "./syntax";
+import { quote } from "../shell";
+import { specText } from "./syntax";
 
 export function renderArguments(args: Args): ArgumentSyntax[] {
   const visible = Object.entries(args).filter(([, arg]) => !arg.hidden);
