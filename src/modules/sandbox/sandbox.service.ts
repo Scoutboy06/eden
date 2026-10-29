@@ -105,12 +105,16 @@ export async function createSandboxService(
   config: ConfigReader,
   onCreateOutput?: (text: string) => void,
   profileName?: string,
+  options: { useDefaultProfile?: boolean } = {},
 ): Promise<SandboxService> {
   const settings =
-    providerName === undefined || profileName !== undefined
+    providerName === undefined || profileName !== undefined || options.useDefaultProfile
       ? (await config.read()).sandbox
       : undefined;
-  const profile = profileName === undefined ? undefined : resolveProfile(settings, profileName);
+  const selectedProfile =
+    profileName ?? (options.useDefaultProfile ? settings?.default_profile : undefined);
+  const profile =
+    selectedProfile === undefined ? undefined : resolveProfile(settings, selectedProfile);
   const name = providerName ?? profile?.provider ?? settings?.default_provider;
 
   if (name === undefined) {
@@ -123,7 +127,7 @@ export async function createSandboxService(
   return new SandboxService(
     execution,
     createSandboxProvider(name, onCreateOutput),
-    profileName === undefined ? undefined : { ...profile, name: profileName },
+    selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
   );
 }
 

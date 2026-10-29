@@ -16,12 +16,17 @@ const create = defineCommand({
       description: "Sandbox provider (overrides profile; defaults to sandbox.default_provider)",
     },
     name: { type: "string", required: true, description: "Sandbox name" },
-    profile: { type: "string", description: "Configured sandbox profile" },
+    profile: {
+      type: "string",
+      description: "Sandbox profile (defaults to sandbox.default_profile)",
+    },
     image: { type: "string", description: "Container image (overrides profile template)" },
   },
 
   async run(ctx, { sandbox, output }) {
-    const service = await sandbox(ctx.values.provider, ctx.values.profile);
+    const service = await sandbox(ctx.values.provider, ctx.values.profile, {
+      useDefaultProfile: true,
+    });
     await service.create({ name: ctx.values.name, image: ctx.values.image });
 
     output.write({

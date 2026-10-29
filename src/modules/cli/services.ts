@@ -30,6 +30,7 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
     async sandbox(
       providerName?: SandboxProviderName,
       profileName?: string,
+      profileOptions: { useDefaultProfile?: boolean } = {},
     ): Promise<SandboxService> {
       return createSandboxService(
         execution,
@@ -37,6 +38,7 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
         { read: readConfig },
         options.json ? undefined : streamStdout,
         profileName,
+        profileOptions,
       );
     },
     get setup() {

@@ -50,6 +50,7 @@ export const ConfigSchema = v.pipe(
       sandbox: v.optional(
         v.strictObject({
           default_provider: v.optional(v.picklist(sandboxProviderNames)),
+          default_profile: v.optional(nonEmptyString),
           profiles: v.optional(configMap(profileSchema)),
         }),
       ),
