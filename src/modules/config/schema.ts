@@ -30,13 +30,28 @@ const worktreeRootSchema = v.pipe(
   v.transform(normalize),
 );
 
+const nonEmptyString = v.pipe(v.string(), v.nonEmpty());
+const kitArgumentSchema = v.union([v.string(), v.number(), v.boolean()]);
+const profileSchema = v.pipe(
+  mapping,
+  v.strictObject({
+    provider: v.optional(v.picklist(sandboxProviderNames)),
+    template: v.optional(nonEmptyString),
+    kits: v.optional(v.array(nonEmptyString)),
+    kit_args: v.optional(configMap(kitArgumentSchema)),
+  }),
+);
+
 export const ConfigSchema = v.pipe(
   mapping,
   v.strictObject(
     {
       agent: v.optional(agentSchema),
       sandbox: v.optional(
-        v.strictObject({ default_provider: v.optional(v.picklist(sandboxProviderNames)) }),
+        v.strictObject({
+          default_provider: v.optional(v.picklist(sandboxProviderNames)),
+          profiles: v.optional(configMap(profileSchema)),
+        }),
       ),
       worktree_root: v.optional(worktreeRootSchema, () => join(homedir(), ".worktrees")),
     },
@@ -45,3 +60,33 @@ export const ConfigSchema = v.pipe(
 );
 
 export type Config = v.InferOutput<typeof ConfigSchema>;
+
+function configMap<T extends v.GenericSchema>(value: T) {
+  const schema = v.pipe(
+    v.custom<Record<string, v.InferOutput<T>>>(
+      (input) => typeof input === "object" && input !== null && !Array.isArray(input),
+      "Expected a configuration mapping",
+    ),
+    v.rawCheck(({ dataset, addIssue }) => {
+      if (!dataset.typed) return;
+
+      for (const [key, input] of Object.entries(dataset.value)) {
+        const path = [
+          { type: "object", origin: "value", input: dataset.value, key, value: input },
+        ] as const;
+
+        if (key.length === 0) addIssue({ message: "Expected a non-empty key", path: [...path] });
+
+        const result = v.safeParse(value, input);
+
+        if (!result.success) {
+          for (const issue of result.issues) {
+            addIssue({ message: issue.message, path: [...path, ...(issue.path ?? [])] });
+          }
+        }
+      }
+    }),
+  );
+
+  return Object.assign(schema, { key: nonEmptyString, value });
+}

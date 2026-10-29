@@ -33,7 +33,11 @@ export class ConfigYamlEditor {
     if (!scalar.srcToken || !scalar.range)
       throw new Error("Configuration scalar has no source range");
 
-    CST.setScalarValue(scalar.srcToken, value, { inFlow: true, type: scalar.type });
+    const stringScalar = parseDocument(stringify(value)).contents;
+    const type =
+      scalar.type === "PLAIN" && isScalar(stringScalar) ? stringScalar.type : scalar.type;
+
+    CST.setScalarValue(scalar.srcToken, value, { inFlow: true, type });
 
     return this.replaceSource(scalar.range[0], scalar.range[2], CST.stringify(scalar.srcToken));
   }

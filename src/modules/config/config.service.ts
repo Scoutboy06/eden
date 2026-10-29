@@ -8,6 +8,7 @@ import { ConfigYamlEditor } from "./edit";
 import { ConfigError } from "./errors";
 import { ConfigSchema, type Config } from "./schema";
 import { configLeafPath } from "./select";
+import { formatConfigPath } from "./path";
 
 export interface ConfigReader {
   read(): Promise<Config>;
@@ -192,18 +193,32 @@ function mergeConfigLayer(
   layer: Record<string, unknown>,
   provenance: Record<string, ConfigSource>,
   path: string,
-  prefix = "",
+  prefix: string[] = [],
 ): void {
   for (const [key, value] of Object.entries(layer)) {
-    const leafPath = prefix ? `${prefix}.${key}` : key;
+    const keys = [...prefix, key];
 
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const nested = (target[key] ??= {}) as Record<string, unknown>;
+      if (!Object.hasOwn(target, key)) {
+        Object.defineProperty(target, key, {
+          value: {},
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
 
-      mergeConfigLayer(nested, value as Record<string, unknown>, provenance, path, leafPath);
+      const nested = target[key] as Record<string, unknown>;
+
+      mergeConfigLayer(nested, value as Record<string, unknown>, provenance, path, keys);
     } else {
-      target[key] = value;
-      provenance[leafPath] = { type: "file", path };
+      Object.defineProperty(target, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      provenance[formatConfigPath(keys)] = { type: "file", path };
     }
   }
 }
@@ -302,7 +317,7 @@ function validateConfig(parsed: unknown, path: string): Config {
 
   if (!result.success) {
     const issues = result.issues.map((issue) => ({
-      path: issue.path?.map((item) => String(item.key)).join(".") ?? "",
+      path: formatConfigPath(issue.path?.map((item) => String(item.key)) ?? []),
       message: issue.message,
     }));
 
