@@ -13,14 +13,15 @@ const create = defineCommand({
     provider: {
       type: "enum",
       choices: sandboxProviderNames,
-      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+      description: "Sandbox provider (overrides profile; defaults to sandbox.default_provider)",
     },
     name: { type: "string", required: true, description: "Sandbox name" },
-    image: { type: "string", description: "Sandbox container image (defaults to provider choice)" },
+    profile: { type: "string", description: "Configured sandbox profile" },
+    image: { type: "string", description: "Container image (overrides profile template)" },
   },
 
   async run(ctx, { sandbox, output }) {
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox(ctx.values.provider, ctx.values.profile);
     await service.create({ name: ctx.values.name, image: ctx.values.image });
 
     output.write({
@@ -42,10 +43,11 @@ const run = defineCommand({
     provider: {
       type: "enum",
       choices: sandboxProviderNames,
-      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+      description: "Sandbox provider (overrides profile; defaults to sandbox.default_provider)",
     },
     name: { type: "string", required: true, description: "Sandbox name" },
-    image: { type: "string", description: "Container image when creating a new sandbox" },
+    profile: { type: "string", description: "Configured profile, only for a new sandbox" },
+    image: { type: "string", description: "Image for a new sandbox (overrides profile template)" },
   },
 
   async run(ctx, { sandbox, output }) {
@@ -58,7 +60,7 @@ const run = defineCommand({
       );
     }
 
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox(ctx.values.provider, ctx.values.profile);
     const exitCode = await service.run({ name: ctx.values.name, image: ctx.values.image });
 
     if (!dryRun) {

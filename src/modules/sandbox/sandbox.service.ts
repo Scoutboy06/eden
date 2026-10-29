@@ -1,5 +1,6 @@
 import type { Execution } from "../execution";
 import type { ConfigReader } from "../config/config.service";
+import type { Config } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
 import type {
@@ -19,6 +20,7 @@ export class SandboxService {
   constructor(
     private readonly execution: Execution,
     private readonly provider: SandboxProvider,
+    private readonly profile?: { name: string; template?: string },
   ) {}
 
   list(): Promise<SandboxSummary[]> {
@@ -50,18 +52,25 @@ export class SandboxService {
 
   async run(input: RunSandboxInput): Promise<number> {
     validateSandboxInput(input.name, input.image);
-    const { name, image } = input;
+    const { name } = input;
     const sandboxes = await this.provider.list();
     const exists = sandboxes.some((sandbox) => sandbox.name === name);
 
-    if (exists && image !== undefined) {
+    if (exists && this.profile !== undefined) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "--profile only applies when creating a sandbox. The existing sandbox's configuration cannot be verified; omit --profile to attach to it, or choose a new name.",
+      );
+    }
+
+    if (exists && input.image !== undefined) {
       throw new SandboxError(
         "SANDBOX_INVALID_INPUT",
         "--image only applies when creating a sandbox. The existing sandbox's image cannot be verified; omit --image to attach to it, or choose a new name.",
       );
     }
 
-    if (!exists) await this.create({ name, image });
+    if (!exists) await this.create(input);
 
     let exitCode = 0;
 
@@ -80,16 +89,21 @@ export class SandboxService {
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
-    validateSandboxInput(input.name, input.image);
+    const resolved = { ...input, image: input.image ?? this.profile?.template };
+    validateSandboxInput(resolved.name, resolved.image);
     await this.provider.preflight();
 
     await this.execution.mutate(
       {
         type: "sandbox.create",
         description: `Create sandbox ${input.name} using ${this.provider.name}`,
-        input: { provider: this.provider.name, ...input },
+        input: {
+          provider: this.provider.name,
+          ...resolved,
+          ...(this.profile === undefined ? {} : { profile: this.profile.name }),
+        },
       },
-      () => this.provider.create(input),
+      () => this.provider.create(resolved),
     );
   }
 }
@@ -99,8 +113,14 @@ export async function createSandboxService(
   providerName: SandboxProviderName | undefined,
   config: ConfigReader,
   onCreateOutput?: (text: string) => void,
+  profileName?: string,
 ): Promise<SandboxService> {
-  const name = providerName ?? (await config.read()).sandbox?.default_provider;
+  const settings =
+    providerName === undefined || profileName !== undefined
+      ? (await config.read()).sandbox
+      : undefined;
+  const profile = profileName === undefined ? undefined : resolveProfile(settings, profileName);
+  const name = providerName ?? profile?.provider ?? settings?.default_provider;
 
   if (name === undefined) {
     throw new SandboxError(
@@ -109,7 +129,29 @@ export async function createSandboxService(
     );
   }
 
-  return new SandboxService(execution, createSandboxProvider(name, onCreateOutput));
+  return new SandboxService(
+    execution,
+    createSandboxProvider(name, onCreateOutput),
+    profileName === undefined ? undefined : { name: profileName, template: profile?.template },
+  );
+}
+
+function resolveProfile(settings: Config["sandbox"], name: string) {
+  const profiles = settings?.profiles ?? {};
+
+  if (!Object.hasOwn(profiles, name)) {
+    const available = Object.keys(profiles)
+      .sort()
+      .map((key) => JSON.stringify(key))
+      .join(", ");
+
+    throw new SandboxError(
+      "SANDBOX_PROFILE_NOT_FOUND",
+      `Unknown sandbox profile ${JSON.stringify(name)}. Configured profiles: ${available || "none"}.`,
+    );
+  }
+
+  return profiles[name]!;
 }
 
 export function createSandboxProvider(

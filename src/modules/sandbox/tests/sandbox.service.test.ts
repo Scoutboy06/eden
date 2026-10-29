@@ -79,6 +79,66 @@ test("an explicit provider skips reading default configuration", async () => {
   expect(service.providerName).toBe("docker-sbx");
 });
 
+test.each([undefined, "explicit:image"])(
+  "profile creation resolves image=%s without forwarding profile metadata",
+  async (image) => {
+    const execution = createExecution({ dryRun: false });
+    const calls: unknown[] = [];
+    const provider: SandboxProvider = {
+      name: "docker-sbx",
+      readinessChecks: () => [],
+      preflight: async () => {
+        calls.push("preflight");
+      },
+      list: async () => [],
+      run: async () => 0,
+      stop: async () => {},
+      create: async (input) => {
+        calls.push(input);
+      },
+    };
+    const service = new SandboxService(execution, provider, {
+      name: "work",
+      template: "profile:image",
+    });
+
+    await service.create({ name: "example", image });
+
+    expect(calls).toEqual(["preflight", { name: "example", image: image ?? "profile:image" }]);
+    expect(execution.operations[0]?.input).toEqual({
+      provider: "docker-sbx",
+      name: "example",
+      image: image ?? "profile:image",
+      profile: "work",
+    });
+  },
+);
+
+test("an explicit provider still reads and validates a selected profile once", async () => {
+  let reads = 0;
+  const config = {
+    read: async () => {
+      reads++;
+
+      return {
+        worktree_root: "/trees",
+        sandbox: { profiles: { work: { template: "profile:image" } } },
+      };
+    },
+  };
+
+  const service = await createSandboxService(
+    createExecution({ dryRun: true }),
+    "docker-sbx",
+    config,
+    undefined,
+    "work",
+  );
+
+  expect(service.providerName).toBe("docker-sbx");
+  expect(reads).toBe(1);
+});
+
 test("an omitted provider uses the configured default or reports an actionable error", async () => {
   const execution = createExecution({ dryRun: true });
   const service = await createSandboxService(execution, undefined, {

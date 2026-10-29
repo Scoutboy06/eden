@@ -27,12 +27,16 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
   return {
     output,
     readConfig,
-    async sandbox(providerName?: SandboxProviderName): Promise<SandboxService> {
+    async sandbox(
+      providerName?: SandboxProviderName,
+      profileName?: string,
+    ): Promise<SandboxService> {
       return createSandboxService(
         execution,
         providerName,
         { read: readConfig },
         options.json ? undefined : streamStdout,
+        profileName,
       );
     },
     get setup() {
