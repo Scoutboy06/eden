@@ -51,26 +51,17 @@ export class SandboxService {
   }
 
   async run(input: RunSandboxInput): Promise<number> {
-    validateSandboxInput(input.name, input.image);
+    validateSandboxInput(input.name);
     const { name } = input;
     const sandboxes = await this.provider.list();
     const exists = sandboxes.some((sandbox) => sandbox.name === name);
 
-    if (exists && this.profile !== undefined) {
+    if (!exists) {
       throw new SandboxError(
-        "SANDBOX_INVALID_INPUT",
-        "--profile only applies when creating a sandbox. The existing sandbox's configuration cannot be verified; omit --profile to attach to it, or choose a new name.",
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} was not found using ${this.provider.name}. Create it explicitly with eden sbx create.`,
       );
     }
-
-    if (exists && input.image !== undefined) {
-      throw new SandboxError(
-        "SANDBOX_INVALID_INPUT",
-        "--image only applies when creating a sandbox. The existing sandbox's image cannot be verified; omit --image to attach to it, or choose a new name.",
-      );
-    }
-
-    if (!exists) await this.create(input);
 
     let exitCode = 0;
 

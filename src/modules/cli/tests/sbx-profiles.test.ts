@@ -6,251 +6,230 @@ import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directo
 import { runCliWith } from "./support/cli";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
 
-test.each(["create", "run"])(
-  "sbx %s creates using a profile provider and template",
-  async (command) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      options.env.EDEN_SBX_RUN_IMAGE = "registry.example.com/team:latest";
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            profiles: {
-              work: { provider: "docker-sbx", template: options.env.EDEN_SBX_RUN_IMAGE },
-            },
+test("sbx create uses a profile provider and template", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    options.env.EDEN_SBX_RUN_IMAGE = "registry.example.com/team:latest";
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          profiles: {
+            work: { provider: "docker-sbx", template: options.env.EDEN_SBX_RUN_IMAGE },
           },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        command,
-        "--name",
-        "example",
-        "--profile",
-        "work",
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(await sandboxCommands(directory)).toEqual([
-        ...(command === "run" ? [["ls", "--format", "json"]] : []),
-        ["ls", "--format", "json"],
-        ["policy", "ls", "--json"],
-        [
-          "create",
-          "--name",
-          "example",
-          "--template",
-          options.env.EDEN_SBX_RUN_IMAGE,
-          "--skills",
-          "off",
-          "shell",
-        ],
-        ...(command === "run" ? [["run", "--name", "example"]] : []),
-      ]);
-    });
-  },
-);
-
-test.each(["create", "run"])(
-  "sbx %s dry-run resolves explicit flags over profile values without creation",
-  async (command) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            profiles: { work: { template: "profile:image" } },
-          },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        command,
-        "--name",
-        "example",
-        "--profile",
-        "work",
-        "--provider",
-        "docker-sbx",
-        "--image",
-        "explicit:image",
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: true,
-        dryRun: true,
-        operations: expect.arrayContaining([
-          expect.objectContaining({
-            type: "sandbox.create",
-            input: {
-              provider: "docker-sbx",
-              name: "example",
-              image: "explicit:image",
-              profile: "work",
-            },
-          }),
-        ]),
-      });
-      expect(await sandboxCommands(directory)).toEqual([
-        ...(command === "run" ? [["ls", "--format", "json"]] : []),
-        ["ls", "--format", "json"],
-        ["policy", "ls", "--json"],
-      ]);
-    });
-  },
-);
-
-test.each(["create", "run"])(
-  "sbx %s dry-run includes the profile name and resolved template",
-  async (command) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            default_provider: "docker-sbx",
-            profiles: { work: { template: "profile:image" } },
-          },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        command,
-        "--name",
-        "example",
-        "--profile",
-        "work",
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
-        type: "sandbox.create",
-        input: { provider: "docker-sbx", name: "example", image: "profile:image", profile: "work" },
-      });
-    });
-  },
-);
-
-test.each(["create", "run"])(
-  "sbx %s uses provider defaults for an empty profile",
-  async (command) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            default_provider: "docker-sbx",
-            profiles: { empty: {} },
-          },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        command,
-        "--name",
-        "example",
-        "--profile",
-        "empty",
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(JSON.parse(result.stdout).operations[0].input).toEqual({
-        provider: "docker-sbx",
-        name: "example",
-        profile: "empty",
-      });
-    });
-  },
-);
-
-test.each(["create", "run"])(
-  "sbx %s rejects unknown profiles before contacting an explicitly selected provider",
-  async (command) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            profiles: { work: {}, other: {} },
-          },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        command,
-        "--name",
-        "example",
-        "--profile",
-        "missing",
-        "--provider",
-        "docker-sbx",
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: false,
-        error: {
-          code: "SANDBOX_PROFILE_NOT_FOUND",
-          message: 'Unknown sandbox profile "missing". Configured profiles: "other", "work".',
         },
-      });
-      expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
-    });
-  },
-);
+      }),
+    );
 
-test.each(["create", "run"])(
-  "sbx %s reports no configured profiles without provider calls",
-  async (command) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "work",
+    );
 
-      const result = await runCliWith(
-        options,
-        "sbx",
-        command,
+    expect(result.exitCode).toBe(0);
+    expect(await sandboxCommands(directory)).toEqual([
+      ["ls", "--format", "json"],
+      ["policy", "ls", "--json"],
+      [
+        "create",
         "--name",
         "example",
-        "--profile",
-        "constructor",
-        "--dry-run",
-        "--json",
-      );
+        "--template",
+        options.env.EDEN_SBX_RUN_IMAGE,
+        "--skills",
+        "off",
+        "shell",
+      ],
+    ]);
+  });
+});
 
-      expect(result.exitCode).toBe(1);
-      expect(JSON.parse(result.stdout).error).toEqual({
-        code: "SANDBOX_PROFILE_NOT_FOUND",
-        message: 'Unknown sandbox profile "constructor". Configured profiles: none.',
-      });
-      expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
+test("sbx create dry-run resolves explicit flags over profile values without creation", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          profiles: { work: { template: "profile:image" } },
+        },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "work",
+      "--provider",
+      "docker-sbx",
+      "--image",
+      "explicit:image",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      dryRun: true,
+      operations: expect.arrayContaining([
+        expect.objectContaining({
+          type: "sandbox.create",
+          input: {
+            provider: "docker-sbx",
+            name: "example",
+            image: "explicit:image",
+            profile: "work",
+          },
+        }),
+      ]),
     });
-  },
-);
+    expect(await sandboxCommands(directory)).toEqual([
+      ["ls", "--format", "json"],
+      ["policy", "ls", "--json"],
+    ]);
+  });
+});
+
+test("sbx create dry-run includes the profile name and resolved template", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          default_provider: "docker-sbx",
+          profiles: { work: { template: "profile:image" } },
+        },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "work",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
+      type: "sandbox.create",
+      input: { provider: "docker-sbx", name: "example", image: "profile:image", profile: "work" },
+    });
+  });
+});
+
+test("sbx create uses provider defaults for an empty profile", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          default_provider: "docker-sbx",
+          profiles: { empty: {} },
+        },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "empty",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).operations[0].input).toEqual({
+      provider: "docker-sbx",
+      name: "example",
+      profile: "empty",
+    });
+  });
+});
+
+test("sbx create rejects unknown profiles before contacting an explicitly selected provider", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          profiles: { work: {}, other: {} },
+        },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "missing",
+      "--provider",
+      "docker-sbx",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      error: {
+        code: "SANDBOX_PROFILE_NOT_FOUND",
+        message: 'Unknown sandbox profile "missing". Configured profiles: "other", "work".',
+      },
+    });
+    expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
+  });
+});
+
+test("sbx create reports no configured profiles without provider calls", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "constructor",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error).toEqual({
+      code: "SANDBOX_PROFILE_NOT_FOUND",
+      message: 'Unknown sandbox profile "constructor". Configured profiles: none.',
+    });
+    expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
+  });
+});
 
 test.each(["running", "stopped"])(
   "sbx run rejects a profile for an existing %s sandbox even without a template",
@@ -281,10 +260,10 @@ test.each(["running", "stopped"])(
 
       expect(result.exitCode).toBe(1);
       expect(JSON.parse(result.stdout).error).toMatchObject({
-        code: "SANDBOX_INVALID_INPUT",
-        message: expect.stringContaining("omit --profile to attach"),
+        code: "err:arg:unknown-option",
+        message: "Unknown option: --profile",
       });
-      expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+      expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
     });
   },
 );

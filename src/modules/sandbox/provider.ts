@@ -15,7 +15,7 @@ export type CreateSandboxInput = {
   kits?: string[];
   kitArgs?: Record<string, string | number | boolean>;
 };
-export type RunSandboxInput = { name: string; image?: string };
+export type RunSandboxInput = { name: string };
 
 export interface SandboxProvider {
   readonly name: SandboxProviderName;

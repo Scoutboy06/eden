@@ -46,6 +46,76 @@ test.each([
   ]);
 });
 
+test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async (dryRun) => {
+  const execution = createExecution({ dryRun });
+  const calls: string[] = [];
+  const provider: SandboxProvider = {
+    name: "docker-sbx",
+    readinessChecks: () => [],
+    preflight: async () => {
+      calls.push("preflight");
+    },
+    list: async () => {
+      calls.push("list");
+      return [];
+    },
+    run: async () => {
+      calls.push("run");
+      return 0;
+    },
+    stop: async () => {
+      calls.push("stop");
+    },
+    create: async () => {
+      calls.push("create");
+    },
+  };
+  const service = new SandboxService(execution, provider, {
+    name: "work",
+    template: "profile:image",
+  });
+
+  await expect(service.run({ name: "typo" })).rejects.toMatchObject({ code: "SANDBOX_NOT_FOUND" });
+
+  expect(calls).toEqual(["list"]);
+  expect(execution.operations).toEqual([]);
+});
+
+test.each([
+  ["running", false],
+  ["stopped", false],
+  ["running", true],
+  ["stopped", true],
+] as const)("run only attaches to an existing %s sandbox, dryRun=%s", async (status, dryRun) => {
+  const execution = createExecution({ dryRun });
+  const calls: string[] = [];
+  const provider: SandboxProvider = {
+    name: "docker-sbx",
+    readinessChecks: () => [],
+    preflight: async () => {
+      calls.push("preflight");
+    },
+    list: async () => [{ provider: "docker-sbx", name: "example", status }],
+    run: async (name) => {
+      calls.push(name);
+      return 7;
+    },
+    stop: async () => {
+      calls.push("stop");
+    },
+    create: async () => {
+      calls.push("create");
+    },
+  };
+  const service = new SandboxService(execution, provider);
+
+  const exitCode = await service.run({ name: "example" });
+
+  expect(exitCode).toBe(dryRun ? 0 : 7);
+  expect(calls).toEqual(dryRun ? [] : ["example"]);
+  expect(execution.operations.map(({ type }) => type)).toEqual(["sandbox.run"]);
+});
+
 test("dry-run checks prerequisites but never calls creation", async () => {
   const execution = createExecution({ dryRun: true });
   const calls: string[] = [];
