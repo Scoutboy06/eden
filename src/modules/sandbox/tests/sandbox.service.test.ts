@@ -139,6 +139,44 @@ test("an explicit provider still reads and validates a selected profile once", a
   expect(reads).toBe(1);
 });
 
+test.each([false, true])(
+  "profile kit values stay typed at the service boundary with dryRun=%s",
+  async (dryRun) => {
+    const execution = createExecution({ dryRun });
+    const calls: unknown[] = [];
+    const kits = ["~/literal kit"];
+    const kitArgs = { enabled: true, count: 3, name: "${sandbox.name}" };
+    const provider: SandboxProvider = {
+      name: "docker-sbx",
+      readinessChecks: () => [],
+      preflight: async () => {},
+      list: async () => [],
+      run: async () => 0,
+      stop: async () => {},
+      create: async (input) => {
+        calls.push(input);
+      },
+    };
+    const service = new SandboxService(execution, provider, {
+      name: "work",
+      kits,
+      kit_args: kitArgs,
+    });
+
+    await service.create({ name: "example" });
+
+    expect(calls).toEqual(dryRun ? [] : [{ name: "example", image: undefined, kits, kitArgs }]);
+    expect(execution.operations[0]?.input).toEqual({
+      provider: "docker-sbx",
+      name: "example",
+      image: undefined,
+      profile: "work",
+      kits,
+      kitArgs,
+    });
+  },
+);
+
 test("an omitted provider uses the configured default or reports an actionable error", async () => {
   const execution = createExecution({ dryRun: true });
   const service = await createSandboxService(execution, undefined, {

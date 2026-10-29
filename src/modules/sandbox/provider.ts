@@ -9,7 +9,12 @@ export type SandboxSummary = {
   name: string;
   status: string;
 };
-export type CreateSandboxInput = { name: string; image?: string };
+export type CreateSandboxInput = {
+  name: string;
+  image?: string;
+  kits?: string[];
+  kitArgs?: Record<string, string | number | boolean>;
+};
 export type RunSandboxInput = { name: string; image?: string };
 
 export interface SandboxProvider {

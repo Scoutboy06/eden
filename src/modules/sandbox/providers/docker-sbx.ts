@@ -140,6 +140,11 @@ export class DockerSandboxProvider implements SandboxProvider {
         "--name",
         input.name,
         ...(input.image === undefined ? [] : ["--template", input.image]),
+        ...(input.kits ?? []).flatMap((kit) => ["--kit", kit]),
+        ...Object.entries(input.kitArgs ?? {}).flatMap(([key, value]) => [
+          "--kit-arg",
+          `${key}=${String(value)}`,
+        ]),
         "--skills",
         "off",
         ...(this.onCreateOutput ? [] : ["--no-progress"]),

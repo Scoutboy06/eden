@@ -36,6 +36,7 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--format", "json"])) {
     "--name",
     name,
     ...(process.env.EDEN_SBX_RUN_IMAGE ? ["--template", process.env.EDEN_SBX_RUN_IMAGE] : []),
+    ...JSON.parse(process.env.EDEN_SBX_RUN_KIT_FLAGS ?? "[]"),
     "--skills",
     "off",
     "shell",

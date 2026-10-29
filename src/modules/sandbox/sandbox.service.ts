@@ -1,6 +1,6 @@
 import type { Execution } from "../execution";
 import type { ConfigReader } from "../config/config.service";
-import type { Config } from "../config/schema";
+import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
 import type {
@@ -20,7 +20,7 @@ export class SandboxService {
   constructor(
     private readonly execution: Execution,
     private readonly provider: SandboxProvider,
-    private readonly profile?: { name: string; template?: string },
+    private readonly profile?: SandboxProfile & { name: string },
   ) {}
 
   list(): Promise<SandboxSummary[]> {
@@ -89,7 +89,7 @@ export class SandboxService {
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
-    const resolved = { ...input, image: input.image ?? this.profile?.template };
+    const resolved = resolveCreateInput(input, this.profile);
     validateSandboxInput(resolved.name, resolved.image);
     await this.provider.preflight();
 
@@ -132,7 +132,7 @@ export async function createSandboxService(
   return new SandboxService(
     execution,
     createSandboxProvider(name, onCreateOutput),
-    profileName === undefined ? undefined : { name: profileName, template: profile?.template },
+    profileName === undefined ? undefined : { ...profile, name: profileName },
   );
 }
 
@@ -173,4 +173,19 @@ function validateSandboxInput(name: string, image?: string): void {
       "Sandbox name and supplied image must not be empty.",
     );
   }
+}
+
+function resolveCreateInput(
+  input: CreateSandboxInput,
+  profile?: SandboxProfile,
+): CreateSandboxInput {
+  const kits = input.kits ?? profile?.kits;
+  const kitArgs = input.kitArgs ?? profile?.kit_args;
+
+  return {
+    ...input,
+    image: input.image ?? profile?.template,
+    ...(kits === undefined ? {} : { kits }),
+    ...(kitArgs === undefined ? {} : { kitArgs }),
+  };
 }

@@ -60,6 +60,7 @@ export const ConfigSchema = v.pipe(
 );
 
 export type Config = v.InferOutput<typeof ConfigSchema>;
+export type SandboxProfile = v.InferOutput<typeof profileSchema>;
 
 function configMap<T extends v.GenericSchema>(value: T) {
   const schema = v.pipe(
