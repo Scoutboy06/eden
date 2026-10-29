@@ -25,7 +25,7 @@
           '';
         in {
           default = pkgs.mkShell {
-            packages = [ eden pkgs.bun pkgs.zsh pkgs.coreutils ];
+            packages = [ eden pkgs.bun pkgs.bashInteractive pkgs.zsh pkgs.coreutils ];
             shellHook = ''
               eden_root="$PWD"
               while [ ! -f "$eden_root/apps/cli/src/main.ts" ] && [ "$eden_root" != / ]; do
