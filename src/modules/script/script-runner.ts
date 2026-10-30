@@ -40,7 +40,8 @@ export class ScriptRunner {
     const child = Bun.spawn([executable, ...args], {
       cwd,
       env: { ...process.env, ...env },
-      detached: true,
+      detached: !isWindows,
+      windowsHide: true,
       stdin: Buffer.from(input ?? ""),
       stdout: "pipe",
       stderr: "pipe",
@@ -96,11 +97,15 @@ async function captureOutput(stream: ReadableStream<Uint8Array>, onText?: (text:
   return output + tail;
 }
 
+const isWindows = process.platform === "win32";
+
 async function terminateGroup(
   pid: number,
   signal: NonNullable<RunOptions["killSignal"]>,
   graceMs: number,
 ): Promise<void> {
+  if (isWindows) return killWindowsTree(pid);
+
   signalGroup(pid, signal);
   if (signal === "SIGKILL") return;
 
@@ -114,4 +119,15 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
   }
+}
+
+async function killWindowsTree(pid: number): Promise<void> {
+  const killer = Bun.spawn(["taskkill", "/PID", String(pid), "/T", "/F"], {
+    windowsHide: true,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  await killer.exited;
 }
