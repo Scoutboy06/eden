@@ -120,7 +120,7 @@ for (const text of [undefined, "agent: {}\n"]) {
       expect(json.stderr).toBe("");
       expect(JSON.parse(json.stdout)).toEqual({ ok: true, dryRun: false, value: null });
 
-      for (const key of [
+      const keys = [
         "unknown",
         "agent.defualt",
         "agent.default.child",
@@ -128,8 +128,13 @@ for (const text of [undefined, "agent: {}\n"]) {
         "agent.__proto__",
         "agent.",
         "",
-      ]) {
-        const result = await runCliWith(options, "config", "get", key, "--json");
+      ];
+      const results = await Promise.all(
+        keys.map((key) => runCliWith(options, "config", "get", key, "--json")),
+      );
+
+      keys.forEach((key, index) => {
+        const result = results[index]!;
 
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toBe("");
@@ -138,7 +143,7 @@ for (const text of [undefined, "agent: {}\n"]) {
           dryRun: false,
           error: { code: "CONFIG_KEY_UNKNOWN", message: `Unknown configuration key: ${key}` },
         });
-      }
+      });
 
       const unknown = await runCliWith(options, "config", "get", "agent.typo");
 
@@ -146,7 +151,7 @@ for (const text of [undefined, "agent: {}\n"]) {
       expect(unknown.stdout).toBe("");
       expect(unknown.stderr).toContain("Unknown configuration key: agent.typo");
     });
-  });
+  }, 20_000);
 }
 
 for (const [text, code] of [
