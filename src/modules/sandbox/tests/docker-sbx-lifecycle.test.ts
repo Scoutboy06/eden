@@ -6,7 +6,7 @@ import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directo
 import { isRunning, waitForExit, waitForPid } from "../../script/tests/support/process";
 
 for (const operation of ["create", "stop", "readiness"] as const) {
-  test.each(["ignore", "descendant"])(
+  test.skipIf(process.platform === "win32").each(["ignore", "descendant"])(
     `${operation} cancellation terminates an uncooperative %s process group`,
     async (mode) => {
       await withTemporaryDirectory(async (directory) => {
