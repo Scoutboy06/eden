@@ -112,18 +112,21 @@ test("run inherits stdin", async () => {
   });
 });
 
-test.each(["interrupt", "ignore"])("run cancels the attached provider: %s", async (mode) => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, mode);
+test.skipIf(process.platform === "win32").each(["interrupt", "ignore"])(
+  "run cancels the attached provider: %s",
+  async (mode) => {
+    await withTemporaryDirectory(async (directory) => {
+      const options = await prepareSandboxCli(directory, mode);
 
-    await withRunningCli(options, ["sbx", "run", "--name", "example"], async (cli) => {
-      await cli.waitForReady(join(directory, "ready"));
-      cli.interrupt();
-      const result = await cli.result;
+      await withRunningCli(options, ["sbx", "run", "--name", "example"], async (cli) => {
+        await cli.waitForReady(join(directory, "ready"));
+        cli.interrupt();
+        const result = await cli.result;
 
-      expect(result.exitCode).toBe(130);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(130);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("");
+      });
     });
-  });
-});
+  },
+);
