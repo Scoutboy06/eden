@@ -14,6 +14,10 @@ bun run cli --help
 bun run cli setup
 ```
 
+To get an `eden` command on your `PATH` (including on Windows, where `bun link` creates
+an `eden.exe` shim in `~/.bun/bin`), run `bun link` in the checkout. Remove it again with
+`bun unlink`.
+
 Explore each command with `--help`.
 
 Configuration lives in `$XDG_CONFIG_HOME/eden`, falling back to `~/.config/eden`, on every

@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { runCli } from "../../../src/modules/cli";
 
 import completion from "./commands/completion";
