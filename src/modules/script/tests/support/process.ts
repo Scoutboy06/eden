@@ -17,6 +17,8 @@ export async function waitForPid(path: string): Promise<number> {
 }
 
 export async function isRunning(pid: number): Promise<boolean> {
+  if (process.platform === "win32") return isAlive(pid);
+
   try {
     const stat = await readFile(`/proc/${pid}/stat`, "utf8");
 
@@ -32,4 +34,16 @@ export async function waitForExit(pid: number): Promise<void> {
   const deadline = Date.now() + 1000;
 
   while ((await isRunning(pid)) && Date.now() < deadline) await Bun.sleep(10);
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+
+    throw error;
+  }
 }

@@ -243,3 +243,36 @@ test.each([false, true])(
     });
   },
 );
+
+test.each(["cancelled", "timeout"] as const)(
+  "terminates a process and its descendant promptly on %p",
+  async (reason) => {
+    await withTemporaryDirectory(async (directory) => {
+      const ready = join(directory, "ready");
+      const controller = new AbortController();
+      const run = ScriptRunner.run(await fixture("tree"), null, {
+        env: { EDEN_READY_FILE: ready },
+        signal: controller.signal,
+        timeoutMs: reason === "timeout" ? 1500 : 30_000,
+        killGraceMs: 50,
+      });
+      let pid: number | undefined;
+
+      try {
+        pid = await waitForPid(ready);
+        const startedAt = Date.now();
+        if (reason === "cancelled") controller.abort();
+        const result = await run;
+        await waitForExit(pid);
+
+        expect(result).toMatchObject({ outcome: reason });
+        expect(Date.now() - startedAt).toBeLessThan(5000);
+        expect(await isRunning(pid)).toBe(false);
+      } finally {
+        controller.abort();
+        await run;
+        if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
+      }
+    });
+  },
+);
