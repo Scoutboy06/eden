@@ -2,8 +2,12 @@ import { expect, test } from "bun:test";
 import { chmod, lstat, mkdir, readdir, readlink, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createExecution } from "../../execution";
+import { canCreateSymlinks } from "../../fs/tests/support/executable";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
+
+const symlinks = await canCreateSymlinks();
+const testSymlinks = test.skipIf(!symlinks);
 
 test("new global configurations use block-style YAML", async () => {
   await withTemporaryDirectory(async (directory) => {
@@ -182,7 +186,7 @@ test("dry-run records the write without creating directories or prompting about 
   });
 });
 
-test("atomic writes preserve an existing symlink and file permissions", async () => {
+testSymlinks("atomic writes preserve an existing symlink and file permissions", async () => {
   await withTemporaryDirectory(async (directory) => {
     const target = join(directory, "managed.yaml");
     const path = join(directory, "config.yaml");
@@ -203,7 +207,7 @@ test("atomic writes preserve an existing symlink and file permissions", async ()
 
 for (const absolute of [false, true]) {
   for (const dryRun of [false, true]) {
-    test.each(["set", "setup"] as const)(
+    testSymlinks.each(["set", "setup"] as const)(
       `dangling symlinks stay intact for %s with absolute=${absolute}, dryRun=${dryRun}`,
       async (method) => {
         await withTemporaryDirectory(async (directory) => {

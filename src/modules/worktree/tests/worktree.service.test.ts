@@ -3,6 +3,7 @@ import { lstat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createExecution } from "../../execution";
 import { HookService } from "../../hook/hook.service";
+import { canCreateSymlinks } from "../../fs/tests/support/executable";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { WorktreeService } from "../worktree.service";
 import { createRepository, git } from "./support/repository";
@@ -89,7 +90,7 @@ test("dry-run plans worktree creation without creating its parent directory or b
   });
 });
 
-test.each(["branch", "directory", "symlink"])(
+test.each(["branch", "directory", ...((await canCreateSymlinks()) ? ["symlink"] : [])])(
   "dry-run leaves %s collision handling to Git during execution",
   async (collision) => {
     await withTemporaryDirectory(async (directory) => {
