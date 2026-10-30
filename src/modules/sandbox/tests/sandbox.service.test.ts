@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createFileConfigService } from "../../config/config.service";
 import { findRepositoryPath } from "../../config/repository";
+import { rootPrefix } from "../../config/tests/support/root";
 import { createExecution } from "../../execution";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createSandboxService, SandboxService } from "../sandbox.service";
@@ -272,7 +273,7 @@ test("repository default provider is resolved from a nested directory without in
     await mkdir(nested, { recursive: true });
     await mkdir(join(repository, ".git"));
     await mkdir(join(repository, ".eden"));
-    await writeFile(global, "worktree_root: /global\n");
+    await writeFile(global, `worktree_root: ${rootPrefix}/global\n`);
     await writeFile(
       join(repository, ".eden", "config.yaml"),
       "sandbox: { default_provider: docker-sbx }\n",

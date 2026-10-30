@@ -4,6 +4,7 @@ import { ScriptRunner, type RunResult } from "../../script";
 import { SandboxError } from "../errors";
 import type { CreateSandboxInput, SandboxProvider, SandboxSummary } from "../provider";
 import type { ReadinessCheck, ReadinessResult } from "../readiness";
+import { saveTerminal, type TerminalSaver } from "./terminal";
 
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
 export type DockerCommandRunner = (
@@ -321,27 +322,31 @@ function diagnoseFailure(
   );
 }
 
-async function attachDockerSandbox(name: string): Promise<number> {
-  const terminalState = process.stdin.isTTY
-    ? Bun.spawnSync(["stty", "-g"], { stdin: "inherit", stdout: "pipe", stderr: "pipe" })
-    : undefined;
+export type AttachDependencies = {
+  saveTerminal?: TerminalSaver;
+  spawn?: (name: string) => ReturnType<typeof Bun.spawn>;
+  platform?: NodeJS.Platform;
+  isTerminal?: boolean;
+  killGraceMs?: number;
+};
 
-  if (terminalState && terminalState.exitCode !== 0) {
-    throw new SandboxError(
-      "SANDBOX_INVALID_INPUT",
-      "Could not save terminal settings before attaching.",
-    );
-  }
+export async function attachDockerSandbox(
+  name: string,
+  dependencies: AttachDependencies = {},
+): Promise<number> {
+  const platform = dependencies.platform ?? process.platform;
+  const restoreTerminal =
+    (dependencies.isTerminal ?? process.stdin.isTTY)
+      ? (dependencies.saveTerminal ?? (() => saveTerminal(platform)))()
+      : undefined;
 
   let child: ReturnType<typeof Bun.spawn>;
 
   try {
-    child = Bun.spawn(["sbx", "run", "--name", name], {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+    child = (dependencies.spawn ?? spawnDockerAttach)(name);
   } catch {
+    restoreTerminal?.();
+
     throw new SandboxError(
       "SANDBOX_PROVIDER_UNAVAILABLE",
       "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
@@ -354,8 +359,8 @@ async function attachDockerSandbox(name: string): Promise<number> {
     if (cancellationExitCode !== undefined) return;
 
     cancellationExitCode = 128 + constants.signals[signal];
-    child.kill(signal);
-    killTimer = setTimeout(() => child.kill("SIGKILL"), 1000);
+    if (!(platform === "win32" && signal === "SIGINT")) child.kill(signal);
+    killTimer = setTimeout(() => child.kill("SIGKILL"), dependencies.killGraceMs ?? 1000);
     killTimer.unref();
   };
   const interrupt = () => cancel("SIGINT");
@@ -371,13 +376,14 @@ async function attachDockerSandbox(name: string): Promise<number> {
     clearTimeout(killTimer);
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", terminate);
-
-    if (terminalState) {
-      Bun.spawnSync(["stty", terminalState.stdout.toString().trim()], {
-        stdin: "inherit",
-        stdout: "ignore",
-        stderr: "inherit",
-      });
-    }
+    restoreTerminal?.();
   }
+}
+
+function spawnDockerAttach(name: string): ReturnType<typeof Bun.spawn> {
+  return Bun.spawn(["sbx", "run", "--name", name], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
 }

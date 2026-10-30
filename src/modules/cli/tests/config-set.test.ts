@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
+
+const rootPrefix = process.platform === "win32" ? "C:" : "";
 
 test("config set creates directories and a minimal configuration, with silent success", async () => {
   await withTemporaryDirectory(async (directory) => {
@@ -24,7 +26,10 @@ test("config set creates directories and a minimal configuration, with silent su
 
 test("config set uses the home configuration fallback and reports JSON success", async () => {
   await withTemporaryDirectory(async (directory) => {
-    const options = { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: undefined } };
+    const options = {
+      cwd: directory,
+      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: undefined },
+    };
 
     const result = await runCliWith(options, "config", "set", "agent.default", "claude", "--json");
     const get = await runCliWith(options, "config", "get", "agent.default");
@@ -38,10 +43,10 @@ test("config set uses the home configuration fallback and reports JSON success",
 });
 
 for (const text of [
-  "# header\nagent:\n    default: 'codex'  # keep agent\n\nworktree_root : '/unchanged' # keep root\n",
-  "{ agent: { default: codex }, worktree_root: '/unchanged' } # keep\n",
-  "agent: {default: codex,} # keep\nworktree_root: /unchanged\n",
-  "agent:\r\n    default: codex # keep\r\nworktree_root: /unchanged\r\n",
+  `# header\nagent:\n    default: 'codex'  # keep agent\n\nworktree_root : '${rootPrefix}/unchanged' # keep root\n`,
+  `{ agent: { default: codex }, worktree_root: '${rootPrefix}/unchanged' } # keep\n`,
+  `agent: {default: codex,} # keep\nworktree_root: ${rootPrefix}/unchanged\n`,
+  `agent:\r\n    default: codex # keep\r\nworktree_root: ${rootPrefix}/unchanged\r\n`,
 ]) {
   test(`config set preserves unrelated formatting and comments in ${JSON.stringify(text)}`, async () => {
     await withTemporaryDirectory(async (directory) => {
@@ -64,9 +69,9 @@ for (const text of [
 }
 
 for (const text of [
-  "# header\nworktree_root : '/unchanged' # keep root\n",
-  "agent: {} # keep\nworktree_root : '/unchanged' # keep root\n",
-  "{worktree_root: /unchanged, } # keep\n",
+  `# header\nworktree_root : '${rootPrefix}/unchanged' # keep root\n`,
+  `agent: {} # keep\nworktree_root : '${rootPrefix}/unchanged' # keep root\n`,
+  `{worktree_root: ${rootPrefix}/unchanged, } # keep\n`,
 ]) {
   test(`config set adds missing mappings or settings in ${JSON.stringify(text)}`, async () => {
     await withTemporaryDirectory(async (directory) => {
@@ -86,10 +91,12 @@ for (const text of [
       expect(result).toEqual({ exitCode: 0, stdout: "", stderr: "" });
       expect(Bun.YAML.parse(edited)).toEqual({
         agent: { default: "claude" },
-        worktree_root: "/unchanged",
+        worktree_root: `${rootPrefix}/unchanged`,
       });
       expect(edited).toContain(
-        text.includes("# keep root") ? "worktree_root : '/unchanged' # keep root" : "# keep",
+        text.includes("# keep root")
+          ? `worktree_root : '${rootPrefix}/unchanged' # keep root`
+          : "# keep",
       );
     });
   });
@@ -97,13 +104,16 @@ for (const text of [
 
 for (const value of [
   "~/trees/../worktrees",
-  "/trees: with spaces/#literal",
-  "/true",
-  "/[literal]",
+  `${rootPrefix}/trees: with spaces/#literal`,
+  `${rootPrefix}/true`,
+  `${rootPrefix}/[literal]`,
 ]) {
   test(`config set stores the supplied string without normalization or YAML interpretation: ${value}`, async () => {
     await withTemporaryDirectory(async (directory) => {
-      const options = { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: directory } };
+      const options = {
+        cwd: directory,
+        env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: directory },
+      };
 
       const result = await runCliWith(options, "config", "set", "worktree_root", value);
       const text = await readFile(join(directory, "eden", "config.yaml"), "utf8");
@@ -113,7 +123,7 @@ for (const value of [
       expect(Bun.YAML.parse(text)).toEqual({ worktree_root: value });
       expect(get.exitCode).toBe(0);
       expect(JSON.parse(get.stdout).value).toBe(
-        value.startsWith("~/") ? join(directory, "worktrees") : value,
+        value.startsWith("~/") ? join(directory, "worktrees") : normalize(value),
       );
     });
   });

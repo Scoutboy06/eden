@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as v from "valibot";
 import type { Execution } from "../execution";
+import { findHookFile, HookResolutionError, resolveHookCommand } from "./hook-command";
 import { ScriptRunner, type RunResult } from "../script/script-runner";
 
 export type PreHookOutput = v.InferOutput<typeof PreHookOutputSchema>;
@@ -41,13 +42,20 @@ export class HookService {
     const directory =
       this.options.directory ??
       join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "eden", "hooks");
-    const path = join(directory, name);
 
     try {
+      const path = await findHookFile(directory, name);
+
+      if (!path) return;
+
       await lstat(path);
 
       return path;
     } catch (error) {
+      if (error instanceof HookResolutionError) {
+        throw new HookFailure({ code: error.code, message: error.message });
+      }
+
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
 
       throw error;
@@ -72,7 +80,9 @@ export class HookService {
         process.on("SIGTERM", cancel);
 
         try {
-          const result = await ScriptRunner.run(path, JSON.stringify(input), {
+          const command = await resolveHook(path);
+          const result = await ScriptRunner.run(command.executable, JSON.stringify(input), {
+            args: command.args,
             cwd,
             signal: controller.signal,
             onStderr: this.options.onStderr,
@@ -146,4 +156,16 @@ function describeHookError(name: string, cause: unknown): HookError {
     code: "HOOK_FAILED",
     message: `Hook ${name}: ${cause instanceof Error ? cause.message : String(cause)}`,
   };
+}
+
+async function resolveHook(path: string) {
+  try {
+    return await resolveHookCommand(path);
+  } catch (error) {
+    if (error instanceof HookResolutionError) {
+      throw new HookFailure({ code: error.code, message: error.message });
+    }
+
+    throw error;
+  }
 }

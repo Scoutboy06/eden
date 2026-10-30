@@ -16,7 +16,12 @@ async function fixture(directory: string) {
     await chmod(path, 0o755);
   }
 
-  return { repo, hooks, cwd: repo, env: { HOME: directory, XDG_CONFIG_HOME: config } };
+  return {
+    repo,
+    hooks,
+    cwd: repo,
+    env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: config },
+  };
 }
 
 test("hooks receive request and context, apply literal overwrites, and run post in the relative destination", async () => {
@@ -240,27 +245,30 @@ test.each(["", "dependency install complete\n"])(
   },
 );
 
-test("a non-executable hook fails rather than being skipped", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await fixture(directory);
-    await chmod(join(options.hooks, "worktree.create.pre"), 0o644);
-    const response = await runCliWith(
-      options,
-      "worktree",
-      "create",
-      "--name",
-      "permission",
-      "--json",
-    );
+test.skipIf(process.platform === "win32")(
+  "a non-executable hook fails rather than being skipped",
+  async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const options = await fixture(directory);
+      await chmod(join(options.hooks, "worktree.create.pre"), 0o644);
+      const response = await runCliWith(
+        options,
+        "worktree",
+        "create",
+        "--name",
+        "permission",
+        "--json",
+      );
 
-    expect(response.exitCode).toBe(1);
-    expect(JSON.parse(response.stdout).hooks[0]).toMatchObject({
-      ok: false,
-      error: { code: "HOOK_FAILED" },
+      expect(response.exitCode).toBe(1);
+      expect(JSON.parse(response.stdout).hooks[0]).toMatchObject({
+        ok: false,
+        error: { code: "HOOK_FAILED" },
+      });
+      expect(await git(options.repo, ["for-each-ref", "refs/heads/permission"])).toBe("");
     });
-    expect(await git(options.repo, ["for-each-ref", "refs/heads/permission"])).toBe("");
-  });
-});
+  },
+);
 
 test("dry-run discovers hooks without executing either script or creating directories", async () => {
   await withTemporaryDirectory(async (directory) => {
@@ -307,30 +315,33 @@ test("human mode streams diagnostics and keeps post stdout captured", async () =
   });
 });
 
-test("Ctrl+C stops the hook process group and emits a single cancellation response", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await fixture(directory);
-    const path = join(options.hooks, "worktree.create.pre");
-    await copyFile(new URL("./fixtures/wait-hook.ts", import.meta.url), path);
-    await chmod(path, 0o755);
-    const ready = join(directory, "ready");
-    await withRunningCli(
-      { ...options, env: { ...options.env, EDEN_TEST_READY: ready } },
-      ["worktree", "create", "--name", "cancelled", "--json"],
-      async (cli) => {
-        await cli.waitForReady(ready);
-        cli.interrupt();
-        const response = await cli.result;
+test.skipIf(process.platform === "win32")(
+  "Ctrl+C stops the hook process group and emits a single cancellation response",
+  async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const options = await fixture(directory);
+      const path = join(options.hooks, "worktree.create.pre");
+      await copyFile(new URL("./fixtures/wait-hook.ts", import.meta.url), path);
+      await chmod(path, 0o755);
+      const ready = join(directory, "ready");
+      await withRunningCli(
+        { ...options, env: { ...options.env, EDEN_TEST_READY: ready } },
+        ["worktree", "create", "--name", "cancelled", "--json"],
+        async (cli) => {
+          await cli.waitForReady(ready);
+          cli.interrupt();
+          const response = await cli.result;
 
-        expect(response.exitCode).toBe(130);
-        const data = JSON.parse(response.stdout);
-        expect(response.stderr).toBe("");
-        expect(data).toMatchObject({ ok: false, error: { code: "CANCELLED" } });
-        expect(data.hooks[0].stderr).toContain("cleanup");
-        const pids = /ready:(\d+):(\d+)/.exec(data.hooks[0].stderr)!;
-        expect(pids).not.toBeNull();
-        for (const pid of pids.slice(1)) expect(() => process.kill(Number(pid), 0)).toThrow();
-      },
-    );
-  });
-});
+          expect(response.exitCode).toBe(130);
+          const data = JSON.parse(response.stdout);
+          expect(response.stderr).toBe("");
+          expect(data).toMatchObject({ ok: false, error: { code: "CANCELLED" } });
+          expect(data.hooks[0].stderr).toContain("cleanup");
+          const pids = /ready:(\d+):(\d+)/.exec(data.hooks[0].stderr)!;
+          expect(pids).not.toBeNull();
+          for (const pid of pids.slice(1)) expect(() => process.kill(Number(pid), 0)).toThrow();
+        },
+      );
+    });
+  },
+);

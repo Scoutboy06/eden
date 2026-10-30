@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { chmod, copyFile, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { installExecutable, pathWith } from "../../fs/tests/support/executable";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createRepository, git } from "../../worktree/tests/support/repository";
 import { runCliWith } from "./support/cli";
@@ -24,11 +24,7 @@ test.each([...layers])(
       const agents = { global: "claude", repository: "codex", local: "opencode" };
       await mkdir(nested, { recursive: true });
       await mkdir(bin);
-      await copyFile(
-        fileURLToPath(new URL("./fixtures/sbx.ts", import.meta.url)),
-        join(bin, "sbx"),
-      );
-      await chmod(join(bin, "sbx"), 0o755);
+      await installExecutable(new URL("./fixtures/sbx.ts", import.meta.url), bin, "sbx");
 
       for (const layer of layers) {
         await mkdir(dirname(paths[layer]), { recursive: true });
@@ -46,7 +42,7 @@ test.each([...layers])(
         cwd: nested,
         env: {
           XDG_CONFIG_HOME: xdg,
-          PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH}`,
+          PATH: pathWith(bin),
         },
       };
 

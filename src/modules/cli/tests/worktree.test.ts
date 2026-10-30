@@ -10,7 +10,7 @@ test("worktree create wires the requested name to creation and reports the resul
     const repo = await createRepository(directory);
     const options = {
       cwd: repo,
-      env: { HOME: directory, XDG_CONFIG_HOME: join(directory, "config") },
+      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: join(directory, "config") },
     };
     const path = join(directory, ".worktrees", "repo", "fix-login");
     const base = await git(repo, ["rev-parse", "HEAD"]);

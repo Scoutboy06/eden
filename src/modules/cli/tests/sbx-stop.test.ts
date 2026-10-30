@@ -148,26 +148,32 @@ test("stop preserves provider diagnostics in a structured failure", async () => 
   });
 });
 
-test("stop cancellation reports CANCELLED without cleanup", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, "interrupt");
+test.skipIf(process.platform === "win32")(
+  "stop cancellation reports CANCELLED without cleanup",
+  async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const options = await prepareSandboxCli(directory, "interrupt");
 
-    await withRunningCli(options, ["sbx", "stop", "--name", "example", "--json"], async (cli) => {
-      await cli.waitForReady(options.env.EDEN_SBX_RUN_READY!);
+      await withRunningCli(options, ["sbx", "stop", "--name", "example", "--json"], async (cli) => {
+        await cli.waitForReady(options.env.EDEN_SBX_RUN_READY!);
 
-      cli.interrupt();
-      const result = await cli.result;
+        cli.interrupt();
+        const result = await cli.result;
 
-      expect(result.exitCode).toBe(130);
-      expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "CANCELLED" } });
-      expect(JSON.parse(result.stdout).error.message).toContain(
-        "no removal or cleanup was attempted",
-      );
-      expect(await sandboxCommands(directory)).toEqual([
-        ["ls", "--format", "json"],
-        ["stop", "--", "example"],
-      ]);
+        expect(result.exitCode).toBe(130);
+        expect(result.stderr).toBe("");
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: false,
+          error: { code: "CANCELLED" },
+        });
+        expect(JSON.parse(result.stdout).error.message).toContain(
+          "no removal or cleanup was attempted",
+        );
+        expect(await sandboxCommands(directory)).toEqual([
+          ["ls", "--format", "json"],
+          ["stop", "--", "example"],
+        ]);
+      });
     });
-  });
-});
+  },
+);

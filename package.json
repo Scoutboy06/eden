@@ -1,6 +1,9 @@
 {
   "name": "eden",
   "private": true,
+  "bin": {
+    "eden": "apps/cli/src/main.ts"
+  },
   "type": "module",
   "scripts": {
     "cli": "bun run apps/cli/src/main.ts",

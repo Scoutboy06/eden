@@ -21,7 +21,12 @@ export class ConfigError extends Error {
     readonly path: string,
     readonly issues: readonly ConfigIssue[] = [],
   ) {
-    super(`${path}: ${messages[code]}`);
+    super(
+      [
+        `${path}: ${messages[code]}`,
+        ...issues.map((issue) => `  ${issue.path ? `${issue.path}: ` : ""}${issue.message}`),
+      ].join("\n"),
+    );
     this.name = "ConfigError";
   }
 }
