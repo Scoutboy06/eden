@@ -30,7 +30,9 @@ async function withScript<T>(source: string, action: (path: string) => Promise<T
 
 async function complete(words: string[], source = script): Promise<string[]> {
   return withScript(source, async (path) => {
-    const output = await Bun.$`bash --noprofile --norc ${interaction} ${path} eden ${words}`.text();
+    const output = await Bun.$`bash --noprofile --norc ${interaction} ${path} eden ${words}`
+      .env({ ...process.env, MSYS: "noglob" })
+      .text();
     return output ? output.slice(0, -1).split("\0") : [];
   });
 }
