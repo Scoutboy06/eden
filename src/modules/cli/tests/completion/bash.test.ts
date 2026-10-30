@@ -136,6 +136,7 @@ bashTest(
   "Bash hides internal commands and hidden options while consuming hidden values",
   async () => {
     expect(await complete([""])).not.toContain("internal");
+    expect(await complete([""])).not.toContain("eden");
     expect(await complete(["choose", "--sec"])).toEqual([]);
     expect(await complete(["choose", "--secret", "alpha", "a"])).toEqual(["alpha"]);
   },

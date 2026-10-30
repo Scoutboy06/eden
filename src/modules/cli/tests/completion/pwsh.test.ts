@@ -92,6 +92,7 @@ pwshTest("PowerShell quotes shell-sensitive values literally", async () => {
 
 pwshTest("PowerShell hides internal commands and hidden options", async () => {
   expect(await complete("eden ")).not.toContain("internal");
+  expect(await complete("eden ")).not.toContain("eden");
   expect(await complete("eden choose --sec")).toEqual([]);
   expect(await complete("eden choose --secret alpha a")).toEqual(["alpha"]);
 });

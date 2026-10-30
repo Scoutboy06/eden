@@ -47,7 +47,7 @@ export default defineCommand({
         args: globals,
         commands: await Promise.all(
           [...(ctx.env.subCommands ?? [])]
-            .filter(([, command]) => !command.internal)
+            .filter(([name, command]) => !command.internal && name !== ctx.env.name)
             .map(([name, command]) => completionCommand(name, command, globals)),
         ),
       }),
