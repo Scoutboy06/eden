@@ -1,7 +1,21 @@
-import { chmod, copyFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+export async function runnableExecutable(source: URL | string) {
+  const script = source instanceof URL ? fileURLToPath(source) : source;
+
+  if (process.platform !== "win32") return script;
+
+  const directory = join(tmpdir(), "eden-test-shims");
+  const name = createHash("sha1").update(script).digest("hex");
+
+  await mkdir(directory, { recursive: true });
+
+  return installExecutable(script, directory, name);
+}
 
 export async function installExecutable(source: URL | string, directory: string, name: string) {
   const script = source instanceof URL ? fileURLToPath(source) : source;
