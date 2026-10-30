@@ -137,7 +137,12 @@ test.each(["xdg", "home"] as const)("reads the global configuration using %s", a
     const child = Bun.spawn(
       [process.execPath, fileURLToPath(new URL("./fixtures/read.ts", import.meta.url))],
       {
-        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: location === "xdg" ? xdg : "" },
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: location === "xdg" ? xdg : "",
+        },
         stdout: "pipe",
         stderr: "pipe",
       },

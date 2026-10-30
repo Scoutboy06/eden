@@ -12,7 +12,10 @@ test("config get selects the effective tree, subtree, and scalar leaves", async 
       "# keep this comment\nagent:\n  default: claude\nworktree_root: ~/trees/../worktrees\n";
     await mkdir(join(xdg, "eden"), { recursive: true });
     await writeFile(path, text);
-    const options = { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: xdg } };
+    const options = {
+      cwd: directory,
+      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: xdg },
+    };
 
     const whole = await runCliWith(options, "config", "get");
     const subtree = await runCliWith(options, "config", "get", "agent");
@@ -61,7 +64,10 @@ test("config get uses the home configuration directory when XDG_CONFIG_HOME is u
     await writeFile(join(configDirectory, "config.yaml"), "agent:\n  default: claude\n");
 
     const result = await runCliWith(
-      { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: undefined } },
+      {
+        cwd: directory,
+        env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: undefined },
+      },
       "config",
       "get",
       "agent.default",
@@ -75,7 +81,7 @@ test("config get applies defaults without creating missing configuration", async
   await withTemporaryDirectory(async (directory) => {
     const options = {
       cwd: directory,
-      env: { HOME: directory, XDG_CONFIG_HOME: join(directory, "missing") },
+      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: join(directory, "missing") },
     };
 
     const result = await runCliWith(options, "config", "get", "--json");
@@ -89,7 +95,7 @@ test("config get applies defaults without creating missing configuration", async
       value: { worktree_root: join(directory, ".worktrees") },
     });
     expect(root).toEqual({ exitCode: 0, stdout: `${join(directory, ".worktrees")}\n`, stderr: "" });
-    expect(await readdir(directory)).toEqual([]);
+    expect((await readdir(directory)).filter((name) => name !== ".bun")).toEqual([]);
   });
 });
 
@@ -101,7 +107,10 @@ for (const text of [undefined, "agent: {}\n"]) {
         await mkdir(join(xdg, "eden"), { recursive: true });
         await writeFile(join(xdg, "eden", "config.yaml"), text);
       }
-      const options = { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: xdg } };
+      const options = {
+        cwd: directory,
+        env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: xdg },
+      };
 
       const unset = await runCliWith(options, "config", "get", "agent.default");
       const json = await runCliWith(options, "config", "get", "agent.default", "--json");

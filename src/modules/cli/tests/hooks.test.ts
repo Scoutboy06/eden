@@ -16,7 +16,12 @@ async function fixture(directory: string) {
     await chmod(path, 0o755);
   }
 
-  return { repo, hooks, cwd: repo, env: { HOME: directory, XDG_CONFIG_HOME: config } };
+  return {
+    repo,
+    hooks,
+    cwd: repo,
+    env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: config },
+  };
 }
 
 test("hooks receive request and context, apply literal overwrites, and run post in the relative destination", async () => {

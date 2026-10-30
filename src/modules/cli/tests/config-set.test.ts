@@ -24,7 +24,10 @@ test("config set creates directories and a minimal configuration, with silent su
 
 test("config set uses the home configuration fallback and reports JSON success", async () => {
   await withTemporaryDirectory(async (directory) => {
-    const options = { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: undefined } };
+    const options = {
+      cwd: directory,
+      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: undefined },
+    };
 
     const result = await runCliWith(options, "config", "set", "agent.default", "claude", "--json");
     const get = await runCliWith(options, "config", "get", "agent.default");
@@ -103,7 +106,10 @@ for (const value of [
 ]) {
   test(`config set stores the supplied string without normalization or YAML interpretation: ${value}`, async () => {
     await withTemporaryDirectory(async (directory) => {
-      const options = { cwd: directory, env: { HOME: directory, XDG_CONFIG_HOME: directory } };
+      const options = {
+        cwd: directory,
+        env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: directory },
+      };
 
       const result = await runCliWith(options, "config", "set", "worktree_root", value);
       const text = await readFile(join(directory, "eden", "config.yaml"), "utf8");
