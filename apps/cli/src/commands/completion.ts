@@ -7,12 +7,14 @@ import {
 } from "../../../../src/modules/cli/completion/generator";
 import { ZshCompletionGenerator } from "../../../../src/modules/cli/completion/zsh/generator";
 import { BashCompletionGenerator } from "../../../../src/modules/cli/completion/bash/generator";
+import { PowerShellCompletionGenerator } from "../../../../src/modules/cli/completion/pwsh/generator";
 
-const shells = ["zsh", "bash"] as const;
+const shells = ["zsh", "bash", "pwsh"] as const;
 
 const generators = {
   zsh: new ZshCompletionGenerator(),
   bash: new BashCompletionGenerator(),
+  pwsh: new PowerShellCompletionGenerator(),
 } satisfies Record<(typeof shells)[number], CompletionGenerator>;
 
 const args = {
