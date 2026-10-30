@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFileConfigService } from "../config.service";
 import { createExecution } from "../../execution";
+import { rootPrefix } from "./support/root";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 
 test("merges layers without letting defaults or empty mappings replace configured leaves", async () => {
@@ -92,8 +93,14 @@ test("uses explicit repository context rather than the working directory", async
     const configHome = join(directory, "xdg");
     await mkdir(join(repository, ".eden"), { recursive: true });
     await mkdir(join(configHome, "eden"), { recursive: true });
-    await writeFile(join(configHome, "eden", "config.yaml"), "worktree_root: /global\n");
-    await writeFile(join(repository, ".eden", "config.yaml"), "worktree_root: /repository\n");
+    await writeFile(
+      join(configHome, "eden", "config.yaml"),
+      `worktree_root: ${rootPrefix}/global\n`,
+    );
+    await writeFile(
+      join(repository, ".eden", "config.yaml"),
+      `worktree_root: ${rootPrefix}/repository\n`,
+    );
     await writeFile(join(repository, ".eden", "config.local.yaml"), "agent:\n  default: claude\n");
 
     for (const explicit of [false, true]) {
@@ -120,8 +127,8 @@ test("uses explicit repository context rather than the working directory", async
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual(
         explicit
-          ? { worktree_root: "/repository", agent: { default: "claude" } }
-          : { worktree_root: "/global" },
+          ? { worktree_root: normalize(`${rootPrefix}/repository`), agent: { default: "claude" } }
+          : { worktree_root: normalize(`${rootPrefix}/global`) },
       );
     }
   });

@@ -5,6 +5,7 @@ import { createExecution } from "../../execution";
 import { canCreateSymlinks } from "../../fs/tests/support/executable";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
+import { rootPrefix } from "./support/root";
 
 const symlinks = await canCreateSymlinks();
 const testSymlinks = test.skipIf(!symlinks);
@@ -33,7 +34,7 @@ test("global draft reads the original path spelling and excludes repository valu
     await writeFile(path, "worktree_root: ~/.saved\n");
     await writeFile(
       repository,
-      "worktree_root: /repository\nsandbox:\n  default_provider: docker-sbx\n",
+      `worktree_root: ${rootPrefix}/repository\nsandbox:\n  default_provider: docker-sbx\n`,
     );
     const execution = createExecution({ dryRun: false });
     const service = createFileConfigService({ pathsLowToHigh: [path, repository], execution });

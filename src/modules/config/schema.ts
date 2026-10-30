@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { sandboxProviderNames } from "../sandbox/provider";
 
 const AGENTS = ["codex", "claude", "opencode", "omp"] as const;
@@ -20,15 +20,35 @@ const agentSchema = v.pipe(
   ),
 );
 
-const worktreeRootSchema = v.pipe(
-  v.string(),
-  v.check((path) => !path.includes("\0"), "Expected a path without null bytes"),
-  v.transform((path) =>
-    path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path,
-  ),
-  v.check(isAbsolute, "Expected an absolute path or a path starting with ~/"),
-  v.transform(normalize),
-);
+const WINDOWS_ROOT = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/]+[^\\/]+)/;
+
+export function createWorktreeRootSchema(
+  platform: NodeJS.Platform = process.platform,
+  home: () => string = homedir,
+) {
+  const windows = platform === "win32";
+  const path = windows ? win32 : posix;
+  const expectation = windows
+    ? "Expected worktree_root to be a path starting with a drive letter (C:\\ or C:/), a UNC share (\\\\server\\share), or ~/ or ~\\"
+    : "Expected an absolute path or a path starting with ~/";
+
+  return v.pipe(
+    v.string(),
+    v.check((value) => !value.includes("\0"), "Expected a path without null bytes"),
+    v.transform((value) => {
+      if (value === "~") return home();
+
+      if (value.startsWith("~/") || (windows && value.startsWith("~\\")))
+        return path.join(home(), value.slice(2));
+
+      return value;
+    }),
+    v.check((value) => (windows ? WINDOWS_ROOT.test(value) : path.isAbsolute(value)), expectation),
+    v.transform((value) => path.normalize(value)),
+  );
+}
+
+const worktreeRootSchema = createWorktreeRootSchema();
 
 const nonEmptyString = v.pipe(v.string(), v.nonEmpty());
 const kitArgumentSchema = v.union([v.string(), v.number(), v.boolean()]);
