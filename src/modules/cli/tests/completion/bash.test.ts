@@ -14,6 +14,9 @@ beforeAll(async () => {
   script = await Bun.$`${process.execPath} ${fixture} completion bash --stdout`.text();
 });
 
+const bashTest = test.skipIf(Bun.which("bash") === null);
+const readlineTest = test.skipIf(Bun.which("bash") === null || Bun.which("zsh") === null);
+
 async function withScript<T>(source: string, action: (path: string) => Promise<T>): Promise<T> {
   const directory = await mkdtemp(join(tmpdir(), "eden-bash-completion-"));
   try {
@@ -32,7 +35,7 @@ async function complete(words: string[], source = script): Promise<string[]> {
   });
 }
 
-test("Bash Readline inserts choices safely with its default word breaks", async () => {
+readlineTest("Bash Readline inserts choices safely with its default word breaks", async () => {
   for (const [input, expected] of [
     ["eden workspace create --output=j", "workspace create --output=json"],
     [
@@ -53,7 +56,7 @@ test("Bash Readline inserts choices safely with its default word breaks", async 
   }
 });
 
-test("Bash completes application commands and global options", async () => {
+bashTest("Bash completes application commands and global options", async () => {
   const result = await runCli("completion", "bash", "--stdout", "--json");
 
   expect(result.exitCode).toBe(0);
@@ -65,15 +68,18 @@ test("Bash completes application commands and global options", async () => {
   expect(await complete(["mkdir", "-"], result.stdout)).toContain("-v");
 });
 
-test("Bash completes nested commands after global flags without invoking handlers", async () => {
-  expect(await complete(["--json", "workspace", "cr"])).toEqual(["create"]);
-  expect(await complete(["workspace", "--dry-run", "create", "--workspace-ro"])).toEqual([
-    "--workspace-root",
-  ]);
-  expect(await complete(["workspace", "create", "-"])).toContain("-o");
-});
+bashTest(
+  "Bash completes nested commands after global flags without invoking handlers",
+  async () => {
+    expect(await complete(["--json", "workspace", "cr"])).toEqual(["create"]);
+    expect(await complete(["workspace", "--dry-run", "create", "--workspace-ro"])).toEqual([
+      "--workspace-root",
+    ]);
+    expect(await complete(["workspace", "create", "-"])).toContain("-o");
+  },
+);
 
-test("Bash completes separate, attached, and word-broken option choices", async () => {
+bashTest("Bash completes separate, attached, and word-broken option choices", async () => {
   for (const words of [
     ["--output", "j"],
     ["-o", "j"],
@@ -87,7 +93,7 @@ test("Bash completes separate, attached, and word-broken option choices", async 
   expect(await complete(["workspace", "create", "--output", "=", ""])).toEqual(["table", "json"]);
 });
 
-test("Bash consumes option values before finding the next positional", async () => {
+bashTest("Bash consumes option values before finding the next positional", async () => {
   expect(
     await complete(["workspace", "create", "--workspace-root", "choose", "--output", "j"]),
   ).toEqual(["json"]);
@@ -96,15 +102,18 @@ test("Bash consumes option values before finding the next positional", async () 
   expect(await complete(["choose", "--format", "--", "a"])).toEqual(["alpha"]);
 });
 
-test("Bash completes declared positional choices and respects the option delimiter", async () => {
-  expect(await complete(["completion", "b"])).toEqual(["bash"]);
-  expect(await complete(["choose", "--", "--d"])).toEqual(["--dash"]);
-  expect(await complete(["choose", "--", "alpha", "t"])).toEqual(["two"]);
-  expect(await complete(["workspace", "create", "--", "--out"])).toEqual([]);
-  expect(await complete(["choose", "alpha", "two", ""])).toEqual([]);
-});
+bashTest(
+  "Bash completes declared positional choices and respects the option delimiter",
+  async () => {
+    expect(await complete(["completion", "b"])).toEqual(["bash"]);
+    expect(await complete(["choose", "--", "--d"])).toEqual(["--dash"]);
+    expect(await complete(["choose", "--", "alpha", "t"])).toEqual(["two"]);
+    expect(await complete(["workspace", "create", "--", "--out"])).toEqual([]);
+    expect(await complete(["choose", "alpha", "two", ""])).toEqual([]);
+  },
+);
 
-test("Bash keeps shell-sensitive values literal and preserves whitespace", async () => {
+bashTest("Bash keeps shell-sensitive values literal and preserves whitespace", async () => {
   expect(await complete(["workspace", "create", "--label", "l"])).toEqual([
     String.raw`literal:\ \[x\]\ don\'t\ \$\(print\ INJECTED\)`,
   ]);
@@ -116,13 +125,16 @@ test("Bash keeps shell-sensitive values literal and preserves whitespace", async
   ]);
 });
 
-test("Bash handles colon word breaks without evaluating command names", async () => {
+bashTest("Bash handles colon word breaks without evaluating command names", async () => {
   expect(await complete(["odd"])).toEqual(["odd:command"]);
   expect(await complete(["odd", ":", "co"])).toEqual(["command"]);
 });
 
-test("Bash hides internal commands and hidden options while consuming hidden values", async () => {
-  expect(await complete([""])).not.toContain("internal");
-  expect(await complete(["choose", "--sec"])).toEqual([]);
-  expect(await complete(["choose", "--secret", "alpha", "a"])).toEqual(["alpha"]);
-});
+bashTest(
+  "Bash hides internal commands and hidden options while consuming hidden values",
+  async () => {
+    expect(await complete([""])).not.toContain("internal");
+    expect(await complete(["choose", "--sec"])).toEqual([]);
+    expect(await complete(["choose", "--secret", "alpha", "a"])).toEqual(["alpha"]);
+  },
+);

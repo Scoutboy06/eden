@@ -8,6 +8,8 @@ import { runCli } from "../support/cli";
 const interaction = fileURLToPath(new URL("../fixtures/complete.zsh", import.meta.url));
 const fixture = fileURLToPath(new URL("../fixtures/completion.ts", import.meta.url));
 
+const zshTest = test.skipIf(Bun.which("zsh") === null);
+
 async function complete(script: string, input: string) {
   const directory = await mkdtemp(join(tmpdir(), "eden-completion-"));
   try {
@@ -19,7 +21,7 @@ async function complete(script: string, input: string) {
   }
 }
 
-test("the generated Zsh script completes an application command", async () => {
+zshTest("the generated Zsh script completes an application command", async () => {
   const result = await runCli("completion", "zsh", "--stdout");
 
   expect(result.exitCode).toBe(0);
@@ -27,7 +29,7 @@ test("the generated Zsh script completes an application command", async () => {
   expect(await complete(result.stdout, "eden mk")).toContain("RESULT:mkdir\r\n");
 });
 
-test("Zsh completes a global option after a command", async () => {
+zshTest("Zsh completes a global option after a command", async () => {
   const result = await runCli("completion", "zsh", "--stdout");
 
   expect(await complete(result.stdout, "eden mkdir --dry-r")).toContain(
@@ -35,7 +37,7 @@ test("Zsh completes a global option after a command", async () => {
   );
 });
 
-test("Zsh does not complete positional input as an option after --", async () => {
+zshTest("Zsh does not complete positional input as an option after --", async () => {
   const result = await runCli("completion", "zsh", "--stdout");
 
   expect(await complete(result.stdout, "eden mkdir -- --dry-r")).toContain(
@@ -43,7 +45,7 @@ test("Zsh does not complete positional input as an option after --", async () =>
   );
 });
 
-test("Zsh offers the parser's short option aliases", async () => {
+zshTest("Zsh offers the parser's short option aliases", async () => {
   const result = await runCli("completion", "zsh", "--stdout");
   const output = await complete(result.stdout, "eden mkdir -\t");
 
@@ -51,13 +53,13 @@ test("Zsh offers the parser's short option aliases", async () => {
   expect(output).toMatch(/\s-v\s/);
 });
 
-test("Zsh completes a nested command without invoking its handler", async () => {
+zshTest("Zsh completes a nested command without invoking its handler", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
 
   expect(await complete(script, "eden workspace cr")).toContain("RESULT:workspace create\r\n");
 });
 
-test("Zsh completes a nested command's declared option values", async () => {
+zshTest("Zsh completes a nested command's declared option values", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
 
   expect(await complete(script, "eden workspace create --output j")).toContain(
@@ -65,7 +67,7 @@ test("Zsh completes a nested command's declared option values", async () => {
   );
 });
 
-test("Zsh completes inline option values after preceding global flags", async () => {
+zshTest("Zsh completes inline option values after preceding global flags", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
 
   expect(await complete(script, "eden --json workspace create --output=j")).toContain(
@@ -73,13 +75,13 @@ test("Zsh completes inline option values after preceding global flags", async ()
   );
 });
 
-test("Zsh completes the declared shell positional choice", async () => {
+zshTest("Zsh completes the declared shell positional choice", async () => {
   const result = await runCli("completion", "zsh", "--stdout");
 
   expect(await complete(result.stdout, "eden completion z")).toContain("RESULT:completion zsh\r\n");
 });
 
-test("Zsh treats shell-sensitive descriptions and choices as literal text", async () => {
+zshTest("Zsh treats shell-sensitive descriptions and choices as literal text", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
   const output = await complete(script, "eden workspace create --label l");
 
@@ -89,13 +91,13 @@ test("Zsh treats shell-sensitive descriptions and choices as literal text", asyn
   expect(output).not.toContain("\r\nINJECTED\r\n");
 });
 
-test("Zsh completes command names containing a description delimiter", async () => {
+zshTest("Zsh completes command names containing a description delimiter", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
 
   expect(await complete(script, "eden odd")).toContain("RESULT:odd:command\r\n");
 });
 
-test("Zsh uses the option spelling accepted by a kebab-case command", async () => {
+zshTest("Zsh uses the option spelling accepted by a kebab-case command", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
 
   expect(await complete(script, "eden workspace create --workspace-ro")).toContain(
@@ -103,7 +105,7 @@ test("Zsh uses the option spelling accepted by a kebab-case command", async () =
   );
 });
 
-test("Zsh displays option descriptions without interpreting their punctuation", async () => {
+zshTest("Zsh displays option descriptions without interpreting their punctuation", async () => {
   const script = await Bun.$`${process.execPath} ${fixture} completion zsh --stdout`.text();
   const output = await complete(script, "eden workspace create --\t");
 
