@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { symlink } from "node:fs/promises";
 import { join } from "node:path";
+import { installExecutable, pathWith } from "../../fs/tests/support/executable";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { ScriptRunner, type RunOptions, type RunResult } from "../index";
 import { isRunning, waitForExit, waitForPid } from "./support/process";
@@ -59,8 +59,8 @@ test("resolves relative executables against cwd and merges environment overrides
 
 test("searches bare executable names using the effective PATH", async () => {
   await withTemporaryDirectory(async (directory) => {
-    await symlink(fixture("inspect"), join(directory, "eden-test-hook"));
-    const path = `${directory}:${process.env.PATH}`;
+    await installExecutable(fixture("inspect"), directory, "eden-test-hook");
+    const path = pathWith(directory);
 
     const result = await ScriptRunner.run("eden-test-hook", null, { env: { PATH: path } });
 

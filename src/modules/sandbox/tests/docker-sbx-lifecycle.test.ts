@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { chmod, copyFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installExecutable, pathWith } from "../../fs/tests/support/executable";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { isRunning, waitForExit, waitForPid } from "../../script/tests/support/process";
 
@@ -78,10 +78,8 @@ test.each(["success", "failure"])(
 );
 
 async function startProvider(directory: string, operation: string, mode: string) {
-  const executable = join(directory, "sbx");
   const ready = join(directory, "ready");
-  await copyFile(new URL("./fixtures/sbx.ts", import.meta.url), executable);
-  await chmod(executable, 0o755);
+  await installExecutable(new URL("./fixtures/sbx.ts", import.meta.url), directory, "sbx");
   const child = Bun.spawn(
     [
       process.execPath,
@@ -94,7 +92,7 @@ async function startProvider(directory: string, operation: string, mode: string)
       stderr: "pipe",
       env: {
         ...process.env,
-        PATH: `${directory}:${dirname(process.execPath)}:${process.env.PATH}`,
+        PATH: pathWith(directory),
         EDEN_SBX_TEST_MODE: mode,
         EDEN_SBX_TEST_READY: ready,
       },
