@@ -28,18 +28,12 @@ export function NavMain({ items }: { items: readonly NavigationItem[] }) {
             render={<Link to={item.href} />}
             tooltip={item.title}
             isActive={pathname === item.href}
-            className="font-semibold"
           >
-            <HugeiconsIcon icon={item.icon} strokeWidth={1.8} />
+            <HugeiconsIcon icon={item.icon} strokeWidth={2} />
             <span>{item.title}</span>
           </SidebarMenuButton>
           {item.badge && (
-            <SidebarMenuBadge
-              className={cn(
-                "h-4 min-w-0 rounded-full px-1.5 peer-data-[size=default]/menu-button:top-2 font-mono text-[10px] ",
-                badgeTones[item.badge.tone],
-              )}
-            >
+            <SidebarMenuBadge className={cn("rounded-full font-mono", badgeTones[item.badge.tone])}>
               {item.badge.count}
             </SidebarMenuBadge>
           )}

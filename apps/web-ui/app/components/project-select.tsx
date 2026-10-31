@@ -17,7 +17,7 @@ export function ProjectSelect() {
     <Select value={project} onValueChange={(next) => next !== null && setProject(next)}>
       <SelectTrigger
         aria-label="Project"
-        className="w-full bg-sidebar-accent font-semibold text-sidebar-accent-foreground group-data-[collapsible=icon]:hidden"
+        className="w-full bg-sidebar-accent text-sidebar-accent-foreground group-data-[collapsible=icon]:hidden"
       >
         <SelectValue>{project}</SelectValue>
       </SelectTrigger>

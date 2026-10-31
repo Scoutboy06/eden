@@ -21,7 +21,7 @@ export function AppSidebar(props: ComponentProps<typeof Sidebar>) {
         <ProjectSelect />
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup className="py-0">
+        <SidebarGroup>
           <NavMain items={topItems} />
         </SidebarGroup>
         <SidebarSeparator className="mt-auto" />

@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 
 import { AppSidebar } from "@/components/app-sidebar";
-import { SiteHeader } from "@/components/site-header";
+import { PageTitle } from "@/components/page-title";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { navigation } from "@/navigation";
@@ -16,15 +16,14 @@ export function AppLayout() {
       <SidebarProvider
         style={
           {
-            "--sidebar-width": "calc(var(--spacing) * 40)",
-            "--header-height": "calc(var(--spacing) * 12)",
+            "--sidebar-width": "calc(var(--spacing) * 64)",
           } as CSSProperties
         }
       >
         <AppSidebar />
         <SidebarInset>
-          <SiteHeader heading={heading} />
-          <main className="flex flex-1 flex-col p-4 lg:p-6">
+          <main className="flex flex-1 flex-col gap-2.5 p-4 lg:p-6">
+            <PageTitle title={heading} />
             <Outlet />
           </main>
         </SidebarInset>

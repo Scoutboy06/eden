@@ -46,26 +46,28 @@ export function SettingsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const settings = useThemeSettings();
-  const controls = [
-    {
-      key: "mode",
-      label: "Mode",
-      description: "Use a light, dark, or system-controlled appearance.",
-      options: modeOptions,
-    },
-    {
-      key: "lightTheme",
-      label: "Light theme",
-      description: "Choose the recipe used in light mode.",
-      options: themeCatalog.options,
-    },
-    {
-      key: "darkTheme",
-      label: "Dark theme",
-      description: "Choose the recipe used in dark mode.",
-      options: themeCatalog.options,
-    },
-  ] as const;
+  const controls = (
+    [
+      {
+        key: "mode",
+        label: "Mode",
+        description: "Use a light, dark, or system-controlled appearance.",
+        options: modeOptions,
+      },
+      {
+        key: "lightTheme",
+        label: "Light theme",
+        description: "Choose the recipe used in light mode.",
+        options: themeCatalog.options,
+      },
+      {
+        key: "darkTheme",
+        label: "Dark theme",
+        description: "Choose the recipe used in dark mode.",
+        options: themeCatalog.options,
+      },
+    ] as const
+  ).filter((control) => control.options.length > 1);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

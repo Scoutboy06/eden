@@ -14,7 +14,7 @@ export interface ThemeSettings {
 // Keep in sync with the bootstrap script in index.html.
 const storageKey = "eden.theme-settings";
 const themeStylesheetId = "application-theme";
-const defaults: ThemeSettings = { mode: "system", lightTheme: "workbench", darkTheme: "workbench" };
+const defaults: ThemeSettings = { mode: "system", lightTheme: "default", darkTheme: "default" };
 
 const listeners = new Set<() => void>();
 let current = readStoredSettings();
