@@ -4,6 +4,9 @@
   "bin": {
     "eden": "apps/cli/src/main.ts"
   },
+  "workspaces": [
+    "apps/web-ui"
+  ],
   "type": "module",
   "scripts": {
     "cli": "bun run apps/cli/src/main.ts",
@@ -13,7 +16,9 @@
     "fmt:check": "oxfmt --check",
     "analyze": "fallow",
     "check": "bun run lint && bun run fmt:check && bun run analyze",
-    "prepare": "husky"
+    "prepare": "husky",
+    "web:dev": "bun run --cwd apps/web-ui dev",
+    "web:build": "bun run --cwd apps/web-ui build"
   },
   "dependencies": {
     "@clack/core": "^1.5.1",

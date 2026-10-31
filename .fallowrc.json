@@ -1,6 +1,15 @@
 {
-  "entry": ["src/modules/script/tests/fixtures/*.ts"],
+  "entry": ["src/modules/script/tests/fixtures/*.ts", "apps/web-ui/app/entry-client.tsx"],
   "typeAware": {
     "enabled": true
+  },
+  "ignoreExports": [
+    {
+      "file": "apps/web-ui/app/components/ui/**",
+      "exports": ["*"]
+    }
+  ],
+  "health": {
+    "maxCrap": 0
   }
 }
