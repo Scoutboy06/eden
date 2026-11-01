@@ -1,4 +1,6 @@
-export type ErrorDescription = { code: string; message: string };
+import { ConfigError, type ConfigIssue } from "../config/errors";
+
+export type ErrorDescription = { code: string; message: string; issues?: readonly ConfigIssue[] };
 
 export function describeError(error: unknown, fallbackCode: string): ErrorDescription {
   if (error instanceof AggregateError) {
@@ -13,7 +15,13 @@ export function describeError(error: unknown, fallbackCode: string): ErrorDescri
         };
   }
 
-  return { code: errorCode(error) ?? fallbackCode, message: errorMessage(error) };
+  return {
+    code: errorCode(error) ?? fallbackCode,
+    message: errorMessage(error),
+    ...(error instanceof ConfigError && error.code === "CONFIG_SCHEMA_INVALID"
+      ? { issues: error.issues }
+      : {}),
+  };
 }
 
 function errorCode(error: unknown): string | undefined {

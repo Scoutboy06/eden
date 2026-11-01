@@ -154,6 +154,38 @@ for (const text of [undefined, "agent: {}\n"]) {
   }, 20_000);
 }
 
+test.each([false, true])("config get reports all invalid settings (json=%s)", async (json) => {
+  await withTemporaryDirectory(async (directory) => {
+    const path = join(directory, "eden", "config.yaml");
+    const text = "agent:\n  default: unsupported\nworktree_root: relative\n";
+    await mkdir(join(directory, "eden"));
+    await writeFile(path, text);
+
+    const result = await runCliWith(
+      { cwd: directory, env: { XDG_CONFIG_HOME: directory } },
+      "config",
+      "get",
+      ...(json ? ["--json"] : []),
+    );
+
+    expect(result.exitCode).toBe(1);
+    if (json) {
+      const error = JSON.parse(result.stdout).error;
+      expect(error.code).toBe("CONFIG_SCHEMA_INVALID");
+      expect(error.issues).toEqual([
+        { path: "agent.default", message: "Expected codex, claude, or opencode" },
+        { path: "worktree_root", message: expect.stringContaining("Expected") },
+      ]);
+      for (const issue of error.issues)
+        expect(error.message).toContain(`${issue.path}: ${issue.message}`);
+    } else {
+      expect(result.stderr).toContain("agent.default: Expected codex, claude, or opencode");
+      expect(result.stderr).toContain("worktree_root: Expected");
+    }
+    expect(await readFile(path, "utf8")).toBe(text);
+  });
+});
+
 for (const [text, code] of [
   ["agent: [", "CONFIG_YAML_INVALID"],
   ["agent:\n  default: unsupported\n", "CONFIG_SCHEMA_INVALID"],

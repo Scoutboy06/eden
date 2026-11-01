@@ -6,6 +6,38 @@ import { runCliWith } from "./support/cli";
 
 const rootPrefix = process.platform === "win32" ? "C:" : "";
 
+test.each([false, true])(
+  "config set reports invalid values and preserves the file (json=%s)",
+  async (json) => {
+    await withTemporaryDirectory(async (directory) => {
+      const path = join(directory, "eden", "config.yaml");
+      const text = "# unchanged\nagent:\n  default: codex\n";
+      await mkdir(join(directory, "eden"));
+      await writeFile(path, text);
+
+      const result = await runCliWith(
+        { cwd: directory, env: { XDG_CONFIG_HOME: directory } },
+        "config",
+        "set",
+        "agent.default",
+        "unsupported",
+        ...(json ? ["--json"] : []),
+      );
+
+      expect(result.exitCode).toBe(1);
+      if (json) {
+        expect(JSON.parse(result.stdout).error).toMatchObject({
+          code: "CONFIG_SCHEMA_INVALID",
+          issues: [{ path: "agent.default", message: "Expected codex, claude, or opencode" }],
+        });
+      } else {
+        expect(result.stderr).toContain("agent.default: Expected codex, claude, or opencode");
+      }
+      expect(await readFile(path, "utf8")).toBe(text);
+    });
+  },
+);
+
 test("config set creates directories and a minimal configuration, with silent success", async () => {
   await withTemporaryDirectory(async (directory) => {
     const xdg = join(directory, "missing", "config");
