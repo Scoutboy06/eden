@@ -153,11 +153,22 @@ const list = defineCommand({
       choices: sandboxProviderNames,
       description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
+    "check-updates": { type: "boolean", description: "Check image freshness against registries" },
   },
 
-  async run(ctx, { sandbox, output }) {
+  async run(ctx, { sandbox, output, readResolvedConfig, checkSandboxFreshness }) {
     const service = await sandbox(ctx.values.provider);
     const sandboxes = await service.list();
+    if (ctx.values["check-updates"]) {
+      const config = await readResolvedConfig();
+      const result = await checkSandboxFreshness(sandboxes, config.config.sandbox?.profiles ?? {});
+      output.write({
+        data: result,
+        human: () =>
+          `${formatSandboxes(result.sandboxes)}${result.sandboxes.map((entry) => `\n  ${entry.name}: ${entry.freshness.state} — ${entry.freshness.reason}`).join("")}${result.warnings.map((warning) => `\nWarning: ${warning}`).join("")}`,
+      });
+      return;
+    }
 
     output.write({
       data: { sandboxes },
