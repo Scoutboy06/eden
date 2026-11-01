@@ -10,7 +10,7 @@ const fixture = fileURLToPath(new URL("../fixtures/completion.ts", import.meta.u
 let script: string;
 
 beforeAll(async () => {
-  script = await Bun.$`${process.execPath} ${fixture} completion pwsh --stdout`.text();
+  script = await Bun.$`${process.execPath} ${fixture} completion pwsh`.text();
 });
 
 const pwshTest = test.skipIf(Bun.which("pwsh") === null);
@@ -32,7 +32,7 @@ async function complete(line: string, source = script): Promise<string[]> {
 }
 
 pwshTest("PowerShell completes application commands and global options", async () => {
-  const result = await runCli("completion", "pwsh", "--stdout", "--json");
+  const result = await runCli("completion", "pwsh", "--json");
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr).toBe("");

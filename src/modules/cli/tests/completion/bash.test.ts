@@ -11,7 +11,7 @@ const readline = fileURLToPath(new URL("../fixtures/complete-bash.zsh", import.m
 let script: string;
 
 beforeAll(async () => {
-  script = await Bun.$`${process.execPath} ${fixture} completion bash --stdout`.text();
+  script = await Bun.$`${process.execPath} ${fixture} completion bash`.text();
 });
 
 const bashTest = test.skipIf(Bun.which("bash") === null);
@@ -59,7 +59,7 @@ readlineTest("Bash Readline inserts choices safely with its default word breaks"
 });
 
 bashTest("Bash completes application commands and global options", async () => {
-  const result = await runCli("completion", "bash", "--stdout", "--json");
+  const result = await runCli("completion", "bash", "--json");
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr).toBe("");

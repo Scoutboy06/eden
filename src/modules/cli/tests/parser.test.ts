@@ -11,7 +11,7 @@ test("silent commands still return one JSON success response", async () => {
 });
 
 test("completion scripts retain their native format with the JSON flag", async () => {
-  const result = await runCli("completion", "zsh", "--stdout", "--json");
+  const result = await runCli("completion", "zsh", "--json");
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).not.toContain('{"ok":true}');

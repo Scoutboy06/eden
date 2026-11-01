@@ -26,10 +26,6 @@ const args = {
     // Preserve enum metadata: Gunshi's positional() drops choices.
     type: "positional",
   },
-  stdout: {
-    type: "boolean",
-    description: "Write the completion script to stdout",
-  },
 } satisfies Args;
 
 export default defineCommand({
