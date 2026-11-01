@@ -10,7 +10,7 @@ if (log) {
   await appendFile(log, `${JSON.stringify(args)}\n`);
 }
 
-if (JSON.stringify(args) === JSON.stringify(["ls", "--format", "json"])) {
+if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
   if (process.env.EDEN_SBX_LIST_FAILURE) {
     process.stderr.write(process.env.EDEN_SBX_LIST_FAILURE);
     process.exit(1);

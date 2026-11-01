@@ -54,7 +54,7 @@ test.each([
       kitArgs,
     });
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
     ]);
   });
@@ -91,7 +91,7 @@ test("create executes using the default profile", async () => {
 
     expect(result.exitCode).toBe(0);
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
       [
         "create",
@@ -205,7 +205,7 @@ test.each(["run", "list", "stop"])("%s ignores an unknown default profile", asyn
     );
 
     expect(result.exitCode).toBe(0);
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
     expect(
       JSON.parse(result.stdout).operations?.some(
         (operation: { type: string }) => operation.type === "sandbox.create",

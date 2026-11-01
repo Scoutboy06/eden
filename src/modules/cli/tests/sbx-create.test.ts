@@ -22,7 +22,7 @@ test.each([undefined, "custom/image:tag"])(
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created sandbox example");
       expect(await sandboxCommands(directory)).toEqual([
-        ["ls", "--format", "json"],
+        ["ls", "--json"],
         ["policy", "ls", "--json"],
         [
           "create",
@@ -52,7 +52,7 @@ test.each(["provider creation failed", "Sandbox 'example' already exists"])(
         diagnostic.includes("already exists") ? "already exists" : diagnostic,
       );
       expect(await sandboxCommands(directory)).toEqual([
-        ["ls", "--format", "json"],
+        ["ls", "--json"],
         ["policy", "ls", "--json"],
         ["create", "--name", "example", "--skills", "off", "shell"],
       ]);
@@ -81,7 +81,7 @@ test("failed creation preflight never creates", async () => {
       error: { code: "SANDBOX_NETWORK_POLICY_REQUIRED" },
     });
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
     ]);
   });

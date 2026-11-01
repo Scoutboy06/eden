@@ -23,7 +23,7 @@ test("list renders sandbox names, statuses and providers", async () => {
         "other      future-provider-status  docker-sbx\n",
       stderr: "",
     });
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
 
@@ -51,7 +51,7 @@ test.each([false, true])(
         dryRun,
         sandboxes: entries.map(({ name, status }) => ({ provider: "docker-sbx", name, status })),
       });
-      expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+      expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
     });
   },
 );
@@ -90,7 +90,7 @@ test.each([
       ok: false,
       error: { code: "SANDBOX_LOOKUP_FAILED" },
     });
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
 
@@ -107,6 +107,6 @@ test.each([
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code } });
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });

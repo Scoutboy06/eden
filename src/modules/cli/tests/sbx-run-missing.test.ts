@@ -30,7 +30,7 @@ test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async
       expect(result.stderr).toContain("Sandbox typo was not found");
       expect(result.stderr).toContain("eden sbx create");
     }
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
 

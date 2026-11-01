@@ -20,7 +20,7 @@ test.each(["running", "stopped"])(
         sandbox: { provider: "docker-sbx", name: "example" },
       });
       expect(await sandboxCommands(directory)).toEqual([
-        ["ls", "--format", "json"],
+        ["ls", "--json"],
         ...(status === "stopped" ? [] : [["stop", "--", "example"]]),
       ]);
     });
@@ -80,7 +80,7 @@ test.each([false, true])(
           ],
         });
       } else expect(result.stdout).toBe("[dry-run] Stop sandbox example using docker-sbx\n");
-      expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+      expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
     });
   },
 );
@@ -108,7 +108,7 @@ test.each([false, true])("stop rejects a nonexistent sandbox, dryRun=%s", async 
         message: "Sandbox example was not found using docker-sbx.",
       },
     });
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
 
@@ -142,7 +142,7 @@ test("stop preserves provider diagnostics in a structured failure", async () => 
     });
     expect(JSON.parse(result.stdout).error.message).toContain("stop provider failure");
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["stop", "--", "example"],
     ]);
   });
@@ -170,7 +170,7 @@ test.skipIf(process.platform === "win32")(
           "no removal or cleanup was attempted",
         );
         expect(await sandboxCommands(directory)).toEqual([
-          ["ls", "--format", "json"],
+          ["ls", "--json"],
           ["stop", "--", "example"],
         ]);
       });

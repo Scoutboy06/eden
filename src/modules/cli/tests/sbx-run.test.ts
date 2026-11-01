@@ -21,7 +21,7 @@ test.each(["running", "stopped", "failure"])(
         stderr: "provider stderr\n",
       });
       expect(await sandboxCommands(directory)).toEqual([
-        ["ls", "--format", "json"],
+        ["ls", "--json"],
         ["run", "--name", "name with ' quotes"],
       ]);
     });
@@ -37,7 +37,7 @@ test("run refuses malformed listing without creation or attachment", async () =>
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("invalid sandbox listing JSON");
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
 
@@ -68,7 +68,7 @@ test("run JSON dry-run checks existence and reports attachment without launching
         },
       ],
     });
-    expect(await sandboxCommands(directory)).toEqual([["ls", "--format", "json"]]);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
 

@@ -69,7 +69,7 @@ test("sbx create forwards profile kits and literal arguments to Docker", async (
 
     expect(result.exitCode).toBe(0);
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
       [
         "create",
@@ -119,7 +119,7 @@ test("sbx create dry-run reports kit references and typed arguments without crea
       input: { provider: "docker-sbx", name: "example", profile: "work", kits, kitArgs },
     });
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
     ]);
   });
@@ -152,7 +152,7 @@ test("sbx create preserves Docker kit errors without attachment or cleanup", asy
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(options.env.EDEN_SBX_CREATE_FAILURE!);
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
       ["create", "--name", "example", "--kit", "./missing-kit", "--skills", "off", "shell"],
     ]);

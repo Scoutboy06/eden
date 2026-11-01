@@ -33,7 +33,7 @@ test("sbx create uses a profile provider and template", async () => {
 
     expect(result.exitCode).toBe(0);
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
       [
         "create",
@@ -95,7 +95,7 @@ test("sbx create dry-run resolves explicit flags over profile values without cre
       ]),
     });
     expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--format", "json"],
+      ["ls", "--json"],
       ["policy", "ls", "--json"],
     ]);
   });

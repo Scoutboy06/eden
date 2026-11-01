@@ -51,7 +51,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         skippedLabel: "Login not checked",
         dependencies: ["installation"],
         instructions: ["Check it separately:", "  sbx ls"],
-        run: (signal) => this.check(["ls", "--format", "json"], "Signed in", "Login", signal),
+        run: (signal) => this.check(["ls", "--json"], "Signed in", "Login", signal),
       },
       {
         id: "policy",
@@ -85,15 +85,12 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async preflight(): Promise<void> {
-    await this.execute(["ls", "--format", "json"]);
+    await this.execute(["ls", "--json"]);
     await this.execute(["policy", "ls", "--json"]);
   }
 
   async list(): Promise<SandboxSummary[]> {
-    const result = await (this.dependencies.run ?? runDockerCommand)(
-      ["ls", "--format", "json"],
-      {},
-    );
+    const result = await (this.dependencies.run ?? runDockerCommand)(["ls", "--json"], {});
 
     if (result.exitCode !== 0) {
       throw diagnoseFailure(undefined, result.exitCode, `${result.stdout}\n${result.stderr}`);
@@ -119,7 +116,9 @@ export class DockerSandboxProvider implements SandboxProvider {
       );
     }
 
-    return parsed.output.map((entry) => ({
+    const entries = Array.isArray(parsed.output) ? parsed.output : parsed.output.sandboxes;
+
+    return entries.map((entry) => ({
       provider: this.name,
       name: entry.name,
       status: entry.status,
@@ -172,17 +171,27 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 }
 
-const DockerSandboxListSchema = v.array(
+const DockerSandboxEntriesSchema = v.array(
   v.object({
     name: v.string(),
     status: v.string(),
   }),
 );
+const DockerSandboxListSchema = v.union([
+  DockerSandboxEntriesSchema,
+  v.object({ sandboxes: DockerSandboxEntriesSchema }),
+]);
 
 function readinessFailure(error: unknown, subject: string): ReadinessResult {
   const code = error instanceof SandboxError ? error.code : undefined;
 
   switch (code) {
+    case "SANDBOX_PROVIDER_UNAVAILABLE":
+      return {
+        state: "unknown",
+        label: "Docker Sandboxes unavailable",
+        instructions: [error instanceof Error ? error.message : String(error)],
+      };
     case "SANDBOX_AUTH_REQUIRED":
       return subject === "Policy"
         ? { state: "skipped", label: "Policy not checked" }
@@ -278,6 +287,13 @@ function diagnoseFailure(
   diagnostics: string,
   operation: "create" | "stop" = "create",
 ): SandboxError {
+  if (/unknown (?:flag|option):?\s*["']?--json\b/i.test(diagnostics)) {
+    return new SandboxError(
+      "SANDBOX_PROVIDER_UNAVAILABLE",
+      "Docker Sandboxes does not support JSON output required by Eden. Update sbx and try again.",
+    );
+  }
+
   if (/\bnot signed in to Docker\b/i.test(diagnostics)) {
     return new SandboxError(
       "SANDBOX_AUTH_REQUIRED",

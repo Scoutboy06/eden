@@ -3,7 +3,7 @@
 const args = process.argv.slice(2);
 
 if (
-  JSON.stringify(args) === JSON.stringify(["ls", "--format", "json"]) ||
+  JSON.stringify(args) === JSON.stringify(["ls", "--json"]) ||
   JSON.stringify(args) === JSON.stringify(["policy", "ls", "--json"])
 ) {
   process.stdout.write("[]\n");

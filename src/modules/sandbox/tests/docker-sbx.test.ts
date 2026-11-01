@@ -228,7 +228,7 @@ test("readiness checks use injected commands and recognize authentication and po
   });
   expect(await policy!.run(signal)).toMatchObject({ state: "missing", label: "Policy required" });
   expect(commands).toEqual([
-    ["ls", "--format", "json"],
+    ["ls", "--json"],
     ["policy", "ls", "--json"],
   ]);
 });
@@ -273,4 +273,31 @@ test("readiness forwards cancellation to its command runner", async () => {
 
   expect(signal).toBe(controller.signal);
   expect(signal?.aborted).toBe(true);
+});
+
+test.each([
+  '[{"name":"example","status":"running","agent":"shell"}]',
+  '{"sandboxes":[{"name":"example","status":"running","agent":"shell"}]}',
+])("list accepts supported JSON listing shapes", async (stdout) => {
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async () => ({ ...success, stdout }),
+  });
+
+  expect(await provider.list()).toEqual([
+    { provider: "docker-sbx", name: "example", status: "running" },
+  ]);
+});
+
+test("unsupported JSON listing reports an actionable readiness failure", async () => {
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async () => ({ exitCode: 1, stdout: "", stderr: "Error: unknown flag: --json" }),
+  });
+
+  expect(await provider.readinessChecks()[1]!.run(new AbortController().signal)).toMatchObject({
+    state: "unknown",
+    label: "Docker Sandboxes unavailable",
+    instructions: [expect.stringContaining("Update sbx")],
+  });
+  await expect(provider.list()).rejects.toThrow("Update sbx");
+  await expect(provider.preflight()).rejects.toThrow("Update sbx");
 });
