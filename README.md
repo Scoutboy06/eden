@@ -24,6 +24,15 @@ Configuration lives in `$XDG_CONFIG_HOME/eden`, falling back to `~/.config/eden`
 platform including Windows. On Windows, `worktree_root` must start with a drive letter
 (`C:\`) or a UNC share, and `~\` expands like `~/`.
 
+Sandbox profiles can select an agent, for example:
+
+```sh
+eden config set sandbox.profiles.work.agent claude
+```
+
+Docker Sandboxes supports `claude`, `codex`, and `opencode` here. An unset profile
+agent uses `shell`; the global `agent.default` does not change this choice.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In

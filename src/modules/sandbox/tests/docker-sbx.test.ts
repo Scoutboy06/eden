@@ -299,5 +299,20 @@ test("unsupported JSON listing reports an actionable readiness failure", async (
     instructions: [expect.stringContaining("Update sbx")],
   });
   await expect(provider.list()).rejects.toThrow("Update sbx");
-  await expect(provider.preflight()).rejects.toThrow("Update sbx");
+  await expect(provider.preflight({ name: "example" })).rejects.toThrow("Update sbx");
+});
+
+test("unsupported agent fails before direct provider creation", async () => {
+  const commands: string[][] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args) => {
+      commands.push(args);
+      return success;
+    },
+  });
+
+  await expect(provider.create({ name: "example", agent: "omp" })).rejects.toMatchObject({
+    code: "SANDBOX_AGENT_UNSUPPORTED",
+  });
+  expect(commands).toEqual([]);
 });

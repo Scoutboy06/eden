@@ -1,3 +1,5 @@
+import type { Agent } from "../config/schema";
+
 export const sandboxProviderNames = ["docker-sbx"] as const;
 
 export type SandboxProviderName = (typeof sandboxProviderNames)[number];
@@ -11,6 +13,7 @@ export type SandboxSummary = {
 };
 export type CreateSandboxInput = {
   name: string;
+  agent?: Agent;
   image?: string;
   kits?: string[];
   kitArgs?: Record<string, string | number | boolean>;
@@ -20,7 +23,7 @@ export type RunSandboxInput = { name: string };
 export interface SandboxProvider {
   readonly name: SandboxProviderName;
 
-  preflight(): Promise<void>;
+  preflight(input: CreateSandboxInput): Promise<void>;
   readinessChecks(): readonly ReadinessCheck[];
 
   create(input: CreateSandboxInput): Promise<void>;

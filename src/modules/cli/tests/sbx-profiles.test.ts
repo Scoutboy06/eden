@@ -374,3 +374,138 @@ test("an empty profile without any provider reports the existing provider select
     expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
   });
 });
+
+test.each(["claude", "codex", "opencode"])(
+  "profile agent %s is passed to Docker Sandboxes",
+  async (agent) => {
+    await withTemporaryDirectory(async (directory) => {
+      const options = await prepareSandboxCli(directory, "missing");
+      options.env.EDEN_SBX_AGENT = agent;
+      await writeFile(
+        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+        stringify({ sandbox: { default_provider: "docker-sbx", profiles: { work: { agent } } } }),
+      );
+
+      const result = await runCliWith(
+        options,
+        "sbx",
+        "create",
+        "--name",
+        "example",
+        "--profile",
+        "work",
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(await sandboxCommands(directory)).toEqual([
+        ["ls", "--json"],
+        ["policy", "ls", "--json"],
+        ["create", "--name", "example", "--skills", "off", agent],
+      ]);
+    });
+  },
+);
+
+test.each([false, true])(
+  "unsupported profile agent fails before provider calls, dryRun=%s",
+  async (dryRun) => {
+    await withTemporaryDirectory(async (directory) => {
+      const options = await prepareSandboxCli(directory, "missing");
+      await writeFile(
+        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+        stringify({
+          sandbox: { default_provider: "docker-sbx", profiles: { work: { agent: "omp" } } },
+        }),
+      );
+
+      const result = await runCliWith(
+        options,
+        "sbx",
+        "create",
+        "--name",
+        "example",
+        "--profile",
+        "work",
+        "--json",
+        ...(dryRun ? ["--dry-run"] : []),
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout).error).toMatchObject({ code: "SANDBOX_AGENT_UNSUPPORTED" });
+      expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
+    });
+  },
+);
+
+test("global default agent does not change an unset profile agent", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        agent: { default: "claude" },
+        sandbox: { default_provider: "docker-sbx", profiles: { work: {} } },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "work",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect((await sandboxCommands(directory)).at(-1)).toEqual([
+      "create",
+      "--name",
+      "example",
+      "--skills",
+      "off",
+      "shell",
+    ]);
+  });
+});
+
+test("dry-run includes the selected profile agent", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: { default_provider: "docker-sbx", profiles: { work: { agent: "claude" } } },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "work",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).operations[0].input.agent).toBe("claude");
+  });
+});
+
+test("profile agent can be configured through the config command", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+
+    const set = await runCliWith(options, "config", "set", "sandbox.profiles.work.agent", "claude");
+    const get = await runCliWith(options, "config", "get", "sandbox.profiles.work.agent", "--json");
+
+    expect(set.exitCode).toBe(0);
+    expect(get.exitCode).toBe(0);
+    expect(JSON.parse(get.stdout).value).toBe("claude");
+  });
+});

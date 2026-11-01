@@ -39,7 +39,7 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     ...JSON.parse(process.env.EDEN_SBX_RUN_KIT_FLAGS ?? "[]"),
     "--skills",
     "off",
-    "shell",
+    process.env.EDEN_SBX_AGENT ?? "shell",
   ])
 ) {
   if (process.env.EDEN_SBX_CREATE_FAILURE) {

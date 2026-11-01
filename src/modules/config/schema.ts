@@ -4,6 +4,7 @@ import { join, posix, win32 } from "node:path";
 import { sandboxProviderNames } from "../sandbox/provider";
 
 const AGENTS = ["codex", "claude", "opencode", "omp"] as const;
+export type Agent = (typeof AGENTS)[number];
 
 const mapping = v.custom<Record<string, unknown>>(
   (value) => typeof value === "object" && value !== null && !Array.isArray(value),
@@ -56,6 +57,7 @@ const profileSchema = v.pipe(
   mapping,
   v.strictObject({
     provider: v.optional(v.picklist(sandboxProviderNames)),
+    agent: v.optional(v.picklist(AGENTS)),
     template: v.optional(nonEmptyString),
     kits: v.optional(v.array(nonEmptyString)),
     kit_args: v.optional(configMap(kitArgumentSchema)),

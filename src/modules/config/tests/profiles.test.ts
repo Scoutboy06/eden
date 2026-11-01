@@ -12,6 +12,7 @@ test("reads profiles without interpreting references or injecting profile defaul
     const profiles = {
       inet: {
         provider: "docker-sbx" as const,
+        agent: "claude" as const,
         template: "prodinetcrsweccr.azurecr.io/inetsbx:latest",
         kits: [
           "~/kit",
@@ -31,6 +32,7 @@ test("reads profiles without interpreting references or injecting profile defaul
     const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
 
     expect(config.sandbox).toEqual({ profiles });
+    expect(selectConfig(config, "sandbox.profiles.inet.agent")).toBe("claude");
   });
 });
 
@@ -39,6 +41,7 @@ test.each([
   [{ "": {} }, 'sandbox.profiles[""]'],
   [{ unused: { unknown: true } }, "sandbox.profiles.unused.unknown"],
   [{ unused: { provider: "invalid" } }, "sandbox.profiles.unused.provider"],
+  [{ unused: { agent: "invalid" } }, "sandbox.profiles.unused.agent"],
   [{ unused: { template: "" } }, "sandbox.profiles.unused.template"],
   [{ unused: { template: 3 } }, "sandbox.profiles.unused.template"],
   [{ unused: { kits: "kit" } }, "sandbox.profiles.unused.kits"],

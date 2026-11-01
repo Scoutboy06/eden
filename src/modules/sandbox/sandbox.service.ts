@@ -82,7 +82,7 @@ export class SandboxService {
   async create(input: CreateSandboxInput): Promise<void> {
     const resolved = resolveCreateInput(input, this.profile);
     validateSandboxInput(resolved.name, resolved.image);
-    await this.provider.preflight();
+    await this.provider.preflight(resolved);
 
     await this.execution.mutate(
       {
@@ -180,6 +180,7 @@ function resolveCreateInput(
   return {
     ...input,
     image: input.image ?? profile?.template,
+    ...((input.agent ?? profile?.agent) ? { agent: input.agent ?? profile?.agent } : {}),
     ...(kits === undefined ? {} : { kits }),
     ...(kitArgs === undefined ? {} : { kitArgs }),
   };

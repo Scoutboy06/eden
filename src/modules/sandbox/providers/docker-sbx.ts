@@ -84,7 +84,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     }
   }
 
-  async preflight(): Promise<void> {
+  async preflight(input: CreateSandboxInput): Promise<void> {
+    dockerAgent(input.agent);
     await this.execute(["ls", "--json"]);
     await this.execute(["policy", "ls", "--json"]);
   }
@@ -148,7 +149,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         "--skills",
         "off",
         ...(this.onCreateOutput ? [] : ["--no-progress"]),
-        "shell",
+        dockerAgent(input.agent),
       ],
       input.name,
     );
@@ -168,6 +169,24 @@ export class DockerSandboxProvider implements SandboxProvider {
 
     if (exitCode !== 0)
       throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`, operation);
+  }
+}
+
+function dockerAgent(agent: CreateSandboxInput["agent"]): string {
+  switch (agent) {
+    case undefined:
+      return "shell";
+    case "claude":
+      return "claude";
+    case "codex":
+      return "codex";
+    case "opencode":
+      return "opencode";
+    case "omp":
+      throw new SandboxError(
+        "SANDBOX_AGENT_UNSUPPORTED",
+        "Docker Sandboxes does not support the omp agent. Choose claude, codex, or opencode in the sandbox profile.",
+      );
   }
 }
 
