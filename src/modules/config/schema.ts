@@ -65,6 +65,10 @@ const profileSchema = v.pipe(
       }),
     ),
     template: v.optional(nonEmptyString),
+    pull: v.optional(v.picklist(["always", "missing", "never"])),
+    disk: v.optional(
+      v.strictObject({ root: v.optional(nonEmptyString), docker: v.optional(nonEmptyString) }),
+    ),
     kits: v.optional(v.array(nonEmptyString)),
     kit_args: v.optional(configMap(kitArgumentSchema)),
   }),

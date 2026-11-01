@@ -202,6 +202,8 @@ function resolveCreateInput(
   return {
     ...input,
     image: input.image ?? profile?.template,
+    ...((input.pull ?? profile?.pull) ? { pull: input.pull ?? profile?.pull } : {}),
+    ...((input.disk ?? profile?.disk) ? { disk: input.disk ?? profile?.disk } : {}),
     ...((input.workspace ?? profile?.workspace)
       ? { workspace: input.workspace ?? profile?.workspace }
       : {}),

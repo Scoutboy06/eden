@@ -11,6 +11,7 @@ export type DockerCommandRunner = (
   args: string[],
   options: {
     signal?: AbortSignal;
+    env?: Record<string, string>;
     onOutput?: (text: string) => void;
     sandboxName?: string;
     operation?: "create" | "stop";
@@ -143,6 +144,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         "--name",
         input.name,
         ...(input.image === undefined ? [] : ["--template", input.image]),
+        ...(input.pull === undefined ? [] : ["--pull", input.pull]),
         ...(input.kits ?? []).flatMap((kit) => ["--kit", kit]),
         ...Object.entries(input.kitArgs ?? {}).flatMap(([key, value]) => [
           "--kit-arg",
@@ -156,6 +158,13 @@ export class DockerSandboxProvider implements SandboxProvider {
         ...(input.workspace?.path === undefined ? [] : [input.workspace.path]),
       ],
       input.name,
+      "create",
+      {
+        ...(input.disk?.root === undefined ? {} : { DOCKER_SANDBOXES_ROOT_SIZE: input.disk.root }),
+        ...(input.disk?.docker === undefined
+          ? {}
+          : { DOCKER_SANDBOXES_DOCKER_SIZE: input.disk.docker }),
+      },
     );
   }
 
@@ -163,10 +172,12 @@ export class DockerSandboxProvider implements SandboxProvider {
     args: string[],
     sandboxName?: string,
     operation: "create" | "stop" = "create",
+    env?: Record<string, string>,
   ): Promise<void> {
     const { exitCode, stdout, stderr } = await (this.dependencies.run ?? runDockerCommand)(args, {
       sandboxName,
       operation,
+      env,
       onOutput:
         sandboxName === undefined || operation !== "create" ? undefined : this.onCreateOutput,
     });
@@ -268,6 +279,7 @@ async function runDockerCommand(
   try {
     const result = await ScriptRunner.run("sbx", null, {
       args,
+      env: options.env,
       signal: options.signal ?? controller.signal,
       killSignal: options.signal ? "SIGKILL" : "SIGINT",
       onStdout: options.onOutput,

@@ -16,6 +16,8 @@ export type CreateSandboxInput = {
   agent?: Agent;
   workspace?: { mode: "none" | "clone" | "host"; path?: string };
   image?: string;
+  pull?: "always" | "missing" | "never";
+  disk?: { root?: string; docker?: string };
   kits?: string[];
   kitArgs?: Record<string, string | number | boolean>;
 };

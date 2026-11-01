@@ -36,6 +36,7 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     "--name",
     name,
     ...(process.env.EDEN_SBX_RUN_IMAGE ? ["--template", process.env.EDEN_SBX_RUN_IMAGE] : []),
+    ...(process.env.EDEN_SBX_PULL ? ["--pull", process.env.EDEN_SBX_PULL] : []),
     ...JSON.parse(process.env.EDEN_SBX_RUN_KIT_FLAGS ?? "[]"),
     "--skills",
     "off",
@@ -44,6 +45,17 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     ...(process.env.EDEN_SBX_WORKSPACE_PATH ? [process.env.EDEN_SBX_WORKSPACE_PATH] : []),
   ])
 ) {
+  if (process.env.EDEN_SBX_ENV_LOG) {
+    await Bun.write(
+      process.env.EDEN_SBX_ENV_LOG,
+      JSON.stringify({
+        root: process.env.DOCKER_SANDBOXES_ROOT_SIZE,
+        docker: process.env.DOCKER_SANDBOXES_DOCKER_SIZE,
+        inherited: process.env.EDEN_INHERITED,
+      }),
+    );
+  }
+
   if (process.env.EDEN_SBX_CREATE_FAILURE) {
     process.stderr.write(process.env.EDEN_SBX_CREATE_FAILURE);
     process.exit(1);

@@ -40,6 +40,9 @@ be existing directories. Host mode mounts the folder writable, allowing changes
 to hooks, Git configuration, and build output that may later run on the host.
 With no workspace setting, no host folder is mounted.
 
+Profiles may set `pull` (`always`, `missing`, or `never`) and `disk.root` /
+`disk.docker` sizes for sandbox creation.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In
