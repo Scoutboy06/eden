@@ -120,7 +120,7 @@ const remove = defineCommand({
     name: { type: "string", required: true, description: "Sandbox name" },
     force: {
       type: "boolean",
-      description: "Skip confirmation; allow running sandbox removal",
+      description: "Skip removal hook and confirmation; allow running sandbox removal",
     },
   },
   async run(ctx, { sandbox, output }) {

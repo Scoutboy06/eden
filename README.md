@@ -63,11 +63,10 @@ through to Docker Sandboxes as static MCP server names.
 
 Sandbox lifecycle hooks run on the host from the Eden hooks directory. Create
 runs `sandbox.create.pre` after preflight and `sandbox.create.post` after creation;
-pre hooks must return empty output or `{}`.
-
-`eden sbx rm --name <name>` asks Docker Sandboxes for confirmation. Removal
-requires `--force` in noninteractive or JSON mode and for running or
-unknown-status sandboxes.
+pre hooks must return empty output or `{}`. `eden sbx rm --name <name>` runs
+`sandbox.remove.pre` and asks Docker Sandboxes for confirmation. Removal requires
+`--force` in noninteractive or JSON mode and for running or unknown-status
+sandboxes; force skips the pre-removal hook and provider confirmation.
 
 ### Shell completion
 

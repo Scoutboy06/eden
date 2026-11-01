@@ -73,6 +73,15 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
   JSON.stringify(args) === JSON.stringify(["rm", "--force", "--", name]) ||
   JSON.stringify(args) === JSON.stringify(["rm", "--", name])
 ) {
+  if (process.env.EDEN_SBX_REQUIRE_TTY && !args.includes("--force")) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stderr.isTTY) process.exit(98);
+    process.stdout.write("Confirm removal? ");
+    const input = await new Response(Bun.stdin.stream()).text();
+    if (!input.trim().startsWith("y")) process.exit(3);
+  }
+  if (process.env.EDEN_SBX_REMOVE_WAIT) {
+    await waitForInterrupt();
+  }
   if (process.env.EDEN_SBX_REMOVE_FAILURE) {
     process.stderr.write(process.env.EDEN_SBX_REMOVE_FAILURE);
     process.exit(7);
@@ -109,4 +118,10 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
 } else {
   process.stderr.write(`Unexpected provider command: ${JSON.stringify(args)}\n`);
   process.exitCode = 99;
+}
+
+async function waitForInterrupt() {
+  process.on("SIGINT", () => process.exit(130));
+  await Bun.write(process.env.EDEN_SBX_RUN_READY!, "ready");
+  setInterval(() => {}, 1000);
 }

@@ -78,6 +78,17 @@ export class SandboxService {
         "Sandbox removal is unavailable for this provider.",
       );
 
+    const path = force ? undefined : await this.hooks.discover("sandbox.remove.pre");
+    if (path) {
+      this.onHook?.();
+      const input: SandboxHookInput = {
+        request: { name },
+        context: { cwd: process.cwd() },
+        sandbox: { name, provider: this.provider.name, status: sandbox.status },
+      };
+      await this.hooks.run("sandbox.remove.pre", path, input, input.context.cwd, "pre", "empty");
+    }
+
     await this.execution.mutate(
       {
         type: "sandbox.remove",
