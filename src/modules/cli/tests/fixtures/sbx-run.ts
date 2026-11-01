@@ -45,6 +45,7 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     ...kitFlags.slice(split),
     "--skills",
     "off",
+    ...(args.includes("--no-progress") ? ["--no-progress"] : []),
     ...(process.env.EDEN_SBX_WORKSPACE_MODE === "clone" ? ["--clone"] : []),
     process.env.EDEN_SBX_AGENT ?? "shell",
     ...(process.env.EDEN_SBX_WORKSPACE_PATH ? [process.env.EDEN_SBX_WORKSPACE_PATH] : []),

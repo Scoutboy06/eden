@@ -61,8 +61,9 @@ Use `eden profile list` and `eden profile show <name>` to inspect effective
 sandbox profiles and configuration sources. Profile `mcp_servers` entries pass
 through to Docker Sandboxes as static MCP server names.
 
-Sandbox create runs `sandbox.create.pre` on the host after preflight. The pre
-hook must return empty output or `{}`.
+Sandbox lifecycle hooks run on the host from the Eden hooks directory. Create
+runs `sandbox.create.pre` after preflight and `sandbox.create.post` after creation;
+pre hooks must return empty output or `{}`.
 
 ### Shell completion
 

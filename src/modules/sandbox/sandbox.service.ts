@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { resolveSandboxPaths } from "./sandbox-paths";
 import type { Execution } from "../execution";
-import { HookService, type SandboxHookInput } from "../hook/hook.service";
+import { HookFailure, HookService, type SandboxHookInput } from "../hook/hook.service";
 import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
@@ -105,7 +105,10 @@ export class SandboxService {
     for (const warning of warnings) this.onWarning?.(warning);
     await this.provider.preflight(resolved);
     const hookInput = this.createHookInput(resolved);
-    const pre = await this.hooks.discover("sandbox.create.pre");
+    const [pre, post] = await Promise.all([
+      this.hooks.discover("sandbox.create.pre"),
+      this.hooks.discover("sandbox.create.post"),
+    ]);
     if (pre) {
       this.onHook?.();
       await this.hooks.run(
@@ -131,6 +134,19 @@ export class SandboxService {
       },
       () => this.provider.create(resolved),
     );
+    if (post) {
+      this.onHook?.();
+      try {
+        await this.hooks.run("sandbox.create.post", post, hookInput, hookInput.context.cwd, "post");
+      } catch (error) {
+        if (error instanceof HookFailure)
+          throw new HookFailure({
+            ...error.detail,
+            message: `${error.message}. Sandbox ${input.name} was created and is left in place.`,
+          });
+        throw error;
+      }
+    }
     return { warnings };
   }
 
