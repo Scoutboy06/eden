@@ -35,5 +35,6 @@ export interface SandboxProvider {
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
   stop(name: string): Promise<void>;
+  remove?(name: string, force: boolean): Promise<void>;
 }
 import type { ReadinessCheck } from "./readiness";

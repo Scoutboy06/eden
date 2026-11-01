@@ -6,6 +6,7 @@ export type RunOptions = {
   signal?: AbortSignal;
   killSignal?: "SIGTERM" | "SIGINT" | "SIGKILL";
   killGraceMs?: number;
+  inheritIO?: boolean;
   onStdout?: (text: string) => void;
   onStderr?: (text: string) => void;
 };
@@ -33,6 +34,7 @@ export class ScriptRunner {
       killGraceMs = 1000,
       onStdout,
       onStderr,
+      inheritIO = false,
     } = options ?? {};
 
     if (signal?.aborted) return { outcome: "cancelled", stdout: "", stderr: "" };
@@ -42,9 +44,9 @@ export class ScriptRunner {
       env: { ...process.env, ...env },
       detached: !isWindows,
       windowsHide: true,
-      stdin: Buffer.from(input ?? ""),
-      stdout: "pipe",
-      stderr: "pipe",
+      stdin: inheritIO ? "inherit" : Buffer.from(input ?? ""),
+      stdout: inheritIO ? "inherit" : "pipe",
+      stderr: inheritIO ? "inherit" : "pipe",
     });
     let outcome: "timeout" | "cancelled" | undefined;
     let termination: Promise<void> | undefined;
@@ -63,8 +65,12 @@ export class ScriptRunner {
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited,
-        captureOutput(child.stdout, onStdout),
-        captureOutput(child.stderr, onStderr),
+        inheritIO
+          ? Promise.resolve("")
+          : captureOutput(child.stdout as ReadableStream<Uint8Array>, onStdout),
+        inheritIO
+          ? Promise.resolve("")
+          : captureOutput(child.stderr as ReadableStream<Uint8Array>, onStderr),
       ]);
 
       if (termination) await termination;

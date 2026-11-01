@@ -65,6 +65,10 @@ Sandbox lifecycle hooks run on the host from the Eden hooks directory. Create
 runs `sandbox.create.pre` after preflight and `sandbox.create.post` after creation;
 pre hooks must return empty output or `{}`.
 
+`eden sbx rm --name <name>` asks Docker Sandboxes for confirmation. Removal
+requires `--force` in noninteractive or JSON mode and for running or
+unknown-status sandboxes.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In

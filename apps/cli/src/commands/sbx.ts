@@ -108,6 +108,42 @@ const stop = defineCommand({
   },
 });
 
+const remove = defineCommand({
+  name: "rm",
+  description: "Remove one sandbox and its data",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: { type: "string", required: true, description: "Sandbox name" },
+    force: {
+      type: "boolean",
+      description: "Skip confirmation; allow running sandbox removal",
+    },
+  },
+  async run(ctx, { sandbox, output }) {
+    const { json, dryRun } = ctx.extensions.eden;
+    if (
+      !ctx.values.force &&
+      !dryRun &&
+      (json || !process.stdin.isTTY || !process.stdout.isTTY || !process.stderr.isTTY)
+    ) {
+      throw new SandboxError(
+        "SANDBOX_REMOVE_REQUIRES_FORCE",
+        "Noninteractive sandbox removal requires --force; without it, run in a terminal to confirm removal.",
+      );
+    }
+    const service = await sandbox(ctx.values.provider);
+    await service.remove(ctx.values.name, ctx.values.force ?? false);
+    output.write({
+      data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
+      human: () => `Removed sandbox ${ctx.values.name} using ${service.providerName}.`,
+    });
+  },
+});
+
 const list = defineCommand({
   name: "list",
   description: "List sandboxes for a provider",
@@ -133,7 +169,7 @@ const list = defineCommand({
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, list, stop },
+  subCommands: { create, run, list, stop, rm: remove },
 });
 
 function quoteShellArgument(value: string): string {

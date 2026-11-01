@@ -14,7 +14,8 @@ export type DockerCommandRunner = (
     env?: Record<string, string>;
     onOutput?: (text: string) => void;
     sandboxName?: string;
-    operation?: "create" | "stop";
+    operation?: "create" | "stop" | "remove";
+    inheritIO?: boolean;
   },
 ) => Promise<DockerCommandResult>;
 
@@ -136,6 +137,16 @@ export class DockerSandboxProvider implements SandboxProvider {
     await this.execute(["stop", "--", name], name, "stop");
   }
 
+  async remove(name: string, force: boolean): Promise<void> {
+    await this.execute(
+      ["rm", ...(force ? ["--force"] : []), "--", name],
+      name,
+      "remove",
+      undefined,
+      !force,
+    );
+  }
+
   async create(input: CreateSandboxInput): Promise<void> {
     validateWorkspace(input.workspace, input.mounts);
     await this.execute(
@@ -175,13 +186,15 @@ export class DockerSandboxProvider implements SandboxProvider {
   private async execute(
     args: string[],
     sandboxName?: string,
-    operation: "create" | "stop" = "create",
+    operation: "create" | "stop" | "remove" = "create",
     env?: Record<string, string>,
+    inheritIO = false,
   ): Promise<void> {
     const { exitCode, stdout, stderr } = await (this.dependencies.run ?? runDockerCommand)(args, {
       sandboxName,
       operation,
       env,
+      inheritIO,
       onOutput:
         sandboxName === undefined || operation !== "create" ? undefined : this.onCreateOutput,
     });
@@ -292,6 +305,7 @@ async function runDockerCommand(
     const result = await ScriptRunner.run("sbx", null, {
       args,
       env: options.env,
+      inheritIO: options.inheritIO,
       signal: options.signal ?? controller.signal,
       killSignal: options.signal ? "SIGKILL" : "SIGINT",
       onStdout: options.onOutput,
@@ -311,7 +325,7 @@ async function runDockerCommand(
 function dockerCommandResult(
   result: RunResult,
   sandboxName?: string,
-  operation: "create" | "stop" = "create",
+  operation: "create" | "stop" | "remove" = "create",
 ): DockerCommandResult {
   switch (result.outcome) {
     case "exited":
@@ -331,9 +345,11 @@ function dockerCommandResult(
     "CANCELLED",
     sandboxName === undefined
       ? "Sandbox prerequisite check cancelled."
-      : operation === "stop"
-        ? `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`
-        : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
+      : operation === "remove"
+        ? `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`
+        : operation === "stop"
+          ? `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`
+          : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
   );
 }
 
@@ -341,7 +357,7 @@ function diagnoseFailure(
   name: string | undefined,
   exitCode: number,
   diagnostics: string,
-  operation: "create" | "stop" = "create",
+  operation: "create" | "stop" | "remove" = "create",
 ): SandboxError {
   if (/unknown (?:flag|option):?\s*["']?--json\b/i.test(diagnostics)) {
     return new SandboxError(
@@ -381,6 +397,11 @@ function diagnoseFailure(
     );
   }
 
+  if (operation === "remove")
+    return new SandboxError(
+      "SANDBOX_REMOVE_FAILED",
+      `Docker Sandboxes could not remove sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
+    );
   if (operation === "stop") {
     return new SandboxError(
       "SANDBOX_STOP_FAILED",

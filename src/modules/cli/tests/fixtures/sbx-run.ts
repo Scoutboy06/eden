@@ -69,6 +69,15 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
   }
 
   process.stdout.write("created\n");
+} else if (
+  JSON.stringify(args) === JSON.stringify(["rm", "--force", "--", name]) ||
+  JSON.stringify(args) === JSON.stringify(["rm", "--", name])
+) {
+  if (process.env.EDEN_SBX_REMOVE_FAILURE) {
+    process.stderr.write(process.env.EDEN_SBX_REMOVE_FAILURE);
+    process.exit(7);
+  }
+  process.stdout.write("removed\n");
 } else if (JSON.stringify(args) === JSON.stringify(["stop", "--", name])) {
   if (process.env.EDEN_SBX_STOP_FAILURE) {
     process.stderr.write(process.env.EDEN_SBX_STOP_FAILURE);

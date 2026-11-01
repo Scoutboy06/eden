@@ -57,6 +57,37 @@ export class SandboxService {
     );
   }
 
+  async remove(name: string, force: boolean): Promise<void> {
+    validateSandboxInput(name);
+    const sandbox = (await this.provider.list()).find((entry) => entry.name === name);
+    if (!sandbox) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
+      );
+    }
+    if (sandbox.status !== "stopped" && !force) {
+      throw new SandboxError(
+        "SANDBOX_REMOVE_REQUIRES_FORCE",
+        `Sandbox ${name} is ${sandbox.status}. Use --force to remove a sandbox that is running or has an unknown status.`,
+      );
+    }
+    if (!this.provider.remove)
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Sandbox removal is unavailable for this provider.",
+      );
+
+    await this.execution.mutate(
+      {
+        type: "sandbox.remove",
+        description: `Remove sandbox ${name} using ${this.provider.name}`,
+        input: { provider: this.provider.name, name, force },
+      },
+      () => this.provider.remove!(name, force),
+    );
+  }
+
   async run(input: RunSandboxInput): Promise<number> {
     validateSandboxInput(input.name);
     const { name } = input;
