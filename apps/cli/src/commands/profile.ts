@@ -41,8 +41,32 @@ const show = defineCommand({
   },
 });
 
+const updateTemplate = defineCommand({
+  name: "update-template",
+  description: "Update a profile template from its registry",
+  args: { name: { type: "positional", required: true, description: "Profile name" } },
+  async run(ctx, { readResolvedConfig, templateUpdate, output }) {
+    const profile = describeProfile(await readResolvedConfig(), ctx.values.name);
+    const result = await templateUpdate.update(
+      profile.name,
+      profile.profile,
+      profile.provider ?? undefined,
+    );
+    output.write({
+      data: { template: result },
+      human: () => {
+        const sandbox = result.sandboxes;
+        if (!sandbox)
+          return `Template ${result.template} is ${result.status} at ${result.digest}. Sandbox status will be inspected after loading.`;
+        const warning = sandbox.listUnavailable ? " Sandbox listing was unavailable." : "";
+        return `Template ${result.template} is ${result.status} at ${result.digest}.\nOutdated sandboxes: ${sandbox.outdated.join(", ") || "none identified"}\nUnattributed: ${sandbox.unattributed.join(", ") || "none"}\nInspection unavailable: ${sandbox.unavailable.join(", ") || "none"}${warning}`;
+      },
+    });
+  },
+});
+
 export default defineCommand({
   name: "profile",
   description: "Inspect sandbox profiles",
-  subCommands: { list, show },
+  subCommands: { list, show, "update-template": updateTemplate },
 });

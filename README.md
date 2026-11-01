@@ -36,9 +36,9 @@ agent uses `shell`; the global `agent.default` does not change this choice.
 A profile can set `workspace.mode` to `none`, `clone`, or `host`. Clone and host
 use `--path` when supplied, otherwise `workspace.path`, otherwise the current
 repository root. Relative paths resolve from the current directory and paths must
-be existing directories. Host mode mounts the folder writable, allowing changes
-to hooks, Git configuration, and build output that may later run on the host.
-With no workspace setting, no host folder is mounted.
+be existing directories. Host mode mounts the folder
+writable, allowing changes to hooks, Git configuration, and build output that may
+later run on the host. With no workspace setting, no host folder is mounted.
 
 Profile kit paths beginning with `~/` or `~\` expand from the home directory.
 Explicit `./` and `../` kit paths resolve from the current directory; other kit
@@ -72,6 +72,13 @@ Interactive, non-JSON sandbox creation gives Docker Sandboxes the terminal for
 kit credential approval. In unattended creation, Docker may create a sandbox
 without an unapproved credential. Eden reports recognized missing-binding
 warnings, but provider diagnostics do not guarantee detection of every case.
+
+`eden profile update-template <name>` compares the profile template with its
+registry, pulls and verifies a changed image, and loads it into Docker Sandboxes.
+It requires Docker, Buildx, a reachable Docker daemon, and Docker registry
+credentials. It also updates the matching image tag in the host Docker daemon.
+Existing sandboxes are left intact; Eden inspects their image metadata to report
+outdated matches and identifies cases it could not attribute or inspect.
 
 ### Shell completion
 

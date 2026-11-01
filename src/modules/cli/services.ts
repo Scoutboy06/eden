@@ -8,6 +8,7 @@ import { CommandOutput } from "./output";
 import { createSandboxService, type SandboxService } from "../sandbox/sandbox.service";
 import type { SandboxProviderName } from "../sandbox/provider";
 import { findRepositoryPath } from "../config/repository";
+import { TemplateUpdateService } from "../sandbox/template-update";
 import { SetupService } from "../setup/setup.service";
 
 export function createCommandServices(options: EdenExtensions, execution: Execution) {
@@ -30,6 +31,7 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
     output,
     readResolvedConfig,
     readConfig,
+    templateUpdate: new TemplateUpdateService(execution),
     async sandbox(
       providerName?: SandboxProviderName,
       profileName?: string,
