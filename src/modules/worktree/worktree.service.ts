@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { HookService, type HookInput } from "../hook/hook.service";
+import { HookService, type WorktreeHookInput } from "../hook/hook.service";
 import type { ConfigReader } from "../config/config.service";
 import type { Execution } from "../execution";
 import { GitModule } from "../git/git.module";
@@ -49,7 +49,7 @@ export class WorktreeService {
 
   private async applyPreHook(
     path: string | undefined,
-    input: HookInput & { proposed: Worktree },
+    input: WorktreeHookInput & { proposed: Worktree },
   ): Promise<Worktree> {
     if (!path) return input.proposed;
 
@@ -66,7 +66,7 @@ export class WorktreeService {
 
   private async runPostHook(
     path: string | undefined,
-    input: HookInput & { result: Worktree },
+    input: WorktreeHookInput & { result: Worktree },
   ): Promise<void> {
     if (!path) return;
 

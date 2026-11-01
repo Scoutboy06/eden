@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { resolveSandboxPaths } from "./sandbox-paths";
 import type { Execution } from "../execution";
+import { HookService, type SandboxHookInput } from "../hook/hook.service";
 import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
@@ -25,6 +26,8 @@ export class SandboxService {
     private readonly provider: SandboxProvider,
     private readonly profile?: SandboxProfile & { name: string },
     private readonly onWarning?: (warning: string) => void,
+    private readonly hooks: HookService = new HookService(execution),
+    private readonly onHook?: () => void,
   ) {}
 
   list(): Promise<SandboxSummary[]> {
@@ -101,6 +104,19 @@ export class SandboxService {
         : [];
     for (const warning of warnings) this.onWarning?.(warning);
     await this.provider.preflight(resolved);
+    const hookInput = this.createHookInput(resolved);
+    const pre = await this.hooks.discover("sandbox.create.pre");
+    if (pre) {
+      this.onHook?.();
+      await this.hooks.run(
+        "sandbox.create.pre",
+        pre,
+        hookInput,
+        hookInput.context.cwd,
+        "pre",
+        "empty",
+      );
+    }
 
     await this.execution.mutate(
       {
@@ -117,6 +133,15 @@ export class SandboxService {
     );
     return { warnings };
   }
+
+  private createHookInput(resolved: CreateSandboxInput): SandboxHookInput {
+    const profile = this.profile ? { profile: this.profile.name } : {};
+    return {
+      request: { name: resolved.name, ...profile },
+      context: { cwd: process.cwd() },
+      sandbox: { provider: this.provider.name, ...resolved, ...profile },
+    };
+  }
 }
 
 export async function createSandboxService(
@@ -125,7 +150,12 @@ export async function createSandboxService(
   config: ConfigReader,
   onCreateOutput?: (text: string) => void,
   profileName?: string,
-  options: { useDefaultProfile?: boolean; onWarning?: (warning: string) => void } = {},
+  options: {
+    useDefaultProfile?: boolean;
+    onWarning?: (warning: string) => void;
+    hooks?: HookService;
+    onHook?: () => void;
+  } = {},
 ): Promise<SandboxService> {
   const settings =
     providerName === undefined || profileName !== undefined || options.useDefaultProfile
@@ -149,6 +179,8 @@ export async function createSandboxService(
     createSandboxProvider(name, onCreateOutput),
     selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
     options.onWarning,
+    options.hooks,
+    options.onHook,
   );
 }
 

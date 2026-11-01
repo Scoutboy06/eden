@@ -8,13 +8,20 @@ import { ScriptRunner, type RunResult } from "../script/script-runner";
 
 export type PreHookOutput = v.InferOutput<typeof PreHookOutputSchema>;
 
-export type HookInput = {
+export type WorktreeHookInput = {
   request: { name: string; baseBranch?: string };
   context: { cwd: string; repositoryName: string; worktreeRoot: string };
 } & (
   | { proposed: v.InferOutput<typeof WorktreeValuesSchema> }
   | { result: v.InferOutput<typeof WorktreeValuesSchema> }
 );
+
+export type SandboxHookInput = {
+  request: { name: string; profile?: string };
+  context: { cwd: string };
+  sandbox: Record<string, unknown>;
+};
+export type HookInput = WorktreeHookInput | SandboxHookInput;
 
 export type HookError = { code: string; message: string; exitCode?: number; signal?: string };
 
@@ -62,13 +69,20 @@ export class HookService {
     }
   }
 
-  async run(name: string, path: string, input: HookInput, cwd: string, phase: "pre" | "post") {
+  async run(
+    name: string,
+    path: string,
+    input: HookInput,
+    cwd: string,
+    phase: "pre" | "post",
+    preOutput: "overwrites" | "empty" = "overwrites",
+  ) {
     let output: PreHookOutput = {};
 
     await this.execution.mutate(
       {
         type: "hook.run",
-        description: `Run ${name}${phase === "pre" ? " (overwrites unknown until executed)" : ""}`,
+        description: `Run ${name}${phase === "pre" && preOutput === "overwrites" ? " (overwrites unknown until executed)" : ""}`,
         input: { name, path, cwd, input },
       },
       async () => {
@@ -94,7 +108,11 @@ export class HookService {
           assertSucceeded(name, result);
 
           if (phase === "pre") {
-            output = v.parse(PreHookOutputSchema, stdout.trim() ? JSON.parse(stdout) : {});
+            const parsed: unknown = stdout.trim() ? JSON.parse(stdout) : {};
+            output =
+              preOutput === "empty"
+                ? v.parse(EmptyHookOutputSchema, parsed)
+                : v.parse(PreHookOutputSchema, parsed);
 
             this.records.push({ ok: true, phase, name, input, output, stderr });
           } else {
@@ -116,6 +134,8 @@ export class HookService {
     return output;
   }
 }
+
+const EmptyHookOutputSchema = v.strictObject({});
 
 const WorktreeValuesSchema = v.strictObject({
   branch: v.string(),
