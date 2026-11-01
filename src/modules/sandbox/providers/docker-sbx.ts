@@ -86,6 +86,7 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   async preflight(input: CreateSandboxInput): Promise<void> {
     dockerAgent(input.agent);
+    validateWorkspace(input.workspace);
     await this.execute(["ls", "--json"]);
     await this.execute(["policy", "ls", "--json"]);
   }
@@ -135,6 +136,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
+    validateWorkspace(input.workspace);
     await this.execute(
       [
         "create",
@@ -149,7 +151,9 @@ export class DockerSandboxProvider implements SandboxProvider {
         "--skills",
         "off",
         ...(this.onCreateOutput ? [] : ["--no-progress"]),
+        ...(input.workspace?.mode === "clone" ? ["--clone"] : []),
         dockerAgent(input.agent),
+        ...(input.workspace?.path === undefined ? [] : [input.workspace.path]),
       ],
       input.name,
     );
@@ -169,6 +173,15 @@ export class DockerSandboxProvider implements SandboxProvider {
 
     if (exitCode !== 0)
       throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`, operation);
+  }
+}
+
+function validateWorkspace(workspace: CreateSandboxInput["workspace"]): void {
+  if (workspace && (workspace.mode === "none") !== (workspace.path === undefined)) {
+    throw new SandboxError(
+      "SANDBOX_INVALID_INPUT",
+      "Workspace path must be supplied only for clone or host mode.",
+    );
   }
 }
 

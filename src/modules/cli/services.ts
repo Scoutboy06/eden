@@ -38,7 +38,10 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
         { read: readConfig },
         options.json ? undefined : streamStdout,
         profileName,
-        profileOptions,
+        {
+          ...profileOptions,
+          onWarning: options.json ? undefined : (warning) => streamStderr(`Warning: ${warning}\n`),
+        },
       );
     },
     get setup() {

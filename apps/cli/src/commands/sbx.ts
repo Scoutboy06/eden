@@ -21,16 +21,23 @@ const create = defineCommand({
       description: "Sandbox profile (defaults to sandbox.default_profile)",
     },
     image: { type: "string", description: "Container image (overrides profile template)" },
+    path: { type: "string", description: "Workspace path (overrides profile workspace path)" },
   },
 
   async run(ctx, { sandbox, output }) {
     const service = await sandbox(ctx.values.provider, ctx.values.profile, {
       useDefaultProfile: true,
     });
-    await service.create({ name: ctx.values.name, image: ctx.values.image });
+    const { warnings } = await service.create(
+      { name: ctx.values.name, image: ctx.values.image },
+      ctx.values.path,
+    );
 
     output.write({
-      data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
+      data: {
+        sandbox: { provider: service.providerName, name: ctx.values.name },
+        ...(warnings.length ? { warnings } : {}),
+      },
       human: () =>
         formatMessage(
           `Created sandbox ${ctx.values.name} using ${service.providerName}.\n\nAttach with Eden:\n  eden sbx run --provider ${service.providerName} --name ${quoteShellArgument(ctx.values.name)}`,

@@ -39,7 +39,9 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     ...JSON.parse(process.env.EDEN_SBX_RUN_KIT_FLAGS ?? "[]"),
     "--skills",
     "off",
+    ...(process.env.EDEN_SBX_WORKSPACE_MODE === "clone" ? ["--clone"] : []),
     process.env.EDEN_SBX_AGENT ?? "shell",
+    ...(process.env.EDEN_SBX_WORKSPACE_PATH ? [process.env.EDEN_SBX_WORKSPACE_PATH] : []),
   ])
 ) {
   if (process.env.EDEN_SBX_CREATE_FAILURE) {

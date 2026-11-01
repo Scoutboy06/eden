@@ -33,6 +33,13 @@ eden config set sandbox.profiles.work.agent claude
 Docker Sandboxes supports `claude`, `codex`, and `opencode` here. An unset profile
 agent uses `shell`; the global `agent.default` does not change this choice.
 
+A profile can set `workspace.mode` to `none`, `clone`, or `host`. Clone and host
+use `--path` when supplied, otherwise `workspace.path`, otherwise the current
+repository root. Relative paths resolve from the current directory and paths must
+be existing directories. Host mode mounts the folder writable, allowing changes
+to hooks, Git configuration, and build output that may later run on the host.
+With no workspace setting, no host folder is mounted.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In

@@ -14,6 +14,7 @@ export type SandboxSummary = {
 export type CreateSandboxInput = {
   name: string;
   agent?: Agent;
+  workspace?: { mode: "none" | "clone" | "host"; path?: string };
   image?: string;
   kits?: string[];
   kitArgs?: Record<string, string | number | boolean>;

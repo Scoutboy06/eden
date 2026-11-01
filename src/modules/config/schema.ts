@@ -58,6 +58,12 @@ const profileSchema = v.pipe(
   v.strictObject({
     provider: v.optional(v.picklist(sandboxProviderNames)),
     agent: v.optional(v.picklist(AGENTS)),
+    workspace: v.optional(
+      v.strictObject({
+        mode: v.picklist(["none", "clone", "host"]),
+        path: v.optional(nonEmptyString),
+      }),
+    ),
     template: v.optional(nonEmptyString),
     kits: v.optional(v.array(nonEmptyString)),
     kit_args: v.optional(configMap(kitArgumentSchema)),
