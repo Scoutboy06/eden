@@ -45,6 +45,9 @@ Explicit `./` and `../` kit paths resolve from the current directory; other kit
 references pass through unchanged. Profiles may set `pull` (`always`, `missing`,
 or `never`) and `disk.root` / `disk.docker` sizes for sandbox creation.
 
+Workspace paths and string kit arguments support `${{ sandbox.name }}`,
+`${{ workspace.mode }}`, and `${{ workspace.path }}` expressions.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In

@@ -1,7 +1,6 @@
-import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { findRepositoryPath } from "../config/repository";
+import { resolveSandboxPaths } from "./sandbox-paths";
 import type { Execution } from "../execution";
 import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
@@ -92,8 +91,7 @@ export class SandboxService {
       );
     const resolved = resolveCreateInput(input, this.profile);
     validateSandboxInput(resolved.name, resolved.image);
-    const workspace = await resolveWorkspace(resolved.workspace, path);
-    if (workspace !== undefined) resolved.workspace = workspace;
+    await resolveSandboxPaths(resolved, path);
     const warnings =
       resolved.workspace?.mode === "host"
         ? [
@@ -211,43 +209,6 @@ function resolveCreateInput(
     ...(kits === undefined ? {} : { kits }),
     ...(kitArgs === undefined ? {} : { kitArgs }),
   };
-}
-
-async function resolveWorkspace(
-  workspace: CreateSandboxInput["workspace"],
-  explicitPath?: string,
-): Promise<CreateSandboxInput["workspace"]> {
-  if (!workspace || workspace.mode === "none") {
-    if (explicitPath !== undefined || workspace?.path !== undefined)
-      throw new SandboxError(
-        "SANDBOX_INVALID_INPUT",
-        "A workspace path requires profile workspace mode clone or host.",
-      );
-    return workspace;
-  }
-  const configured = explicitPath ?? workspace.path;
-  if (configured !== undefined && !configured.trim())
-    throw new SandboxError("SANDBOX_INVALID_INPUT", "Workspace path must not be empty.");
-  const expanded =
-    configured === "~"
-      ? homedir()
-      : configured?.startsWith("~/") ||
-          (process.platform === "win32" && configured?.startsWith("~\\"))
-        ? join(homedir(), configured.slice(2))
-        : configured;
-  const path = expanded === undefined ? await findRepositoryPath(process.cwd()) : resolve(expanded);
-  if (!path)
-    throw new SandboxError(
-      "SANDBOX_INVALID_INPUT",
-      "Workspace requires --path, a profile path, or a current repository.",
-    );
-  const directory = await stat(path).catch(() => undefined);
-  if (!directory?.isDirectory())
-    throw new SandboxError(
-      "SANDBOX_INVALID_INPUT",
-      `Workspace path is not an existing directory: ${path}`,
-    );
-  return { mode: workspace.mode, path };
 }
 
 function resolveKitReference(reference: string): string {
