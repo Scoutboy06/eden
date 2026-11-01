@@ -20,6 +20,7 @@ export type CreateSandboxInput = {
   pull?: "always" | "missing" | "never";
   disk?: { root?: string; docker?: string };
   kits?: string[];
+  mcpServers?: string[];
   kitArgs?: Record<string, string | number | boolean>;
 };
 export type RunSandboxInput = { name: string };

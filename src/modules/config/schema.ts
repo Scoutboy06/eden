@@ -73,6 +73,7 @@ const profileSchema = v.pipe(
       v.strictObject({ root: v.optional(nonEmptyString), docker: v.optional(nonEmptyString) }),
     ),
     kits: v.optional(v.array(nonEmptyString)),
+    mcp_servers: v.optional(v.array(nonEmptyString)),
     kit_args: v.optional(configMap(kitArgumentSchema)),
   }),
 );

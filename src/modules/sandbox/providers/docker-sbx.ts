@@ -146,6 +146,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         ...(input.image === undefined ? [] : ["--template", input.image]),
         ...(input.pull === undefined ? [] : ["--pull", input.pull]),
         ...(input.kits ?? []).flatMap((kit) => ["--kit", kit]),
+        ...(input.mcpServers ?? []).flatMap((server) => ["--static-mcp", server]),
         ...Object.entries(input.kitArgs ?? {}).flatMap(([key, value]) => [
           "--kit-arg",
           `${key}=${String(value)}`,

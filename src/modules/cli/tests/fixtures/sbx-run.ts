@@ -4,6 +4,9 @@ const args = process.argv.slice(2);
 const mode = process.env.EDEN_SBX_RUN_MODE;
 const name = process.env.EDEN_SBX_RUN_NAME ?? "example";
 const log = process.env.EDEN_SBX_RUN_LOG;
+const kitFlags: string[] = JSON.parse(process.env.EDEN_SBX_RUN_KIT_FLAGS ?? "[]");
+const firstArgument = kitFlags.indexOf("--kit-arg");
+const split = firstArgument < 0 ? kitFlags.length : firstArgument;
 
 if (log) {
   const { appendFile } = await import("node:fs/promises");
@@ -37,7 +40,9 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     name,
     ...(process.env.EDEN_SBX_RUN_IMAGE ? ["--template", process.env.EDEN_SBX_RUN_IMAGE] : []),
     ...(process.env.EDEN_SBX_PULL ? ["--pull", process.env.EDEN_SBX_PULL] : []),
-    ...JSON.parse(process.env.EDEN_SBX_RUN_KIT_FLAGS ?? "[]"),
+    ...kitFlags.slice(0, split),
+    ...JSON.parse(process.env.EDEN_SBX_MCP_FLAGS ?? "[]"),
+    ...kitFlags.slice(split),
     "--skills",
     "off",
     ...(process.env.EDEN_SBX_WORKSPACE_MODE === "clone" ? ["--clone"] : []),

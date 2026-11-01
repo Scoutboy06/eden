@@ -197,6 +197,7 @@ function resolveCreateInput(
 ): CreateSandboxInput {
   const kits = (input.kits ?? profile?.kits)?.map(resolveKitReference);
   const kitArgs = input.kitArgs ?? profile?.kit_args;
+  const mcpServers = input.mcpServers ?? profile?.mcp_servers;
 
   return {
     ...input,
@@ -210,6 +211,7 @@ function resolveCreateInput(
     ...((input.agent ?? profile?.agent) ? { agent: input.agent ?? profile?.agent } : {}),
     ...(kits === undefined ? {} : { kits }),
     ...(kitArgs === undefined ? {} : { kitArgs }),
+    ...(mcpServers === undefined ? {} : { mcpServers }),
   };
 }
 
@@ -234,11 +236,14 @@ function describeCreation(provider: string, input: CreateSandboxInput): string {
   const args = Object.entries(input.kitArgs ?? {})
     .map(([name, value]) => `\n  Kit argument ${name}: ${String(value)}`)
     .join("");
+  const mcp = input.mcpServers?.length
+    ? `\n  Static MCP servers: ${input.mcpServers.join(", ")}`
+    : "";
   const pull = input.pull ? `\n  Pull: ${input.pull}` : "";
   const disk = input.disk
     ? `\n  Disk: ${Object.entries(input.disk)
         .map(([key, value]) => `${key}=${value}`)
         .join(", ")}`
     : "";
-  return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${mounts}${args}${pull}${disk}`;
+  return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${mounts}${args}${mcp}${pull}${disk}`;
 }
