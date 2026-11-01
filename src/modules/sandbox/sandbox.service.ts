@@ -106,7 +106,7 @@ export class SandboxService {
     await this.execution.mutate(
       {
         type: "sandbox.create",
-        description: `Create sandbox ${input.name} using ${this.provider.name}${resolved.workspace?.path ? ` with ${resolved.workspace.mode} workspace ${resolved.workspace.path}` : ""}`,
+        description: describeCreation(this.provider.name, resolved),
         input: {
           provider: this.provider.name,
           ...resolved,
@@ -196,7 +196,7 @@ function resolveCreateInput(
   input: CreateSandboxInput,
   profile?: SandboxProfile,
 ): CreateSandboxInput {
-  const kits = input.kits ?? profile?.kits;
+  const kits = (input.kits ?? profile?.kits)?.map(resolveKitReference);
   const kitArgs = input.kitArgs ?? profile?.kit_args;
 
   return {
@@ -248,4 +248,25 @@ async function resolveWorkspace(
       `Workspace path is not an existing directory: ${path}`,
     );
   return { mode: workspace.mode, path };
+}
+
+function resolveKitReference(reference: string): string {
+  if (reference.startsWith("~/") || reference.startsWith("~\\"))
+    return join(homedir(), reference.slice(2).replaceAll("\\", "/"));
+  if (/^\.{1,2}[\\/]/.test(reference)) return resolve(reference.replaceAll("\\", "/"));
+  return reference;
+}
+
+function describeCreation(provider: string, input: CreateSandboxInput): string {
+  const workspace = input.workspace?.path
+    ? ` with ${input.workspace.mode} workspace ${input.workspace.path}`
+    : "";
+  const kits = input.kits?.length ? `\n  Kits: ${input.kits.join(", ")}` : "";
+  const pull = input.pull ? `\n  Pull: ${input.pull}` : "";
+  const disk = input.disk
+    ? `\n  Disk: ${Object.entries(input.disk)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(", ")}`
+    : "";
+  return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${pull}${disk}`;
 }

@@ -40,8 +40,10 @@ be existing directories. Host mode mounts the folder writable, allowing changes
 to hooks, Git configuration, and build output that may later run on the host.
 With no workspace setting, no host folder is mounted.
 
-Profiles may set `pull` (`always`, `missing`, or `never`) and `disk.root` /
-`disk.docker` sizes for sandbox creation.
+Profile kit paths beginning with `~/` or `~\` expand from the home directory.
+Explicit `./` and `../` kit paths resolve from the current directory; other kit
+references pass through unchanged. Profiles may set `pull` (`always`, `missing`,
+or `never`) and `disk.root` / `disk.docker` sizes for sandbox creation.
 
 ### Shell completion
 

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { stringify } from "yaml";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
@@ -50,7 +51,7 @@ test.each([
       name: "example",
       profile: "work",
       image: flags.some((flag) => flag === "--image") ? "explicit:image" : "profile:image",
-      kits,
+      kits: [join(homedir(), "literal kit")],
       kitArgs,
     });
     expect(await sandboxCommands(directory)).toEqual([

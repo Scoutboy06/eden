@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { stringify } from "yaml";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
@@ -11,7 +12,7 @@ test("sbx create forwards profile kits and literal arguments to Docker", async (
     const options = await prepareSandboxCli(directory, "missing");
     const flags = [
       "--kit",
-      "~/missing kit",
+      join(homedir(), "missing kit"),
       "--kit",
       "C:\\work\\kit",
       "--kit",
@@ -116,7 +117,13 @@ test("sbx create dry-run reports kit references and typed arguments without crea
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
       type: "sandbox.create",
-      input: { provider: "docker-sbx", name: "example", profile: "work", kits, kitArgs },
+      input: {
+        provider: "docker-sbx",
+        name: "example",
+        profile: "work",
+        kits: [join(directory, "does-not-exist"), join(homedir(), "team kit")],
+        kitArgs,
+      },
     });
     expect(await sandboxCommands(directory)).toEqual([
       ["ls", "--json"],
@@ -128,7 +135,7 @@ test("sbx create dry-run reports kit references and typed arguments without crea
 test("sbx create preserves Docker kit errors without attachment or cleanup", async () => {
   await withTemporaryDirectory(async (directory) => {
     const options = await prepareSandboxCli(directory, "missing");
-    options.env.EDEN_SBX_RUN_KIT_FLAGS = JSON.stringify(["--kit", "./missing-kit"]);
+    options.env.EDEN_SBX_RUN_KIT_FLAGS = JSON.stringify(["--kit", join(directory, "missing-kit")]);
     options.env.EDEN_SBX_CREATE_FAILURE = "kit reference not found: ./missing-kit";
     await writeFile(
       join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
@@ -154,7 +161,16 @@ test("sbx create preserves Docker kit errors without attachment or cleanup", asy
     expect(await sandboxCommands(directory)).toEqual([
       ["ls", "--json"],
       ["policy", "ls", "--json"],
-      ["create", "--name", "example", "--kit", "./missing-kit", "--skills", "off", "shell"],
+      [
+        "create",
+        "--name",
+        "example",
+        "--kit",
+        join(directory, "missing-kit"),
+        "--skills",
+        "off",
+        "shell",
+      ],
     ]);
   });
 });

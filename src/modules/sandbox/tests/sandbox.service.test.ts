@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createFileConfigService } from "../../config/config.service";
 import { findRepositoryPath } from "../../config/repository";
@@ -236,13 +237,16 @@ test.each([false, true])(
 
     await service.create({ name: "example" });
 
-    expect(calls).toEqual(dryRun ? [] : [{ name: "example", image: undefined, kits, kitArgs }]);
+    const resolvedKits = [join(homedir(), "literal kit")];
+    expect(calls).toEqual(
+      dryRun ? [] : [{ name: "example", image: undefined, kits: resolvedKits, kitArgs }],
+    );
     expect(execution.operations[0]?.input).toEqual({
       provider: "docker-sbx",
       name: "example",
       image: undefined,
       profile: "work",
-      kits,
+      kits: resolvedKits,
       kitArgs,
     });
   },
