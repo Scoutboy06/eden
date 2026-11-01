@@ -23,11 +23,12 @@ test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async
       expect(JSON.parse(result.stdout)).toMatchObject({
         ok: false,
         dryRun: true,
-        error: { code: "SANDBOX_NOT_FOUND", message: expect.stringContaining("eden sbx create") },
+        error: { code: "SANDBOX_NOT_FOUND", message: expect.stringContaining("--provider") },
       });
     } else {
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain("Sandbox typo was not found");
+      expect(result.stderr).toContain("--provider");
       expect(result.stderr).toContain("eden sbx create");
     }
     expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);

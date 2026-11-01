@@ -105,7 +105,8 @@ test.each([false, true])("stop rejects a nonexistent sandbox, dryRun=%s", async 
       ok: false,
       error: {
         code: "SANDBOX_NOT_FOUND",
-        message: "Sandbox example was not found using docker-sbx.",
+        message:
+          "Sandbox example was not found using docker-sbx. If it belongs to another provider, specify --provider.",
       },
     });
     expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);

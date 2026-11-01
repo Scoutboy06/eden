@@ -34,7 +34,7 @@ export class SandboxService {
     if (!sandbox) {
       throw new SandboxError(
         "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}.`,
+        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
       );
     }
 
@@ -59,7 +59,7 @@ export class SandboxService {
     if (!exists) {
       throw new SandboxError(
         "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}. Create it explicitly with eden sbx create.`,
+        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider. Create it explicitly with eden sbx create.`,
       );
     }
 
