@@ -129,39 +129,26 @@ export class SandboxService {
   }
 
   async create(input: CreateSandboxInput, path?: string): Promise<{ warnings: string[] }> {
-    if (input.workspace?.mode === "host" && this.profile?.workspace?.mode !== "host")
+    if (input.workspace?.mode === "host" && this.profile?.workspace?.mode !== "host") {
       throw new SandboxError(
         "SANDBOX_INVALID_INPUT",
         "Host workspace mode must be configured explicitly in a sandbox profile.",
       );
+    }
+
     const resolved = resolveCreateInput(input, this.profile);
     validateSandboxInput(resolved.name, resolved.image);
     await resolveSandboxPaths(resolved, path);
-    const warnings =
-      resolved.workspace?.mode === "host" ||
-      Object.values(resolved.mounts ?? {}).some((mount) => !mount.readonly)
-        ? [
-            "Host workspace or mount is writable: the agent can change hooks, Git configuration, and build output that may run on the host later.",
-          ]
-        : [];
+    const warnings = workspaceWarnings(resolved);
     for (const warning of warnings) this.onWarning?.(warning);
+
     await this.provider.preflight(resolved);
     const hookInput = this.createHookInput(resolved);
     const [pre, post] = await Promise.all([
       this.hooks.discover("sandbox.create.pre"),
       this.hooks.discover("sandbox.create.post"),
     ]);
-    if (pre) {
-      this.onHook?.();
-      await this.hooks.run(
-        "sandbox.create.pre",
-        pre,
-        hookInput,
-        hookInput.context.cwd,
-        "pre",
-        "empty",
-      );
-    }
+    await this.runCreatePreHook(pre, hookInput);
 
     await this.execution.mutate(
       {
@@ -176,19 +163,9 @@ export class SandboxService {
       },
       () => this.provider.create(resolved),
     );
-    if (post) {
-      this.onHook?.();
-      try {
-        await this.hooks.run("sandbox.create.post", post, hookInput, hookInput.context.cwd, "post");
-      } catch (error) {
-        if (error instanceof HookFailure)
-          throw new HookFailure({
-            ...error.detail,
-            message: `${error.message}. Sandbox ${input.name} was created and is left in place.`,
-          });
-        throw error;
-      }
-    }
+
+    await this.runCreatePostHook(post, hookInput);
+
     return { warnings };
   }
 
@@ -199,6 +176,31 @@ export class SandboxService {
       context: { cwd: process.cwd() },
       sandbox: { provider: this.provider.name, ...resolved, ...profile },
     };
+  }
+
+  private async runCreatePreHook(path: string | undefined, input: SandboxHookInput): Promise<void> {
+    if (!path) return;
+    this.onHook?.();
+    await this.hooks.run("sandbox.create.pre", path, input, input.context.cwd, "pre", "empty");
+  }
+
+  private async runCreatePostHook(
+    path: string | undefined,
+    input: SandboxHookInput,
+  ): Promise<void> {
+    if (!path) return;
+    this.onHook?.();
+    try {
+      await this.hooks.run("sandbox.create.post", path, input, input.context.cwd, "post");
+    } catch (error) {
+      if (error instanceof HookFailure) {
+        throw new HookFailure({
+          ...error.detail,
+          message: `${error.message}. Sandbox ${input.request.name} was created and is left in place.`,
+        });
+      }
+      throw error;
+    }
   }
 }
 
@@ -213,6 +215,7 @@ export async function createSandboxService(
     onWarning?: (warning: string) => void;
     hooks?: HookService;
     onHook?: () => void;
+    interactiveCreate?: boolean;
   } = {},
 ): Promise<SandboxService> {
   const settings =
@@ -234,7 +237,7 @@ export async function createSandboxService(
 
   return new SandboxService(
     execution,
-    createSandboxProvider(name, onCreateOutput),
+    createSandboxProvider(name, onCreateOutput, options.interactiveCreate),
     selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
     options.onWarning,
     options.hooks,
@@ -263,10 +266,11 @@ function resolveProfile(settings: Config["sandbox"], name: string) {
 export function createSandboxProvider(
   name: SandboxProviderName,
   onCreateOutput?: (text: string) => void,
+  interactiveCreate?: boolean,
 ): SandboxProvider {
   switch (name) {
     case "docker-sbx":
-      return new DockerSandboxProvider(onCreateOutput);
+      return new DockerSandboxProvider(onCreateOutput, { interactiveCreate });
     default:
       return assertUnreachable(name, "Unsupported sandbox provider");
   }
@@ -281,34 +285,57 @@ function validateSandboxInput(name: string, image?: string): void {
   }
 }
 
+function workspaceWarnings(input: CreateSandboxInput): string[] {
+  if (
+    input.workspace?.mode === "host" ||
+    Object.values(input.mounts ?? {}).some((mount) => !mount.readonly)
+  ) {
+    return [
+      "Host workspace or mount is writable: the agent can change hooks, Git configuration, and build output that may run on the host later.",
+    ];
+  }
+  return [];
+}
+
 function resolveCreateInput(
   input: CreateSandboxInput,
   profile?: SandboxProfile,
 ): CreateSandboxInput {
-  const kits = (input.kits ?? profile?.kits)?.map(resolveKitReference);
-  const kitArgs = input.kitArgs ?? profile?.kit_args;
-  const mcpServers = input.mcpServers ?? profile?.mcp_servers;
-
-  return {
-    ...input,
-    image: input.image ?? profile?.template,
-    ...((input.mounts ?? profile?.mounts) ? { mounts: input.mounts ?? profile?.mounts } : {}),
-    ...((input.pull ?? profile?.pull) ? { pull: input.pull ?? profile?.pull } : {}),
-    ...((input.disk ?? profile?.disk) ? { disk: input.disk ?? profile?.disk } : {}),
-    ...((input.workspace ?? profile?.workspace)
-      ? { workspace: input.workspace ?? profile?.workspace }
-      : {}),
-    ...((input.agent ?? profile?.agent) ? { agent: input.agent ?? profile?.agent } : {}),
-    ...(kits === undefined ? {} : { kits }),
-    ...(kitArgs === undefined ? {} : { kitArgs }),
-    ...(mcpServers === undefined ? {} : { mcpServers }),
+  const settings = {
+    workspace: input.workspace ?? profile?.workspace,
+    mounts: input.mounts ?? profile?.mounts,
+    agent: input.agent ?? profile?.agent,
+    pull: input.pull ?? profile?.pull,
+    disk: input.disk ?? profile?.disk,
+    kits: (input.kits ?? profile?.kits)?.map(resolveKitReference),
+    mcpServers: input.mcpServers ?? profile?.mcp_servers,
+    kitArgs: input.kitArgs ?? profile?.kit_args,
   };
+  const defined = Object.fromEntries(
+    Object.entries(settings).filter(([, value]) => value !== undefined),
+  );
+
+  return { ...input, image: input.image ?? profile?.template, ...defined };
+}
+
+function expandWorkspacePath(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/") || path.startsWith("~\\")) {
+    return join(homedir(), path.slice(2).replaceAll("\\", "/"));
+  }
+
+  return path;
 }
 
 function resolveKitReference(reference: string): string {
-  if (reference.startsWith("~/") || reference.startsWith("~\\"))
-    return join(homedir(), reference.slice(2).replaceAll("\\", "/"));
-  if (/^\.{1,2}[\\/]/.test(reference)) return resolve(reference.replaceAll("\\", "/"));
+  if (reference.startsWith("~/") || reference.startsWith("~\\")) {
+    return expandWorkspacePath(reference);
+  }
+
+  if (/^\.{1,2}[\\/]/.test(reference)) {
+    return resolve(reference.replaceAll("\\", "/"));
+  }
+
   return reference;
 }
 
@@ -335,5 +362,6 @@ function describeCreation(provider: string, input: CreateSandboxInput): string {
         .map(([key, value]) => `${key}=${value}`)
         .join(", ")}`
     : "";
+
   return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${mounts}${args}${mcp}${pull}${disk}`;
 }

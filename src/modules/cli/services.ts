@@ -43,6 +43,11 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
         profileName,
         {
           ...profileOptions,
+          interactiveCreate:
+            !options.json &&
+            !!process.stdin.isTTY &&
+            !!process.stdout.isTTY &&
+            !!process.stderr.isTTY,
           hooks,
           onHook: () => output.includeHooks(hooks.records),
           onWarning: options.json ? undefined : (warning) => streamStderr(`Warning: ${warning}\n`),

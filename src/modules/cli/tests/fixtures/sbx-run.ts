@@ -52,6 +52,18 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     ...JSON.parse(process.env.EDEN_SBX_MOUNT_PATHS ?? "[]"),
   ])
 ) {
+  if (process.env.EDEN_SBX_CREDENTIAL_MODE === "missing") {
+    if (process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY) {
+      process.stdout.write("Approve kit credential? ");
+      const response = await new Response(Bun.stdin.stream()).text();
+      if (!response.trim().startsWith("y")) process.exit(3);
+    } else {
+      process.stderr.write("required credential has no binding; sandbox will start without it\n");
+    }
+  }
+  if (process.env.EDEN_SBX_CREDENTIAL_MODE === "wait") {
+    await waitForInterrupt();
+  }
   if (process.env.EDEN_SBX_ENV_LOG) {
     await Bun.write(
       process.env.EDEN_SBX_ENV_LOG,

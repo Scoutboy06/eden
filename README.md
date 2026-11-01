@@ -68,6 +68,11 @@ pre hooks must return empty output or `{}`. `eden sbx rm --name <name>` runs
 `--force` in noninteractive or JSON mode and for running or unknown-status
 sandboxes; force skips the pre-removal hook and provider confirmation.
 
+Interactive, non-JSON sandbox creation gives Docker Sandboxes the terminal for
+kit credential approval. In unattended creation, Docker may create a sandbox
+without an unapproved credential. Eden reports recognized missing-binding
+warnings, but provider diagnostics do not guarantee detection of every case.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In

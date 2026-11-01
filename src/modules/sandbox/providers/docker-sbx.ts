@@ -28,6 +28,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       run?: DockerCommandRunner;
       attach?: (name: string) => Promise<number>;
       isInstalled?: () => boolean;
+      interactiveCreate?: boolean;
     } = {},
   ) {}
 
@@ -164,7 +165,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         ]),
         "--skills",
         "off",
-        ...(this.onCreateOutput ? [] : ["--no-progress"]),
+        ...(this.onCreateOutput || this.dependencies.interactiveCreate ? [] : ["--no-progress"]),
         ...(input.workspace?.mode === "clone" ? ["--clone"] : []),
         dockerAgent(input.agent),
         ...(input.workspace?.path === undefined ? [] : [input.workspace.path]),
@@ -180,6 +181,7 @@ export class DockerSandboxProvider implements SandboxProvider {
           ? {}
           : { DOCKER_SANDBOXES_DOCKER_SIZE: input.disk.docker }),
       },
+      this.dependencies.interactiveCreate ?? false,
     );
   }
 
@@ -199,20 +201,40 @@ export class DockerSandboxProvider implements SandboxProvider {
         sandboxName === undefined || operation !== "create" ? undefined : this.onCreateOutput,
     });
 
-    if (exitCode !== 0)
-      throw diagnoseFailure(sandboxName, exitCode, `${stdout}\n${stderr}`, operation);
+    const diagnostics = `${stdout}\n${stderr}`;
+    if (
+      operation === "create" &&
+      sandboxName !== undefined &&
+      !inheritIO &&
+      credentialApprovalMissing(stderr)
+    ) {
+      const state =
+        exitCode === 0
+          ? `Sandbox ${sandboxName} was created and is left in place.`
+          : `Sandbox ${sandboxName} may already exist; check before retrying.`;
+      throw new SandboxError(
+        "SANDBOX_CREDENTIAL_APPROVAL_REQUIRED",
+        `Docker Sandboxes reported a credential without an approved binding. ${state} In a terminal, run sbx create --name <new-name> <agent> --kit <kit> using the same agent and kits to approve the credential.`,
+      );
+    }
+    if (exitCode !== 0) throw diagnoseFailure(sandboxName, exitCode, diagnostics, operation);
   }
+}
+
+function credentialApprovalMissing(diagnostics: string): boolean {
+  return /required credential has no binding; sandbox will start without it/i.test(diagnostics);
 }
 
 function validateWorkspace(
   workspace: CreateSandboxInput["workspace"],
   mounts?: CreateSandboxInput["mounts"],
 ): void {
-  if ((!workspace || workspace.mode === "none") && Object.keys(mounts ?? {}).length)
+  if ((!workspace || workspace.mode === "none") && Object.keys(mounts ?? {}).length) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
       "Named mounts require a clone or host workspace.",
     );
+  }
   if (workspace && (workspace.mode === "none") !== (workspace.path === undefined)) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
@@ -397,11 +419,13 @@ function diagnoseFailure(
     );
   }
 
-  if (operation === "remove")
+  if (operation === "remove") {
     return new SandboxError(
       "SANDBOX_REMOVE_FAILED",
       `Docker Sandboxes could not remove sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
     );
+  }
+
   if (operation === "stop") {
     return new SandboxError(
       "SANDBOX_STOP_FAILED",
