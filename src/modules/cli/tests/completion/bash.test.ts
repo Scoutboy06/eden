@@ -63,6 +63,7 @@ bashTest("Bash completes application commands and global options", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr).toBe("");
+  expect(await complete(["ed"], result.stdout)).toEqual([]);
   expect(await complete(["mk"], result.stdout)).toEqual(["mkdir"]);
   expect(await complete(["--dry-r"], result.stdout)).toEqual(["--dry-run"]);
   expect(await complete(["mkdir", "--dry-r"], result.stdout)).toEqual(["--dry-run"]);

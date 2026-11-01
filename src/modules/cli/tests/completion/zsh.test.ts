@@ -29,6 +29,13 @@ zshTest("the generated Zsh script completes an application command", async () =>
   expect(await complete(result.stdout, "eden mk")).toContain("RESULT:mkdir\r\n");
 });
 
+zshTest("Zsh does not offer the default command as a subcommand", async () => {
+  const result = await runCli("completion", "zsh", "--stdout");
+
+  expect(result.exitCode).toBe(0);
+  expect(await complete(result.stdout, "eden ed")).toContain("RESULT:ed\r\n");
+});
+
 zshTest("Zsh completes a global option after a command", async () => {
   const result = await runCli("completion", "zsh", "--stdout");
 
