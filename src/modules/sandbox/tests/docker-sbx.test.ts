@@ -316,3 +316,25 @@ test("unsupported agent fails before direct provider creation", async () => {
   });
   expect(commands).toEqual([]);
 });
+
+test("exec forwards exact arguments and output mode to Docker Sandboxes", async () => {
+  const calls: unknown[] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args, options) => {
+      calls.push({ args, options });
+      return { exitCode: 7, stdout: "out", stderr: "err" };
+    },
+  });
+  const result = await provider.exec({
+    name: "a name",
+    argv: ["echo", "a b", "--"],
+    output: "capture",
+  });
+  expect(result).toEqual({ exitCode: 7, stdout: "out", stderr: "err" });
+  expect(calls).toEqual([
+    {
+      args: ["exec", "--", "a name", "echo", "a b", "--"],
+      options: { sandboxName: "a name", operation: "exec", inheritIO: false },
+    },
+  ]);
+});

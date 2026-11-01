@@ -112,6 +112,15 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
   } else {
     process.stdout.write("stopped\n");
   }
+} else if (args[0] === "exec") {
+  if (mode === "interrupt") await waitForInterrupt();
+  if (mode === "terminal") process.stdin.setRawMode(true);
+  if (mode === "stdin") process.stdout.write(`input:${await Bun.stdin.text()}`);
+  else {
+    process.stdout.write("command stdout\n");
+    process.stderr.write("command stderr\n");
+    process.exitCode = mode === "failure" ? 7 : mode === "provider-failure" ? 125 : 0;
+  }
 } else if (JSON.stringify(args) === JSON.stringify(["run", "--name", name])) {
   if (mode === "interrupt" || mode === "ignore" || mode === "terminal") {
     if (mode === "terminal") process.stdin.setRawMode(true);

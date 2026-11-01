@@ -2,7 +2,13 @@ import { constants } from "node:os";
 import * as v from "valibot";
 import { ScriptRunner, type RunResult } from "../../script";
 import { SandboxError } from "../errors";
-import type { CreateSandboxInput, SandboxProvider, SandboxSummary } from "../provider";
+import type {
+  CreateSandboxInput,
+  ExecSandboxInput,
+  ExecSandboxResult,
+  SandboxProvider,
+  SandboxSummary,
+} from "../provider";
 import type { ReadinessCheck, ReadinessResult } from "../readiness";
 import { saveTerminal, type TerminalSaver } from "./terminal";
 
@@ -14,7 +20,7 @@ export type DockerCommandRunner = (
     env?: Record<string, string>;
     onOutput?: (text: string) => void;
     sandboxName?: string;
-    operation?: "create" | "stop" | "remove";
+    operation?: "create" | "stop" | "remove" | "exec";
     inheritIO?: boolean;
   },
 ) => Promise<DockerCommandResult>;
@@ -27,6 +33,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     private readonly dependencies: {
       run?: DockerCommandRunner;
       attach?: (name: string) => Promise<number>;
+      attachExec?: (input: ExecSandboxInput) => Promise<number>;
       isInstalled?: () => boolean;
       interactiveCreate?: boolean;
     } = {},
@@ -132,6 +139,30 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   run(name: string): Promise<number> {
     return (this.dependencies.attach ?? attachDockerSandbox)(name);
+  }
+
+  async exec(input: ExecSandboxInput): Promise<ExecSandboxResult> {
+    if (input.output === "inherit") {
+      const exitCode = await (this.dependencies.attachExec ?? attachDockerExec)(input);
+      if (exitCode === 125) {
+        throw new SandboxError(
+          "SANDBOX_PROVIDER_UNAVAILABLE",
+          `Docker Sandboxes could not execute the command in ${input.name}.`,
+        );
+      }
+      return { exitCode, stdout: "", stderr: "" };
+    }
+    const result = await (this.dependencies.run ?? runDockerCommand)(
+      ["exec", "--", input.name, ...input.argv],
+      { sandboxName: input.name, operation: "exec", inheritIO: false },
+    );
+    if (result.exitCode === 125) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        `Docker Sandboxes could not execute the command in ${input.name}.${result.stderr ? `\n\n${result.stderr.trim()}` : ""}`,
+      );
+    }
+    return result;
   }
 
   async stop(name: string): Promise<void> {
@@ -322,6 +353,7 @@ async function runDockerCommand(
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   if (!options.signal) process.on("SIGINT", interrupt);
+  if (!options.signal) process.on("SIGTERM", interrupt);
 
   try {
     const result = await ScriptRunner.run("sbx", null, {
@@ -341,13 +373,14 @@ async function runDockerCommand(
     return dockerCommandResult(result, options.sandboxName, options.operation);
   } finally {
     if (!options.signal) process.off("SIGINT", interrupt);
+    if (!options.signal) process.off("SIGTERM", interrupt);
   }
 }
 
 function dockerCommandResult(
   result: RunResult,
   sandboxName?: string,
-  operation: "create" | "stop" | "remove" = "create",
+  operation: "create" | "stop" | "remove" | "exec" = "create",
 ): DockerCommandResult {
   switch (result.outcome) {
     case "exited":
@@ -367,11 +400,13 @@ function dockerCommandResult(
     "CANCELLED",
     sandboxName === undefined
       ? "Sandbox prerequisite check cancelled."
-      : operation === "remove"
-        ? `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`
-        : operation === "stop"
-          ? `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`
-          : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
+      : operation === "exec"
+        ? `Execution in sandbox ${sandboxName} cancelled.`
+        : operation === "remove"
+          ? `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`
+          : operation === "stop"
+            ? `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`
+            : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
   );
 }
 
@@ -502,5 +537,16 @@ function spawnDockerAttach(name: string): ReturnType<typeof Bun.spawn> {
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
+  });
+}
+
+function attachDockerExec(input: ExecSandboxInput): Promise<number> {
+  return attachDockerSandbox(input.name, {
+    spawn: () =>
+      Bun.spawn(["sbx", "exec", "-i", "--", input.name, ...input.argv], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
   });
 }

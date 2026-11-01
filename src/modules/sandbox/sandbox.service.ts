@@ -9,6 +9,8 @@ import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
 import type {
   CreateSandboxInput,
+  ExecSandboxInput,
+  ExecSandboxResult,
   RunSandboxInput,
   SandboxProvider,
   SandboxProviderName,
@@ -32,6 +34,42 @@ export class SandboxService {
 
   list(): Promise<SandboxSummary[]> {
     return this.provider.list();
+  }
+
+  async exec(input: ExecSandboxInput): Promise<ExecSandboxResult | undefined> {
+    validateSandboxInput(input.name);
+    if (!input.argv.length || !input.argv[0]) {
+      throw new SandboxError("SANDBOX_INVALID_INPUT", "Provide a command to execute.");
+    }
+    if (!(await this.provider.list()).some((sandbox) => sandbox.name === input.name)) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${input.name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
+      );
+    }
+    if (!this.provider.exec) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Sandbox execution is unavailable for this provider.",
+      );
+    }
+    let result: ExecSandboxResult | undefined;
+    await this.execution.mutate(
+      {
+        type: "sandbox.exec",
+        description: `Execute a command in sandbox ${input.name} using ${this.provider.name}`,
+        input: {
+          provider: this.provider.name,
+          name: input.name,
+          argv: input.argv,
+          output: input.output,
+        },
+      },
+      async () => {
+        result = await this.provider.exec!(input);
+      },
+    );
+    return result;
   }
 
   async stop(name: string): Promise<void> {

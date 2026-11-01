@@ -297,3 +297,36 @@ test("repository default provider is resolved from a nested directory without in
     expect(service.providerName).toBe("docker-sbx");
   });
 });
+
+test.each([false, true])(
+  "exec passes exact input through mutation boundary, dryRun=%s",
+  async (dryRun) => {
+    const execution = createExecution({ dryRun });
+    const calls: unknown[] = [];
+    const provider: SandboxProvider = {
+      name: "docker-sbx",
+      readinessChecks: () => [],
+      preflight: async () => {},
+      list: async () => [{ provider: "docker-sbx", name: "example", status: "stopped" }],
+      run: async () => 0,
+      stop: async () => {},
+      create: async () => {
+        throw new Error("must not create");
+      },
+      exec: async (input) => {
+        calls.push(input);
+        return { exitCode: 7, stdout: "out", stderr: "err" };
+      },
+    };
+    const input = { name: "example", argv: ["echo", "a b", "--"], output: "capture" } as const;
+    const result = await new SandboxService(execution, provider).exec({
+      ...input,
+      argv: [...input.argv],
+    });
+    expect(result).toEqual(dryRun ? undefined : { exitCode: 7, stdout: "out", stderr: "err" });
+    expect(calls).toEqual(dryRun ? [] : [input]);
+    expect(execution.operations).toMatchObject([
+      { type: "sandbox.exec", input: { argv: input.argv } },
+    ]);
+  },
+);

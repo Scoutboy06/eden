@@ -24,6 +24,8 @@ export type CreateSandboxInput = {
   kitArgs?: Record<string, string | number | boolean>;
 };
 export type RunSandboxInput = { name: string };
+export type ExecSandboxInput = { name: string; argv: string[]; output: "capture" | "inherit" };
+export type ExecSandboxResult = { exitCode: number; stdout: string; stderr: string };
 
 export interface SandboxProvider {
   readonly name: SandboxProviderName;
@@ -34,6 +36,7 @@ export interface SandboxProvider {
   create(input: CreateSandboxInput): Promise<void>;
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
+  exec?(input: ExecSandboxInput): Promise<ExecSandboxResult>;
   stop(name: string): Promise<void>;
   remove?(name: string, force: boolean): Promise<void>;
 }
