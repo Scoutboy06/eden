@@ -43,6 +43,7 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     ...(process.env.EDEN_SBX_WORKSPACE_MODE === "clone" ? ["--clone"] : []),
     process.env.EDEN_SBX_AGENT ?? "shell",
     ...(process.env.EDEN_SBX_WORKSPACE_PATH ? [process.env.EDEN_SBX_WORKSPACE_PATH] : []),
+    ...JSON.parse(process.env.EDEN_SBX_MOUNT_PATHS ?? "[]"),
   ])
 ) {
   if (process.env.EDEN_SBX_ENV_LOG) {

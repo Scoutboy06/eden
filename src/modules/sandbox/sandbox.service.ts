@@ -93,7 +93,8 @@ export class SandboxService {
     validateSandboxInput(resolved.name, resolved.image);
     await resolveSandboxPaths(resolved, path);
     const warnings =
-      resolved.workspace?.mode === "host"
+      resolved.workspace?.mode === "host" ||
+      Object.values(resolved.mounts ?? {}).some((mount) => !mount.readonly)
         ? [
             "Host workspace or mount is writable: the agent can change hooks, Git configuration, and build output that may run on the host later.",
           ]
@@ -200,6 +201,7 @@ function resolveCreateInput(
   return {
     ...input,
     image: input.image ?? profile?.template,
+    ...((input.mounts ?? profile?.mounts) ? { mounts: input.mounts ?? profile?.mounts } : {}),
     ...((input.pull ?? profile?.pull) ? { pull: input.pull ?? profile?.pull } : {}),
     ...((input.disk ?? profile?.disk) ? { disk: input.disk ?? profile?.disk } : {}),
     ...((input.workspace ?? profile?.workspace)
@@ -223,11 +225,20 @@ function describeCreation(provider: string, input: CreateSandboxInput): string {
     ? ` with ${input.workspace.mode} workspace ${input.workspace.path}`
     : "";
   const kits = input.kits?.length ? `\n  Kits: ${input.kits.join(", ")}` : "";
+  const mounts = Object.entries(input.mounts ?? {})
+    .map(
+      ([name, mount]) =>
+        `\n  Mount ${name}: ${mount.path}${mount.readonly ? " (read-only)" : " (writable)"}`,
+    )
+    .join("");
+  const args = Object.entries(input.kitArgs ?? {})
+    .map(([name, value]) => `\n  Kit argument ${name}: ${String(value)}`)
+    .join("");
   const pull = input.pull ? `\n  Pull: ${input.pull}` : "";
   const disk = input.disk
     ? `\n  Disk: ${Object.entries(input.disk)
         .map(([key, value]) => `${key}=${value}`)
         .join(", ")}`
     : "";
-  return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${pull}${disk}`;
+  return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${mounts}${args}${pull}${disk}`;
 }

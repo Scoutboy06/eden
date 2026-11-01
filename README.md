@@ -45,8 +45,17 @@ Explicit `./` and `../` kit paths resolve from the current directory; other kit
 references pass through unchanged. Profiles may set `pull` (`always`, `missing`,
 or `never`) and `disk.root` / `disk.docker` sizes for sandbox creation.
 
-Workspace paths and string kit arguments support `${{ sandbox.name }}`,
-`${{ workspace.mode }}`, and `${{ workspace.path }}` expressions.
+Profiles may define named `mounts` with `path` and optional `readonly: true`. They
+are additional direct mounts and require a clone or host workspace; otherwise
+Docker Sandboxes would treat the first mount as the primary workspace. Mount paths
+must already exist. Writable mounts carry the same host-file risk as host mode.
+On Windows, named mounts require drive-letter paths; UNC mount paths are not yet
+supported.
+
+Workspace and mount paths and string kit arguments support `${{ sandbox.name }}`,
+`${{ workspace.mode }}`, `${{ workspace.path }}`, and named mount expressions such
+as `${{ mounts.packages.hostPath }}` and `${{ mounts.packages.sandboxPath }}`.
+Unrecognized, unavailable, or cyclic expressions fail before sandbox creation.
 
 ### Shell completion
 

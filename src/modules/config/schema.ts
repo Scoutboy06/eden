@@ -64,6 +64,9 @@ const profileSchema = v.pipe(
         path: v.optional(nonEmptyString),
       }),
     ),
+    mounts: v.optional(
+      configMap(v.strictObject({ path: nonEmptyString, readonly: v.optional(v.boolean()) })),
+    ),
     template: v.optional(nonEmptyString),
     pull: v.optional(v.picklist(["always", "missing", "never"])),
     disk: v.optional(

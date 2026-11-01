@@ -87,7 +87,7 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   async preflight(input: CreateSandboxInput): Promise<void> {
     dockerAgent(input.agent);
-    validateWorkspace(input.workspace);
+    validateWorkspace(input.workspace, input.mounts);
     await this.execute(["ls", "--json"]);
     await this.execute(["policy", "ls", "--json"]);
   }
@@ -137,7 +137,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
-    validateWorkspace(input.workspace);
+    validateWorkspace(input.workspace, input.mounts);
     await this.execute(
       [
         "create",
@@ -156,6 +156,9 @@ export class DockerSandboxProvider implements SandboxProvider {
         ...(input.workspace?.mode === "clone" ? ["--clone"] : []),
         dockerAgent(input.agent),
         ...(input.workspace?.path === undefined ? [] : [input.workspace.path]),
+        ...Object.values(input.mounts ?? {}).map(
+          (mount) => `${mount.path}${mount.readonly ? ":ro" : ""}`,
+        ),
       ],
       input.name,
       "create",
@@ -187,7 +190,15 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 }
 
-function validateWorkspace(workspace: CreateSandboxInput["workspace"]): void {
+function validateWorkspace(
+  workspace: CreateSandboxInput["workspace"],
+  mounts?: CreateSandboxInput["mounts"],
+): void {
+  if ((!workspace || workspace.mode === "none") && Object.keys(mounts ?? {}).length)
+    throw new SandboxError(
+      "SANDBOX_INVALID_INPUT",
+      "Named mounts require a clone or host workspace.",
+    );
   if (workspace && (workspace.mode === "none") !== (workspace.path === undefined)) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
