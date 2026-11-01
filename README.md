@@ -57,6 +57,10 @@ Workspace and mount paths and string kit arguments support `${{ sandbox.name }}`
 as `${{ mounts.packages.hostPath }}` and `${{ mounts.packages.sandboxPath }}`.
 Unrecognized, unavailable, or cyclic expressions fail before sandbox creation.
 
+Use `eden profile list` and `eden profile show <name>` to inspect effective
+sandbox profiles and configuration sources. Profile `mcp_servers` entries pass
+through to Docker Sandboxes as static MCP server names.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In

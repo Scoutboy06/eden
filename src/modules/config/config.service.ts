@@ -199,6 +199,22 @@ function mergeConfigLayer(
     const keys = [...prefix, key];
 
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const isNewProfile =
+        prefix.length === 2 &&
+        prefix[0] === "sandbox" &&
+        prefix[1] === "profiles" &&
+        !Object.hasOwn(target, key);
+      if (isNewProfile && Object.keys(value).length === 0) {
+        provenance[formatConfigPath(keys)] = { type: "file", path };
+      } else if (
+        prefix.length === 2 &&
+        prefix[0] === "sandbox" &&
+        prefix[1] === "profiles" &&
+        Object.keys(value).length > 0
+      ) {
+        delete provenance[formatConfigPath(keys)];
+      }
+
       if (!Object.hasOwn(target, key)) {
         Object.defineProperty(target, key, {
           value: {},
