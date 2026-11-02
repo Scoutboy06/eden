@@ -11,6 +11,7 @@ import { findRepositoryPath } from "../config/repository";
 import { checkSandboxFreshness } from "../sandbox/template-freshness";
 import { TemplateUpdateService } from "../sandbox/template-update";
 import { SetupService } from "../setup/setup.service";
+import { PullRequestService } from "../pull-requests/service";
 
 export function createCommandServices(options: EdenExtensions, execution: Execution) {
   const onStderr = options.json ? undefined : streamStderr;
@@ -30,6 +31,9 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
 
   return {
     output,
+    get pullRequests() {
+      return new PullRequestService();
+    },
     readResolvedConfig,
     readConfig,
     templateUpdate: new TemplateUpdateService(execution),

@@ -1,0 +1,52 @@
+export type RepositoryRef =
+  | { provider: "github"; owner: string; repository: string }
+  | {
+      provider: "azure-devops";
+      organizationUrl: string;
+      project: string;
+      repository: string;
+    };
+
+export type PullRequestRef =
+  | { provider: "github"; owner: string; repository: string; number: number }
+  | { provider: "azure-devops"; organizationUrl: string; id: number };
+
+export interface PullRequest {
+  ref: PullRequestRef;
+  url: string;
+  title: string;
+  body: string;
+  state: "open" | "closed" | "merged";
+  isDraft: boolean;
+  sourceBranch: string;
+  targetBranch: string;
+}
+
+export interface PullRequestCheck {
+  id: string;
+  name: string;
+  url?: string;
+  state: "pending" | "running" | "passed" | "failed" | "cancelled" | "skipped" | "unknown";
+}
+
+export interface PullRequestReview {
+  reviewer: { id: string; name: string };
+  state:
+    | "pending"
+    | "approved"
+    | "approved-with-suggestions"
+    | "changes-requested"
+    | "rejected"
+    | "commented"
+    | "unknown";
+}
+
+export interface PullRequestProvider {
+  getPullRequest(ref: PullRequestRef): Promise<PullRequest>;
+  findOpenPullRequests(query: {
+    repository: RepositoryRef;
+    sourceBranch: string;
+  }): Promise<PullRequestRef[]>;
+  getChecks(ref: PullRequestRef): Promise<PullRequestCheck[]>;
+  getReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
+}

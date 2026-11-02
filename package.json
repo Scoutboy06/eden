@@ -23,6 +23,8 @@
   "dependencies": {
     "@clack/core": "^1.5.1",
     "@clack/prompts": "^1.8.1",
+    "@octokit/rest": "^22.0.1",
+    "azure-devops-node-api": "^17.0.1",
     "gunshi": "^0.37.3",
     "valibot": "^1.5.0",
     "yaml": "^2.9.1"
