@@ -44,20 +44,25 @@ contracts and were not deleted simply because they were slow.
 
 ## Final measurements
 
-Two unfiltered `bun run test:full` runs passed in **89.32 s and 85.88 s**: 744 pass,
-seven PowerShell skips, zero failures, 1,969 assertions and 751 tests across 64 files.
+Two unfiltered `bun run test:full` runs after the Git-hook isolation fix passed in
+**94.91 s and 91.93 s**: 746 pass, seven PowerShell skips, zero failures, 1,971
+assertions and 753 tests across 65 files. The first deliberately inherited Git controls
+pointing at a sentinel caller; its HEAD/configuration and this worktree's HEAD were
+verified unchanged. The second used the ordinary development environment.
 The count changes reflect moved matrices plus retained representative CLI cases and
 the new partition checks, not a target for test count or assertion count.
 
-The final partition is 28 fast files (388 tests, no skips) and 36 integration files
-(363 tests, including the seven PowerShell skips). Two final fast runs took **0.717 s
-and 0.724 s**. This is a smaller feedback loop, not a substitute for full coverage.
-The final integration command passed in 88.07 s: 356 pass, seven skips, zero failures,
-and 1,192 assertions. Its 363 tests plus the fast group's 388 equal the full run's 751;
-the 36 integration files plus 28 fast files equal all 64 full-suite files.
+The final partition is 29 fast files (390 tests, no skips) and 36 integration files
+(363 tests, including the seven PowerShell skips). Two final fast runs took **0.761 s
+and 0.819 s**. This is a smaller feedback loop, not a substitute for full coverage.
+The integration group's 363 tests plus the fast group's 390 equal the full run's 753;
+the 36 integration files plus 29 fast files equal all 65 full-suite files.
+The final standalone integration run passed in 90.20 s (356 pass, seven skips,
+zero failures and 1,192 assertions).
 
-Isolated after timings include the replacement service suites, not just the smaller
-CLI files. They use the same sequential per-file spawn/exit measurement as before:
+Isolated post-optimization timings (before the hook-isolation follow-up) include the
+replacement service suites, not just the smaller CLI files. They use the same
+sequential per-file spawn/exit measurement as before:
 
 | Suite                                                 | After run 1 | After run 2 |
 | ----------------------------------------------------- | ----------: | ----------: |
@@ -71,10 +76,10 @@ The original two CLI suites combined took 9.519 s and 9.359 s. Both observed ful
 and isolated-suite costs decreased, with substantial host/run variability; these are
 local samples, not a guaranteed speedup on other machines.
 
-`bun run test:profile full 1` also passed all 64 isolated files. The largest wall
-samples were PR CLI (9.736 s), hooks CLI (6.124 s), Zsh completion (5.974 s), config-set
-CLI (5.582 s), template update CLI (4.834 s), and Docker lifecycle (4.702 s). Total
-isolated-file wall time was 95.288 s; fresh process/import overhead makes this a
+`bun run test:profile full 1` also passed all 65 isolated files after the hook-isolation
+fix. The largest wall samples were PR CLI (10.183 s), Zsh completion (6.131 s), hooks
+CLI (5.301 s), template update CLI (5.192 s), config-set CLI (4.763 s), and Docker
+lifecycle (4.699 s). Total isolated-file wall time was 95.029 s; fresh process/import overhead makes this a
 different measurement from a single full run. `bun run test:profile fast 2` exercises
 the repeated-sampling path as well.
 
@@ -112,6 +117,16 @@ Three temporary production mutations were each rejected by the strengthened test
 skipping branch discovery, fetching fixture PR 12 instead of selected PR 37, and
 requesting checks/statuses for `wrong-commit` instead of the PR's SHA. Each produced
 one failing targeted test; the mutations were reverted before the final full runs.
+
+The first real pre-push run exposed an additional isolation bug: Git's exported
+`GIT_DIR` and related hook controls redirected temporary-repository commands into the
+calling checkout. The failed push was stopped, its saved commit and Git metadata were
+restored, and test-created refs/worktree registrations were removed. No remote branch
+was pushed by that failed run. `bunfig.toml` now preloads a test-only environment
+sanitizer before any test imports, removing inherited `GIT_*` controls. Two regression
+tests cover both the sanitization contract and actual preload activation. A complete
+run with deliberately polluted Git variables verifies that a separate sentinel caller's
+HEAD/configuration and this worktree's HEAD remain unchanged.
 
 No production code, polling deadline, cancellation, terminal or process-cleanup test
 was changed. Readiness polling in helpers and real grace periods were inspected and

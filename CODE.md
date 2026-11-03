@@ -39,6 +39,11 @@ the result. Install missing declared dependencies with `bun install --frozen-loc
 missing dependencies are not evidence of a product regression. On hosts without
 PowerShell, its completion integration cases skip but generator assertions still run.
 
+`bunfig.toml` preloads `scripts/test-environment.ts` for every Bun test run. It removes
+inherited `GIT_*` controls before tests import code or spawn commands: Git hooks export
+repository/index variables that would otherwise redirect temporary-repository commands
+into the caller's checkout. Do not bypass this isolation when adding test entry points.
+
 ## Choosing tests
 
 Before adding a test, name the plausible mistake it catches, the observable contract
