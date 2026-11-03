@@ -7,6 +7,7 @@ import {
   type PullRequestInput,
 } from "./resolve";
 import { repositoryUrl } from "./targets";
+import { watchChecks, type WatchOptions } from "./watch";
 
 export class PullRequestService {
   constructor(
@@ -35,10 +36,14 @@ export class PullRequestService {
     };
   }
 
-  async checks(input: PullRequestInput) {
+  async checks(
+    input: PullRequestInput & { requiredOnly?: boolean; watch?: boolean },
+    options: WatchOptions = {},
+  ) {
     const { provider, ref } = await this.resolve(input);
+    const read = () => provider.getChecks(ref, { requiredOnly: input.requiredOnly });
 
-    return { ref, checks: await provider.getChecks(ref) };
+    return { ref, checks: input.watch ? await watchChecks(read, options) : await read() };
   }
 
   async reviewers(input: PullRequestInput) {

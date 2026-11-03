@@ -87,3 +87,26 @@ test("service validates URLs before creating an authenticated client", async () 
   });
   expect(create).not.toHaveBeenCalled();
 });
+
+test("checks watch resolves a branch only once and forwards required-only on each poll", async () => {
+  const { provider } = githubProvider(() => Response.json([githubPr()]));
+  const find = mock(provider.findOpenPullRequests.bind(provider));
+  let calls = 0;
+  const getChecks = mock(async () => [
+    {
+      id: "build",
+      name: "Build",
+      state: ++calls === 1 ? ("pending" as const) : ("passed" as const),
+    },
+  ]);
+  provider.findOpenPullRequests = find;
+  provider.getChecks = getChecks;
+  const service = new PullRequestService(git, async () => provider);
+
+  expect(
+    await service.checks({ watch: true, requiredOnly: true }, { intervalMs: 1 }),
+  ).toMatchObject({ ref, checks: [{ state: "passed" }] });
+  expect(find).toHaveBeenCalledTimes(1);
+  expect(getChecks.mock.calls).toHaveLength(2);
+  expect(getChecks).toHaveBeenCalledWith(ref, { requiredOnly: true });
+});
