@@ -41,7 +41,8 @@ export class PullRequestService {
     options: WatchOptions = {},
   ) {
     const { provider, ref } = await this.resolve(input);
-    const read = () => provider.getChecks(ref, { requiredOnly: input.requiredOnly });
+    const read = (signal?: AbortSignal) =>
+      provider.getChecks(ref, { requiredOnly: input.requiredOnly, ...(signal ? { signal } : {}) });
 
     return { ref, checks: input.watch ? await watchChecks(read, options) : await read() };
   }

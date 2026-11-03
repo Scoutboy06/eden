@@ -63,6 +63,9 @@ export interface PullRequestProvider {
     repository: RepositoryRef;
     sourceBranch: string;
   }): Promise<PullRequestRef[]>;
-  getChecks(ref: PullRequestRef, options?: { requiredOnly?: boolean }): Promise<PullRequestCheck[]>;
+  getChecks(
+    ref: PullRequestRef,
+    options?: { requiredOnly?: boolean; signal?: AbortSignal },
+  ): Promise<PullRequestCheck[]>;
   getReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
 }

@@ -96,16 +96,35 @@ export class GitHubApiProvider implements PullRequestProvider {
 
   getChecks(
     ref: PullRequestRef,
-    options: { requiredOnly?: boolean } = {},
+    options: { requiredOnly?: boolean; signal?: AbortSignal } = {},
   ): Promise<PullRequestCheck[]> {
     return providerRequest(async () => {
       const input = parameters(ref);
-      const { data: pr } = await this.client.pulls.get(input);
+      const request = { signal: options.signal };
+      const { data: pr } = await this.client.pulls.get({ ...input, request });
       if (!pr.head?.sha) invalidResponse();
-      const target = { owner: input.owner, repo: input.repo, ref: pr.head.sha, per_page: 100 };
+      const target = {
+        owner: input.owner,
+        repo: input.repo,
+        ref: pr.head.sha,
+        per_page: 100,
+        request,
+      };
       const [runs, statuses] = await Promise.all([
-        this.client.paginate(this.client.checks.listForRef, { ...target, filter: "latest" }),
-        this.client.paginate(this.client.repos.listCommitStatusesForRef, target),
+        this.client.paginate(
+          this.client.checks.listForRef.defaults({
+            url: this.client.checks.listForRef.endpoint.DEFAULTS.url,
+            request,
+          }) as typeof this.client.checks.listForRef,
+          { ...target, filter: "latest" },
+        ),
+        this.client.paginate(
+          this.client.repos.listCommitStatusesForRef.defaults({
+            url: this.client.repos.listCommitStatusesForRef.endpoint.DEFAULTS.url,
+            request,
+          }) as typeof this.client.repos.listCommitStatusesForRef,
+          target,
+        ),
       ]);
       const latest = new Map<string, (typeof statuses)[number]>();
       for (const status of statuses) {
@@ -141,7 +160,12 @@ export class GitHubApiProvider implements PullRequestProvider {
       ];
       if (!options.requiredOnly) return checks;
       if (!pr.base?.ref) invalidResponse();
-      const required = await this.requiredChecks(input.owner, input.repo, pr.base.ref);
+      const required = await this.requiredChecks(
+        input.owner,
+        input.repo,
+        pr.base.ref,
+        options.signal,
+      );
 
       return required.flatMap((requirement) => {
         const matches = checks.filter((check) => {
@@ -166,8 +190,8 @@ export class GitHubApiProvider implements PullRequestProvider {
     });
   }
 
-  private async requiredChecks(owner: string, repo: string, branch: string) {
-    const target = { owner, repo, branch };
+  private async requiredChecks(owner: string, repo: string, branch: string, signal?: AbortSignal) {
+    const target = { owner, repo, branch, request: { signal } };
     const [protection, rules] = await Promise.all([
       this.client.repos.getBranchProtection(target).catch((error: unknown) => {
         if (
@@ -180,7 +204,13 @@ export class GitHubApiProvider implements PullRequestProvider {
 
         throw error;
       }),
-      this.client.paginate(this.client.repos.getBranchRules, { ...target, per_page: 100 }),
+      this.client.paginate(
+        this.client.repos.getBranchRules.defaults({
+          url: this.client.repos.getBranchRules.endpoint.DEFAULTS.url,
+          request: { signal },
+        }) as typeof this.client.repos.getBranchRules,
+        { ...target, per_page: 100 },
+      ),
     ]);
     if (rules.some((rule) => rule.type === "workflows"))
       throw new ScmError(

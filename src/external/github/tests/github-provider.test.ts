@@ -188,6 +188,35 @@ test("unprotected branches have no required checks", async () => {
   expect(await provider.getChecks(ref, { requiredOnly: true })).toEqual([]);
 });
 
+test("GitHub checks forward cancellation to every SDK request", async () => {
+  const signals: (AbortSignal | null | undefined)[] = [];
+  const controller = new AbortController();
+  const { provider } = githubProvider((url, request) => {
+    signals.push(request.signal);
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/protection")) return Response.json({});
+    if (url.pathname.endsWith("/check-runs"))
+      return Response.json({ total_count: 0, check_runs: [] });
+
+    return Response.json([]);
+  });
+
+  await provider.getChecks(ref, { requiredOnly: true, signal: controller.signal });
+
+  expect(signals).toHaveLength(5);
+  expect(signals.map((signal) => signal?.aborted ?? "missing")).toEqual([
+    false,
+    false,
+    false,
+    false,
+    false,
+  ]);
+
+  controller.abort();
+
+  expect(signals.every((signal) => signal?.aborted)).toBe(true);
+});
+
 test.each([403, 500])("required-check discovery fails explicitly on HTTP %i", async (status) => {
   const { provider } = githubProvider((url) => {
     if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());

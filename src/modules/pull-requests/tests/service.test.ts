@@ -108,5 +108,8 @@ test("checks watch resolves a branch only once and forwards required-only on eac
   ).toMatchObject({ ref, checks: [{ state: "passed" }] });
   expect(find).toHaveBeenCalledTimes(1);
   expect(getChecks.mock.calls).toHaveLength(2);
-  expect(getChecks).toHaveBeenCalledWith(ref, { requiredOnly: true });
+  expect(getChecks).toHaveBeenCalledWith(ref, {
+    requiredOnly: true,
+    signal: expect.any(AbortSignal),
+  });
 });

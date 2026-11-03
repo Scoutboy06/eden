@@ -9,7 +9,7 @@ export interface WatchOptions {
 }
 
 export async function watchChecks(
-  read: () => Promise<PullRequestCheck[]>,
+  read: (signal: AbortSignal) => Promise<PullRequestCheck[]>,
   options: WatchOptions = {},
 ): Promise<PullRequestCheck[]> {
   const intervalMs = options.intervalMs ?? 10_000;
@@ -64,7 +64,10 @@ function checksFinished(checks: PullRequestCheck[]): boolean {
   return true;
 }
 
-async function readUntilAborted(read: () => Promise<PullRequestCheck[]>, signal: AbortSignal) {
+async function readUntilAborted(
+  read: (signal: AbortSignal) => Promise<PullRequestCheck[]>,
+  signal: AbortSignal,
+) {
   signal.throwIfAborted();
   let onAbort: () => void = () => {};
   const aborted = new Promise<never>((_resolve, reject) => {
@@ -73,7 +76,7 @@ async function readUntilAborted(read: () => Promise<PullRequestCheck[]>, signal:
   });
 
   try {
-    return await Promise.race([read(), aborted]);
+    return await Promise.race([read(signal), aborted]);
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
