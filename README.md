@@ -88,6 +88,8 @@ Read pull requests on github.com and Azure DevOps Services:
 eden pr show https://github.com/owner/repo/pull/123 --comments --checks
 eden pr show 123 --repo https://github.com/owner/repo --raw --json
 eden pr checks --required-only --watch --interval 10 --timeout 600
+eden pr reviewers --pending
+eden pr reviewers --approved --json
 ```
 
 Omit the PR reference to discover the open PR for the current branch. Use `--head`
@@ -111,6 +113,13 @@ including in JSON mode. Passed/skipped checks and an empty check list succeed;
 failed/cancelled checks, unknown states, timeouts and provider errors fail with
 exit code 1. Ctrl-C or SIGTERM cancels with exit code 130. Without `--watch`, check
 states are returned as data without making failed CI a command failure.
+
+`reviewers --pending` selects outstanding requests and reviewers without a vote;
+`--approved` selects approvals, including Azure approvals with suggestions. These
+filters are mutually exclusive. With neither, all current reviewer states are
+shown. GitHub dismissals are distinct from pending requests; a new request takes
+precedence over that reviewer's previous decision. This is a current-state view,
+not a review history or a merge-authorization verdict.
 
 GitHub authentication uses `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`; Azure uses
 `AZURE_DEVOPS_EXT_PAT`, then an Entra token from `az login`. Eden does not log in or
