@@ -4,6 +4,7 @@ import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
   PullRequest,
   PullRequestCheck,
+  PullRequestComment,
   PullRequestProvider,
   PullRequestRef,
   PullRequestReview,
@@ -13,7 +14,7 @@ import type {
 export class GitHubApiProvider implements PullRequestProvider {
   constructor(private readonly client: Octokit) {}
 
-  getPullRequest(ref: PullRequestRef): Promise<PullRequest> {
+  getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       const { data } = await this.client.pulls.get(parameters(ref));
       if (!data.title || !data.html_url || !data.head?.ref || !data.base?.ref) invalidResponse();
@@ -34,7 +35,43 @@ export class GitHubApiProvider implements PullRequestProvider {
         isDraft: data.draft ?? false,
         sourceBranch: data.head.ref,
         targetBranch: data.base.ref,
+        ...(options.raw ? { raw: data } : {}),
       };
+    });
+  }
+
+  getComments(ref: PullRequestRef): Promise<PullRequestComment[]> {
+    return providerRequest(async () => {
+      const input = { ...parameters(ref), per_page: 100 };
+      const [discussion, inline] = await Promise.all([
+        this.client.paginate(this.client.issues.listComments, {
+          owner: input.owner,
+          repo: input.repo,
+          issue_number: input.pull_number,
+          per_page: 100,
+        }),
+        this.client.paginate(this.client.pulls.listReviewComments, input),
+      ]);
+
+      return [
+        ...discussion.map((comment): PullRequestComment => ({
+          id: `issue:${comment.id}`,
+          body: comment.body ?? "",
+          author: comment.user ? { id: `user:${comment.user.id}`, name: comment.user.login } : null,
+          url: comment.html_url,
+          createdAt: comment.created_at,
+        })),
+        ...inline.map((comment): PullRequestComment => ({
+          id: `review:${comment.id}`,
+          body: comment.body,
+          author: comment.user ? { id: `user:${comment.user.id}`, name: comment.user.login } : null,
+          url: comment.html_url,
+          createdAt: comment.created_at,
+          path: comment.path,
+          ...(comment.line != null ? { line: comment.line } : {}),
+          threadId: String(comment.in_reply_to_id ?? comment.id),
+        })),
+      ].sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
     });
   }
 

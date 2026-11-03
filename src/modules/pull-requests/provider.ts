@@ -20,6 +20,21 @@ export interface PullRequest {
   isDraft: boolean;
   sourceBranch: string;
   targetBranch: string;
+  raw?: unknown;
+  comments?: PullRequestComment[];
+  checks?: PullRequestCheck[];
+}
+
+export interface PullRequestComment {
+  id: string;
+  body: string;
+  author: { id: string; name: string } | null;
+  url?: string;
+  createdAt?: string;
+  path?: string;
+  line?: number;
+  threadId?: string;
+  isResolved?: boolean;
 }
 
 export interface PullRequestCheck {
@@ -42,7 +57,8 @@ export interface PullRequestReview {
 }
 
 export interface PullRequestProvider {
-  getPullRequest(ref: PullRequestRef): Promise<PullRequest>;
+  getPullRequest(ref: PullRequestRef, options?: { raw?: boolean }): Promise<PullRequest>;
+  getComments(ref: PullRequestRef): Promise<PullRequestComment[]>;
   findOpenPullRequests(query: {
     repository: RepositoryRef;
     sourceBranch: string;

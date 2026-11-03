@@ -5,6 +5,8 @@ import { PolicyApi } from "azure-devops-node-api/PolicyApi";
 import { getBearerHandler, getPersonalAccessTokenHandler } from "azure-devops-node-api";
 import {
   GitStatusState,
+  CommentThreadStatus,
+  CommentType,
   PullRequestStatus,
   type GitPullRequest,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
@@ -14,6 +16,7 @@ import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
   PullRequest,
   PullRequestCheck,
+  PullRequestComment,
   PullRequestProvider,
   PullRequestRef,
   PullRequestReview,
@@ -22,7 +25,11 @@ import type {
 
 export type AzureGitClient = Pick<
   IGitApi,
-  "getPullRequestById" | "getPullRequests" | "getPullRequestStatuses" | "getPullRequestReviewers"
+  | "getPullRequestById"
+  | "getPullRequests"
+  | "getPullRequestStatuses"
+  | "getPullRequestReviewers"
+  | "getThreads"
 >;
 export type AzurePolicyClient = Pick<IPolicyApi, "getPolicyEvaluations">;
 
@@ -33,7 +40,7 @@ export class AzureDevOpsApiProvider implements PullRequestProvider {
     private readonly policies: AzurePolicyClient,
   ) {}
 
-  getPullRequest(ref: PullRequestRef): Promise<PullRequest> {
+  getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       const pr = await this.git.getPullRequestById(this.id(ref));
       const { repository, project } = context(pr);
@@ -56,7 +63,48 @@ export class AzureDevOpsApiProvider implements PullRequestProvider {
         isDraft: pr.isDraft ?? false,
         sourceBranch: shortBranch(pr.sourceRefName),
         targetBranch: shortBranch(pr.targetRefName),
+        ...(options.raw ? { raw: pr } : {}),
       };
+    });
+  }
+
+  getComments(ref: PullRequestRef): Promise<PullRequestComment[]> {
+    return providerRequest(async () => {
+      const id = this.id(ref);
+      const pr = await this.git.getPullRequestById(id);
+      const { repository, project } = context(pr);
+      const threads = await this.git.getThreads(repository, id, project);
+
+      return threads.flatMap((thread) => {
+        if (thread.isDeleted) return [];
+
+        return (thread.comments ?? [])
+          .filter((comment) => !comment.isDeleted && comment.commentType === CommentType.Text)
+          .map((comment): PullRequestComment => ({
+            id: `${thread.id ?? invalidResponse()}:${comment.id ?? invalidResponse()}`,
+            body: comment.content ?? "",
+            author: comment.author
+              ? {
+                  id: comment.author.id ?? invalidResponse(),
+                  name:
+                    comment.author.displayName ?? comment.author.uniqueName ?? invalidResponse(),
+                }
+              : null,
+            ...(comment.publishedDate ? { createdAt: comment.publishedDate.toISOString() } : {}),
+            ...(thread.threadContext?.filePath ? { path: thread.threadContext.filePath } : {}),
+            ...(thread.threadContext?.rightFileStart?.line != null
+              ? { line: thread.threadContext.rightFileStart.line }
+              : {}),
+            threadId: String(thread.id),
+            ...(thread.status != null
+              ? {
+                  isResolved:
+                    thread.status !== CommentThreadStatus.Active &&
+                    thread.status !== CommentThreadStatus.Unknown,
+                }
+              : {}),
+          }));
+      });
     });
   }
 
