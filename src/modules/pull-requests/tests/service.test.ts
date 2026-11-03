@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import { PullRequestService } from "../service";
 import type { PullRequestProvider, PullRequestRef } from "../provider";
-import { githubPr, githubProvider } from "./support/github";
+import { githubPr, githubProvider } from "../../../external/github/tests/support/github";
 
 const ref: PullRequestRef = { provider: "github", owner: "acme", repository: "app", number: 12 };
 const git = {

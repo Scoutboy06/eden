@@ -4,10 +4,10 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Execution } from "../execution";
-import { ScriptRunner } from "../script";
 import type { SandboxProfile } from "../config/schema";
 import { SandboxError } from "./errors";
 import { assessTemplateSandboxes, canonicalReference } from "./template-sandbox-status";
+import { registryDigest, templateCommand } from "../../external/docker-sbx/template-commands";
 
 export type TemplateEntry = { repository: string; tag: string; id: string };
 export type Receipt = {
@@ -160,52 +160,6 @@ export class TemplateUpdateService {
               templateCommand("sbx", args),
             ),
     };
-  }
-}
-
-export async function registryDigest(reference: string): Promise<string> {
-  const manifest = parseJson(
-    await templateCommand("docker", [
-      "buildx",
-      "imagetools",
-      "inspect",
-      reference,
-      "--format",
-      "{{json .Manifest}}",
-    ]),
-  );
-  const digest = isRecord(manifest) ? manifest.digest : undefined;
-  if (typeof digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(digest))
-    throw failure("Registry returned an invalid image digest.");
-  return digest;
-}
-
-export async function templateCommand(executable: string, args: string[]): Promise<string> {
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  process.on("SIGINT", cancel);
-  process.on("SIGTERM", cancel);
-  try {
-    const result = await ScriptRunner.run(executable, null, {
-      args,
-      signal: controller.signal,
-      killSignal: "SIGINT",
-    }).catch(() => {
-      throw failure(`Could not start ${executable}; install it and make it available on PATH.`);
-    });
-    if (result.outcome === "cancelled")
-      throw new SandboxError(
-        "CANCELLED",
-        `Template update cancelled while running ${executable}. The template may have changed; check it before retrying.`,
-      );
-    if (result.outcome !== "exited" || result.exitCode !== 0)
-      throw failure(
-        `${executable} failed while updating the template. ${result.stderr.trim()}`.trim(),
-      );
-    return result.stdout;
-  } finally {
-    process.off("SIGINT", cancel);
-    process.off("SIGTERM", cancel);
   }
 }
 

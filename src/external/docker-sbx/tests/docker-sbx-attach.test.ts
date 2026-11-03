@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { attachDockerSandbox, type AttachDependencies } from "../providers/docker-sbx";
+import { attachDockerSandbox, type AttachDependencies } from "../provider";
 
 function fakeChild() {
   let finish!: (exitCode: number) => void;

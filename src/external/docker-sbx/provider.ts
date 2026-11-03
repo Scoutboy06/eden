@@ -1,15 +1,15 @@
 import { constants } from "node:os";
 import * as v from "valibot";
-import { ScriptRunner, type RunResult } from "../../script";
-import { SandboxError } from "../errors";
+import { ScriptRunner, type RunResult } from "../../modules/script";
+import { SandboxError } from "../../modules/sandbox/errors";
 import type {
   CreateSandboxInput,
   ExecSandboxInput,
   ExecSandboxResult,
   SandboxProvider,
   SandboxSummary,
-} from "../provider";
-import type { ReadinessCheck, ReadinessResult } from "../readiness";
+} from "../../modules/sandbox/provider";
+import type { ReadinessCheck, ReadinessResult } from "../../modules/sandbox/readiness";
 import { saveTerminal, type TerminalSaver } from "./terminal";
 
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };

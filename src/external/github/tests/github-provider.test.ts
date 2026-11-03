@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { PullRequestRef } from "../provider";
+import type { PullRequestRef } from "../../../modules/pull-requests/provider";
 import { githubPr, githubProvider } from "./support/github";
 
 const ref: PullRequestRef = { provider: "github", owner: "acme", repository: "app", number: 12 };

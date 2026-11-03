@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
-import { invalidResponse, providerRequest, ScmError } from "./errors";
+import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
+import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
   PullRequest,
   PullRequestCheck,
@@ -7,7 +8,7 @@ import type {
   PullRequestRef,
   PullRequestReview,
   RepositoryRef,
-} from "./provider";
+} from "../../modules/pull-requests/provider";
 
 export class GitHubApiProvider implements PullRequestProvider {
   constructor(private readonly client: Octokit) {}
@@ -138,6 +139,16 @@ export class GitHubApiProvider implements PullRequestProvider {
       if (data.users.length + data.teams.length < 100) return result;
     }
   }
+}
+
+export function createGitHubApiProvider(credential?: Credential): GitHubApiProvider {
+  return new GitHubApiProvider(
+    new Octokit({
+      auth: credential?.token,
+      request: { timeout: 30_000, redirect: "error" },
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+    }),
+  );
 }
 
 const reviewStates: Record<string, PullRequestReview["state"]> = {

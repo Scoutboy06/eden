@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import { GitHubApiProvider } from "../../github-provider";
+import { GitHubApiProvider } from "../../provider";
 
 export function githubProvider(
   respond: (url: URL, request: RequestInit) => Response | Promise<Response>,

@@ -9,13 +9,12 @@ import {
   parseReference,
   parseTemplates,
   readReceipt,
-  registryDigest,
   sameImageId,
   sandboxPlatform,
-  templateCommand,
   type TemplateEntry,
   type Receipt,
 } from "./template-update";
+import { registryDigest, templateCommand } from "../../external/docker-sbx/template-commands";
 
 type FreshnessState = "current" | "outdated" | "missing" | "unknown";
 type Freshness = { state: FreshnessState; reason: string; image?: string };

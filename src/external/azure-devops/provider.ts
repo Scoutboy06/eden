@@ -1,12 +1,16 @@
 import type { IGitApi } from "azure-devops-node-api/GitApi";
 import type { IPolicyApi } from "azure-devops-node-api/PolicyApi";
+import { GitApi } from "azure-devops-node-api/GitApi";
+import { PolicyApi } from "azure-devops-node-api/PolicyApi";
+import { getBearerHandler, getPersonalAccessTokenHandler } from "azure-devops-node-api";
 import {
   GitStatusState,
   PullRequestStatus,
   type GitPullRequest,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
 import { PolicyEvaluationStatus } from "azure-devops-node-api/interfaces/PolicyInterfaces";
-import { invalidResponse, providerRequest, ScmError } from "./errors";
+import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
+import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
   PullRequest,
   PullRequestCheck,
@@ -14,7 +18,7 @@ import type {
   PullRequestRef,
   PullRequestReview,
   RepositoryRef,
-} from "./provider";
+} from "../../modules/pull-requests/provider";
 
 export type AzureGitClient = Pick<
   IGitApi,
@@ -180,6 +184,26 @@ export class AzureDevOpsApiProvider implements PullRequestProvider {
       if (page.length < 100) return result;
     }
   }
+}
+
+export function createAzureDevOpsApiProvider(
+  organizationUrl: string,
+  credential?: Credential,
+): AzureDevOpsApiProvider {
+  const handlers = credential
+    ? [
+        credential.kind === "pat"
+          ? getPersonalAccessTokenHandler(credential.token)
+          : getBearerHandler(credential.token),
+      ]
+    : [];
+  const options = { socketTimeout: 30_000, allowRedirects: false, maxRetries: 0 };
+
+  return new AzureDevOpsApiProvider(
+    organizationUrl,
+    new GitApi(organizationUrl, handlers, options),
+    new PolicyApi(organizationUrl, handlers, options),
+  );
 }
 
 const statusStates: Record<number, PullRequestCheck["state"]> = {

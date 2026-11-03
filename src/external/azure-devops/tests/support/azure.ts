@@ -2,7 +2,7 @@ import {
   AzureDevOpsApiProvider,
   type AzureGitClient,
   type AzurePolicyClient,
-} from "../../azure-provider";
+} from "../../provider";
 import {
   PullRequestStatus,
   type GitPullRequest,

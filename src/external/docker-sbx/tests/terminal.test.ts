@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { saveWindowsTerminal, type ConsoleApi, type ConsoleStream } from "../providers/terminal";
+import { saveWindowsTerminal, type ConsoleApi, type ConsoleStream } from "../terminal";
 
 function fakeConsole(initial: Partial<Record<ConsoleStream, number>>) {
   const modes = { ...initial };

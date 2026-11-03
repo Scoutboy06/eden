@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DockerSandboxProvider, type DockerCommandRunner } from "../providers/docker-sbx";
+import { DockerSandboxProvider, type DockerCommandRunner } from "../provider";
 
 const success = { exitCode: 0, stdout: "[]", stderr: "" };
 

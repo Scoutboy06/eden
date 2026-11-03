@@ -16,7 +16,7 @@ import type {
   SandboxProviderName,
   SandboxSummary,
 } from "./provider";
-import { DockerSandboxProvider } from "./providers/docker-sbx";
+import { DockerSandboxProvider } from "../../external/docker-sbx/provider";
 
 export class SandboxService {
   get providerName(): SandboxProviderName {

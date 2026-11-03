@@ -1,4 +1,4 @@
-import { SandboxError } from "../errors";
+import { SandboxError } from "../../modules/sandbox/errors";
 
 export type TerminalRestore = () => void;
 export type TerminalSaver = () => TerminalRestore;

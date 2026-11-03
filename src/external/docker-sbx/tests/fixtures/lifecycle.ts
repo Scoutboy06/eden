@@ -1,5 +1,5 @@
 import { getEventListeners } from "node:events";
-import { DockerSandboxProvider } from "../../providers/docker-sbx";
+import { DockerSandboxProvider } from "../../provider";
 
 const readiness = process.argv[2] === "readiness";
 const controller = new AbortController();

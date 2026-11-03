@@ -1,9 +1,9 @@
 import { expect, mock, test } from "bun:test";
 import { GitStatusState, PullRequestStatus } from "azure-devops-node-api/interfaces/GitInterfaces";
 import { PolicyEvaluationStatus } from "azure-devops-node-api/interfaces/PolicyInterfaces";
-import type { PullRequestRef, RepositoryRef } from "../provider";
+import type { PullRequestRef, RepositoryRef } from "../../../modules/pull-requests/provider";
 import { azurePr, azureProvider } from "./support/azure";
-import type { AzureGitClient } from "../azure-provider";
+import type { AzureGitClient } from "../provider";
 
 const ref: PullRequestRef = {
   provider: "azure-devops",

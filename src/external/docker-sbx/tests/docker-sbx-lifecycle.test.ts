@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installExecutable, pathWith } from "../../fs/tests/support/executable";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { isRunning, waitForExit, waitForPid } from "../../script/tests/support/process";
+import { installExecutable, pathWith } from "../../../modules/fs/tests/support/executable";
+import { withTemporaryDirectory } from "../../../modules/fs/tests/support/temporary-directory";
+import { isRunning, waitForExit, waitForPid } from "../../../modules/script/tests/support/process";
 
 for (const operation of ["create", "stop", "readiness"] as const) {
   test.skipIf(process.platform === "win32").each(["ignore", "descendant"])(
