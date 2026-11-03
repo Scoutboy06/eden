@@ -25,7 +25,7 @@ globalThis.fetch = (async (input: string | URL | Request) => {
 await import("../../../../../apps/cli/src/main");
 
 function respond(url: URL): Response {
-  if (url.pathname.endsWith("/pulls/404"))
+  if (/\/(pulls|issues)\/404(?:\/|$)/.test(url.pathname))
     return Response.json({ message: "secret-token" }, { status: 404 });
   if (url.pathname.endsWith("/pulls/12")) return Response.json(pr);
   if (url.pathname.endsWith("/pulls")) return Response.json([pr]);
@@ -39,11 +39,28 @@ function respond(url: URL): Response {
   if (url.pathname.includes("/rules/branches/")) return Response.json([]);
   if (url.pathname.endsWith("/check-runs")) return checkResponse();
   if (url.pathname.endsWith("/statuses")) return Response.json([]);
-  if (url.pathname.endsWith("/reviews"))
-    return Response.json([{ id: 1, user: { id: 7, login: "alice" }, state: "APPROVED" }]);
-  if (url.pathname.endsWith("/requested_reviewers")) return Response.json({ users: [], teams: [] });
+  if (url.pathname.endsWith("/reviews")) return Response.json(reviewResponse());
+  if (url.pathname.endsWith("/requested_reviewers"))
+    return Response.json(
+      process.env.PR_REVIEW_MODE === "mixed"
+        ? { users: [{ id: 8, login: "bob" }], teams: [{ id: 1, slug: "security" }] }
+        : { users: [], teams: [] },
+    );
 
   throw new Error("Unexpected SDK request");
+}
+
+function reviewResponse() {
+  if (process.env.PR_REVIEW_MODE === "empty") return [];
+  const approved = { id: 1, user: { id: 7, login: "alice" }, state: "APPROVED" };
+  if (process.env.PR_REVIEW_MODE !== "mixed") return [approved];
+
+  return [
+    approved,
+    { id: 2, user: { id: 8, login: "bob" }, state: "APPROVED" },
+    { id: 3, user: { id: 9, login: "charlie" }, state: "DISMISSED" },
+    { id: 4, user: { id: 10, login: "dee" }, state: "COMMENTED" },
+  ];
 }
 
 function checkResponse(): Response {

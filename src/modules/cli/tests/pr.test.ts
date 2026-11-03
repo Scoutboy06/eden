@@ -243,6 +243,109 @@ test("PR SDK failures preserve existing Eden JSON error conventions without secr
   expect(result.stdout).not.toContain("secret-token");
 });
 
+test("reviewer help and completion declare both filters", async () => {
+  const help = await runCli("pr", "reviewers", "--help");
+  const completion = await runCli("completion", "bash");
+
+  for (const flag of ["--pending", "--approved"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+});
+
+test("reviewers filter pending requests and approvals in human and JSON output", async () => {
+  const env = { PR_REVIEW_MODE: "mixed" };
+  const pending = await runPrWithEnv(
+    env,
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--pending",
+    "--json",
+  );
+  const approved = await runPrWithEnv(
+    env,
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--approved",
+  );
+  const all = await runPrWithEnv(
+    env,
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--json",
+  );
+
+  expect(pending.exitCode).toBe(0);
+  expect(JSON.parse(pending.stdout)).toMatchObject({
+    ok: true,
+    reviews: [
+      { reviewer: { id: "user:8", name: "bob" }, state: "pending" },
+      { reviewer: { id: "team:1", name: "security" }, state: "pending" },
+    ],
+  });
+  expect(approved.exitCode).toBe(0);
+  expect(approved.stdout).toBe("approved\talice\n");
+  expect(JSON.parse(all.stdout).reviews).toHaveLength(5);
+});
+
+test("reviewers return empty filtered lists without treating absent reviews as an error", async () => {
+  const json = await runPrWithEnv(
+    { PR_REVIEW_MODE: "empty" },
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--approved",
+    "--json",
+    "--dry-run",
+  );
+  const human = await runPrWithEnv(
+    { PR_REVIEW_MODE: "empty" },
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--pending",
+  );
+
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({ ok: true, dryRun: true, reviews: [] });
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toBe("No pending reviewers.\n");
+});
+
+test("reviewers reject conflicting filters and preserve structured provider failures", async () => {
+  const conflict = await runPr(
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--pending",
+    "--approved",
+    "--json",
+  );
+  const missing = await runPr("pr", "reviewers", "https://github.com/acme/app/pull/404", "--json");
+  const human = await runPr(
+    "pr",
+    "reviewers",
+    "https://github.com/acme/app/pull/12",
+    "--pending",
+    "--approved",
+  );
+
+  expect(conflict.exitCode).toBe(1);
+  expect(JSON.parse(conflict.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "SCM_INVALID_OPTIONS" },
+  });
+  expect(missing.exitCode).toBe(1);
+  expect(JSON.parse(missing.stdout)).toMatchObject({ ok: false, error: { code: "SCM_NOT_FOUND" } });
+  expect(missing.stdout).not.toContain("secret-token");
+  expect(human.exitCode).toBe(1);
+  expect(human.stdout).toBe("");
+  expect(human.stderr).toContain("mutually exclusive");
+});
+
 test("unsupported hosts fail before credential or network access", async () => {
   const result = await runCli("pr", "show", "https://evil.test/acme/app/pull/12", "--json");
 

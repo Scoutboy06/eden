@@ -112,7 +112,18 @@ const checks = defineCommand({
 const reviewers = defineCommand({
   name: "reviewers",
   description: "Show current reviewers and their review states",
-  args,
+  args: {
+    ...args,
+    pending: {
+      type: "boolean",
+      description: "Show pending reviewers and outstanding requests only",
+    },
+    approved: {
+      type: "boolean",
+      description:
+        "Show approvals (including Azure approvals with suggestions); excludes --pending",
+    },
+  },
   async run(ctx, { pullRequests, output }) {
     const result = await pullRequests.reviewers(ctx.values);
 
@@ -120,7 +131,11 @@ const reviewers = defineCommand({
       data: result,
       human: () =>
         result.reviews.map((review) => `${review.state}\t${review.reviewer.name}`).join("\n") ||
-        "No reviewers.",
+        (ctx.values.pending
+          ? "No pending reviewers."
+          : ctx.values.approved
+            ? "No approved reviewers."
+            : "No reviewers."),
     });
   },
 });
