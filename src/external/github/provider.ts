@@ -94,7 +94,10 @@ export class GitHubApiProvider implements PullRequestProvider {
     });
   }
 
-  getChecks(ref: PullRequestRef): Promise<PullRequestCheck[]> {
+  getChecks(
+    ref: PullRequestRef,
+    options: { requiredOnly?: boolean } = {},
+  ): Promise<PullRequestCheck[]> {
     return providerRequest(async () => {
       const input = parameters(ref);
       const { data: pr } = await this.client.pulls.get(input);
@@ -110,7 +113,7 @@ export class GitHubApiProvider implements PullRequestProvider {
         if (!existing || status.id > existing.id) latest.set(status.context, status);
       }
 
-      return [
+      const checks: PullRequestCheck[] = [
         ...runs.map((run): PullRequestCheck => ({
           id: `check:${run.id}`,
           name: run.name,
@@ -136,7 +139,70 @@ export class GitHubApiProvider implements PullRequestProvider {
                   : "unknown",
         })),
       ];
+      if (!options.requiredOnly) return checks;
+      if (!pr.base?.ref) invalidResponse();
+      const required = await this.requiredChecks(input.owner, input.repo, pr.base.ref);
+
+      return required.flatMap((requirement) => {
+        const matches = checks.filter((check) => {
+          if (check.name !== requirement.context) return false;
+          if (requirement.appId == null || requirement.appId === -1) return true;
+
+          return runs.some(
+            (run) => check.id === `check:${run.id}` && run.app?.id === requirement.appId,
+          );
+        });
+
+        return matches.length > 0
+          ? matches
+          : [
+              {
+                id: `required:${requirement.context}:${requirement.appId ?? "any"}`,
+                name: requirement.context,
+                state: "pending" as const,
+              },
+            ];
+      });
     });
+  }
+
+  private async requiredChecks(owner: string, repo: string, branch: string) {
+    const target = { owner, repo, branch };
+    const [protection, rules] = await Promise.all([
+      this.client.repos.getBranchProtection(target).catch((error: unknown) => {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "status" in error &&
+          error.status === 404
+        )
+          return undefined;
+
+        throw error;
+      }),
+      this.client.paginate(this.client.repos.getBranchRules, { ...target, per_page: 100 }),
+    ]);
+    if (rules.some((rule) => rule.type === "workflows"))
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "Required workflow rules cannot be projected as named status checks. Run without --required-only.",
+      );
+    const required = new Map<string, { context: string; appId?: number | null }>();
+    const add = (context: string, appId?: number | null) =>
+      required.set(JSON.stringify([context, appId ?? -1]), { context, appId });
+    const classic = protection?.data.required_status_checks;
+    for (const check of classic?.checks ?? []) add(check.context, check.app_id);
+    for (const name of classic?.contexts ?? []) {
+      if (!classic?.checks?.some((check) => check.context === name)) add(name);
+    }
+    for (const rule of rules) {
+      if (rule.type !== "required_status_checks") continue;
+      if (!rule.parameters) invalidResponse();
+      for (const check of rule.parameters.required_status_checks)
+        add(check.context, check.integration_id);
+    }
+
+    return [...required.values()];
   }
 
   getReviews(ref: PullRequestRef): Promise<PullRequestReview[]> {

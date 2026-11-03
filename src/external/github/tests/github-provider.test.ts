@@ -132,6 +132,93 @@ test("checks combine CI runs and latest legacy commit statuses", async () => {
   expect(calls.some((url) => url.pathname.includes("/abc/"))).toBe(true);
 });
 
+test("required checks combine classic protection and rulesets, retaining missing requirements", async () => {
+  const { provider, calls } = githubProvider((url) => {
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/protection"))
+      return Response.json({
+        required_status_checks: {
+          contexts: ["build", "legacy"],
+          checks: [{ context: "build", app_id: 7 }],
+        },
+      });
+    if (url.pathname.includes("/rules/branches/"))
+      return Response.json([
+        {
+          type: "required_status_checks",
+          parameters: {
+            required_status_checks: [
+              { context: "build", integration_id: 7 },
+              { context: "missing" },
+            ],
+          },
+        },
+      ]);
+    if (url.pathname.endsWith("/check-runs"))
+      return Response.json({
+        total_count: 3,
+        check_runs: [
+          { id: 1, name: "build", app: { id: 8 }, status: "completed", conclusion: "success" },
+          { id: 2, name: "build", app: { id: 7 }, status: "in_progress" },
+          { id: 3, name: "optional", status: "completed", conclusion: "failure" },
+        ],
+      });
+
+    return Response.json([{ id: 4, context: "legacy", state: "success" }]);
+  });
+
+  expect(await provider.getChecks(ref, { requiredOnly: true })).toEqual([
+    { id: "check:2", name: "build", state: "running" },
+    { id: "status:4", name: "legacy", state: "passed" },
+    { id: "required:missing:any", name: "missing", state: "pending" },
+  ]);
+  expect(calls.some((url) => url.pathname.endsWith("/branches/main/protection"))).toBe(true);
+});
+
+test("unprotected branches have no required checks", async () => {
+  const { provider } = githubProvider((url) => {
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/protection")) return Response.json({}, { status: 404 });
+    if (url.pathname.endsWith("/check-runs"))
+      return Response.json({ total_count: 0, check_runs: [] });
+
+    return Response.json([]);
+  });
+
+  expect(await provider.getChecks(ref, { requiredOnly: true })).toEqual([]);
+});
+
+test.each([403, 500])("required-check discovery fails explicitly on HTTP %i", async (status) => {
+  const { provider } = githubProvider((url) => {
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/protection")) return Response.json({}, { status });
+    if (url.pathname.endsWith("/check-runs"))
+      return Response.json({ total_count: 0, check_runs: [] });
+
+    return Response.json([]);
+  });
+
+  await expect(provider.getChecks(ref, { requiredOnly: true })).rejects.toMatchObject({
+    code: status === 403 ? "SCM_ACCESS_DENIED" : "SCM_REQUEST_FAILED",
+  });
+});
+
+test("required workflow rules report the unsupported projection explicitly", async () => {
+  const { provider } = githubProvider((url) => {
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/protection")) return Response.json({});
+    if (url.pathname.includes("/rules/branches/")) return Response.json([{ type: "workflows" }]);
+    if (url.pathname.endsWith("/check-runs"))
+      return Response.json({ total_count: 0, check_runs: [] });
+
+    return Response.json([]);
+  });
+
+  await expect(provider.getChecks(ref, { requiredOnly: true })).rejects.toMatchObject({
+    code: "SCM_UNSUPPORTED_OPERATION",
+  });
+});
+
 test("reviews preserve effective decisions and outstanding user/team requests", async () => {
   const { provider } = githubProvider((url) => {
     if (url.pathname.endsWith("/requested_reviewers"))
