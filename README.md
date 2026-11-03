@@ -20,6 +20,9 @@ an `eden.exe` shim in `~/.bun/bin`), run `bun link` in the checkout. Remove it a
 
 Explore each command with `--help`.
 
+For development, use `bun run test:fast` while editing and `bun run test:full`
+before merging. See `CODE.md` for test groups, prerequisites and test-writing guidance.
+
 Configuration lives in `$XDG_CONFIG_HOME/eden`, falling back to `~/.config/eden`, on every
 platform including Windows. On Windows, `worktree_root` must start with a drive letter
 (`C:\`) or a UNC share, and `~\` expands like `~/`.
