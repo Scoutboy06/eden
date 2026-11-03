@@ -269,9 +269,56 @@ test("reviews preserve effective decisions and outstanding user/team requests", 
   expect(await provider.getReviews(ref)).toEqual([
     { reviewer: { id: "user:1", name: "alice" }, state: "approved" },
     { reviewer: { id: "user:2", name: "bob" }, state: "pending" },
-    { reviewer: { id: "user:3", name: "charlie" }, state: "pending" },
+    { reviewer: { id: "user:3", name: "charlie" }, state: "dismissed" },
     { reviewer: { id: "team:8", name: "security" }, state: "pending" },
   ]);
+});
+
+test("review requests override prior decisions and retain distinct team identities", async () => {
+  const { provider } = githubProvider((url) => {
+    if (url.pathname.endsWith("/requested_reviewers"))
+      return Response.json({
+        users: [{ id: 1, login: "alice" }],
+        teams: [{ id: 1, slug: "alice" }],
+      });
+
+    return Response.json([{ id: 1, user: { id: 1, login: "alice" }, state: "APPROVED" }]);
+  });
+
+  expect(await provider.getReviews(ref)).toEqual([
+    { reviewer: { id: "user:1", name: "alice" }, state: "pending" },
+    { reviewer: { id: "team:1", name: "alice" }, state: "pending" },
+  ]);
+});
+
+test("review decisions paginate and ignore unpublished pending reviews", async () => {
+  const { provider } = githubProvider((url) => {
+    if (url.pathname.endsWith("/requested_reviewers"))
+      return Response.json({ users: [], teams: [] });
+    if (url.searchParams.get("page") === "2")
+      return Response.json([
+        { id: 2, user: { id: 1, login: "alice" }, state: "CHANGES_REQUESTED" },
+        { id: 3, user: { id: 2, login: "bob" }, state: "PENDING" },
+      ]);
+
+    return Response.json([{ id: 1, user: { id: 1, login: "alice" }, state: "APPROVED" }], {
+      headers: {
+        link: '<https://api.github.com/repos/acme/app/pulls/12/reviews?page=2>; rel="next"',
+      },
+    });
+  });
+
+  expect(await provider.getReviews(ref)).toEqual([
+    { reviewer: { id: "user:1", name: "alice" }, state: "changes-requested" },
+  ]);
+});
+
+test("absent GitHub reviews and requests return an empty list", async () => {
+  const { provider } = githubProvider((url) =>
+    Response.json(url.pathname.endsWith("/requested_reviewers") ? { users: [], teams: [] } : []),
+  );
+
+  expect(await provider.getReviews(ref)).toEqual([]);
 });
 
 test.each([

@@ -288,7 +288,7 @@ const reviewStates: Record<string, PullRequestReview["state"]> = {
   APPROVED: "approved",
   CHANGES_REQUESTED: "changes-requested",
   COMMENTED: "commented",
-  DISMISSED: "pending",
+  DISMISSED: "dismissed",
 };
 
 function parameters(ref: PullRequestRef) {

@@ -53,6 +53,7 @@ export interface PullRequestReview {
     | "changes-requested"
     | "rejected"
     | "commented"
+    | "dismissed"
     | "unknown";
 }
 
