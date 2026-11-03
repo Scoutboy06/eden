@@ -14,14 +14,43 @@ const args = {
 const show = defineCommand({
   name: "show",
   description: "Show a PR by number, URL or source branch",
-  args,
+  args: {
+    ...args,
+    raw: { type: "boolean", description: "Include the raw provider PR response" },
+    comments: { type: "boolean", description: "Include discussion and inline review comments" },
+    checks: { type: "boolean", description: "Include automated CI and build results" },
+  },
   async run(ctx, { pullRequests, output }) {
     const pr = await pullRequests.show(ctx.values);
 
     output.write({
       data: { pr },
       human: () =>
-        `${pr.title}\n${pr.state}${pr.isDraft ? " (draft)" : ""} · ${pr.sourceBranch} → ${pr.targetBranch}\n${pr.url}${pr.body ? `\n\n${pr.body}` : ""}`,
+        [
+          `${pr.title}\n${pr.state}${pr.isDraft ? " (draft)" : ""} · ${pr.sourceBranch} → ${pr.targetBranch}\n${pr.url}${pr.body ? `\n\n${pr.body}` : ""}`,
+          ...(pr.comments
+            ? [
+                "Comments",
+                pr.comments
+                  .map(
+                    (comment) =>
+                      `${comment.author?.name ?? "Deleted user"}${comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ""}` : ""}\n${comment.body}`,
+                  )
+                  .join("\n\n") || "No comments.",
+              ]
+            : []),
+          ...(pr.checks
+            ? [
+                "Checks",
+                pr.checks
+                  .map(
+                    (check) => `${check.state}\t${check.name}${check.url ? `\t${check.url}` : ""}`,
+                  )
+                  .join("\n") || "No checks.",
+              ]
+            : []),
+          ...(pr.raw !== undefined ? ["Raw provider data", JSON.stringify(pr.raw, null, 2)] : []),
+        ].join("\n\n"),
     });
   },
 });

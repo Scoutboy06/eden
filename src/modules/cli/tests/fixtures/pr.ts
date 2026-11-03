@@ -28,6 +28,11 @@ function respond(url: URL): Response {
     return Response.json({ message: "secret-token" }, { status: 404 });
   if (url.pathname.endsWith("/pulls/12")) return Response.json(pr);
   if (url.pathname.endsWith("/pulls")) return Response.json([pr]);
+  if (url.pathname.endsWith("/issues/12/comments"))
+    return Response.json([
+      { id: 1, body: "Looks good", user: { id: 7, login: "alice" }, created_at: "2026-01-01" },
+    ]);
+  if (url.pathname.endsWith("/pulls/12/comments")) return Response.json([]);
   if (url.pathname.endsWith("/check-runs"))
     return Response.json({
       total_count: 1,

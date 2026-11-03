@@ -4,9 +4,10 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
-test("PR help and completion expose only the initial read scope", async () => {
+test("PR help and completion expose the read commands and show enrichments", async () => {
   const help = await runCli("pr", "--help");
   const completion = await runCli("completion", "bash");
+  const showHelp = await runCli("pr", "show", "--help");
 
   expect(help.exitCode).toBe(0);
   expect(help.stdout).toContain("show");
@@ -15,6 +16,38 @@ test("PR help and completion expose only the initial read scope", async () => {
   expect(help.stdout).not.toContain("merge");
   expect(completion.stdout).toContain("--remote");
   expect(completion.stdout).toContain("--head");
+  for (const flag of ["--raw", "--comments", "--checks"]) {
+    expect(showHelp.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+});
+
+test("PR show enrichments compose in human and JSON output", async () => {
+  const args = [
+    "pr",
+    "show",
+    "https://github.com/acme/app/pull/12",
+    "--raw",
+    "--comments",
+    "--checks",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json", "--dry-run");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("alice\nLooks good");
+  expect(human.stdout).toContain("passed\tbuild");
+  expect(human.stdout).toContain("Raw provider data");
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    pr: {
+      raw: { number: 12 },
+      comments: [{ body: "Looks good" }],
+      checks: [{ name: "build" }],
+    },
+  });
 });
 
 test("PR show renders human and JSON success through the real SDK", async () => {

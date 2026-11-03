@@ -20,10 +20,19 @@ export class PullRequestService {
     },
   ) {}
 
-  async show(input: PullRequestInput) {
+  async show(input: PullRequestInput & { raw?: boolean; comments?: boolean; checks?: boolean }) {
     const { provider, ref } = await this.resolve(input);
+    const [pr, comments, checks] = await Promise.all([
+      provider.getPullRequest(ref, { raw: input.raw }),
+      input.comments ? provider.getComments(ref) : undefined,
+      input.checks ? provider.getChecks(ref) : undefined,
+    ]);
 
-    return provider.getPullRequest(ref);
+    return {
+      ...pr,
+      ...(comments !== undefined ? { comments } : {}),
+      ...(checks !== undefined ? { checks } : {}),
+    };
   }
 
   async checks(input: PullRequestInput) {
