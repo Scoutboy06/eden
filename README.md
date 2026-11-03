@@ -80,6 +80,44 @@ credentials. It also updates the matching image tag in the host Docker daemon.
 Existing sandboxes are left intact; Eden inspects their image metadata to report
 outdated matches and identifies cases it could not attribute or inspect.
 
+### Pull requests
+
+Read pull requests on github.com and Azure DevOps Services:
+
+```sh
+eden pr show https://github.com/owner/repo/pull/123 --comments --checks
+eden pr show 123 --repo https://github.com/owner/repo --raw --json
+eden pr checks --required-only --watch --interval 10 --timeout 600
+```
+
+Omit the PR reference to discover the open PR for the current branch. Use `--head`
+to select another source branch, and `--repo` or `--remote` to select a repository.
+Ambiguous repositories or PR matches require explicit selection.
+
+`show --raw` adds the provider's PR response; `--comments` adds discussion and
+inline comments, and `--checks` adds CI results. These fields are omitted unless
+requested. Azure comments retain thread resolution; GitHub's REST comments do not
+provide resolution state.
+
+`checks --required-only` reads classic branch protection and active rulesets on
+GitHub, and enabled, blocking build/status policies on Azure. It does not report
+reviewer or other merge policies. Missing required GitHub checks remain pending.
+GitHub requires access to branch rules; permission errors and required workflow
+rules that cannot be represented as named checks fail explicitly.
+
+`checks --watch` polls every 10 seconds for up to 600 seconds by default. Interval
+and timeout are positive seconds and require `--watch`. It emits one final result,
+including in JSON mode. Passed/skipped checks and an empty check list succeed;
+failed/cancelled checks, unknown states, timeouts and provider errors fail with
+exit code 1. Ctrl-C or SIGTERM cancels with exit code 130. Without `--watch`, check
+states are returned as data without making failed CI a command failure.
+
+GitHub authentication uses `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`; Azure uses
+`AZURE_DEVOPS_EXT_PAT`, then an Entra token from `az login`. Eden does not log in or
+store credentials. These reads still run under `--dry-run`. As with other Eden
+commands, `--json` emits structured success or error output on stdout; human
+errors go to stderr.
+
 ### Shell completion
 
 Generate completions with `eden completion <shell>` for `zsh`, `bash`, or `pwsh`. In
