@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { PullRequestService } from "../service";
 import type { PullRequestProvider, PullRequestRef } from "../provider";
 import { githubPr, githubProvider } from "../../../external/github/tests/support/github";
+import { azureProvider } from "../../../external/azure-devops/tests/support/azure";
 
 const ref: PullRequestRef = { provider: "github", owner: "acme", repository: "app", number: 12 };
 const git = {
@@ -86,6 +87,70 @@ test("service validates URLs before creating an authenticated client", async () 
     code: "SCM_INVALID_URL",
   });
   expect(create).not.toHaveBeenCalled();
+});
+
+test("reviewer filters use effective GitHub requests and decisions", async () => {
+  const { provider } = githubProvider((url) =>
+    url.pathname.endsWith("/requested_reviewers")
+      ? Response.json({ users: [{ id: 2, login: "bob" }], teams: [{ id: 4, slug: "security" }] })
+      : Response.json([
+          { id: 1, user: { id: 1, login: "alice" }, state: "APPROVED" },
+          { id: 2, user: { id: 2, login: "bob" }, state: "APPROVED" },
+          { id: 3, user: { id: 3, login: "charlie" }, state: "DISMISSED" },
+        ]),
+  );
+  const service = new PullRequestService(git, async () => provider);
+
+  expect((await service.reviewers({ ref: "12" })).reviews).toHaveLength(4);
+  expect(
+    (await service.reviewers({ ref: "12", pending: true })).reviews.map(
+      (review) => review.reviewer.id,
+    ),
+  ).toEqual(["user:2", "team:4"]);
+  expect(
+    (await service.reviewers({ ref: "12", approved: true })).reviews.map(
+      (review) => review.reviewer.id,
+    ),
+  ).toEqual(["user:1"]);
+});
+
+test("Azure approved includes positive votes with suggestions, not negative or absent votes", async () => {
+  const provider = azureProvider({
+    getPullRequestReviewers: async () =>
+      [10, 5, 0, -5, -10, 99].map((vote) => ({
+        id: String(vote),
+        displayName: `Reviewer ${vote}`,
+        vote,
+      })),
+  });
+  const service = new PullRequestService(git, async () => provider);
+  const input = { ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42" };
+
+  expect(
+    (await service.reviewers({ ...input, approved: true })).reviews.map((review) => review.state),
+  ).toEqual(["approved", "approved-with-suggestions"]);
+  expect(
+    (await service.reviewers({ ...input, pending: true })).reviews.map((review) => review.state),
+  ).toEqual(["pending"]);
+  expect((await service.reviewers(input)).reviews).toHaveLength(6);
+});
+
+test("reviewer filters reject conflicting options before accessing credentials", async () => {
+  const create = mock(async () => azureProvider());
+  const service = new PullRequestService(git, create);
+
+  await expect(service.reviewers({ pending: true, approved: true })).rejects.toMatchObject({
+    code: "SCM_INVALID_OPTIONS",
+  });
+  expect(create).not.toHaveBeenCalled();
+});
+
+test("reviewer filters preserve empty results", async () => {
+  const service = new PullRequestService(git, async () => azureProvider());
+  const input = { ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42" };
+
+  expect((await service.reviewers({ ...input, pending: true })).reviews).toEqual([]);
+  expect((await service.reviewers({ ...input, approved: true })).reviews).toEqual([]);
 });
 
 test("checks watch resolves a branch only once and forwards required-only on each poll", async () => {

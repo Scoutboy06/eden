@@ -47,10 +47,22 @@ export class PullRequestService {
     return { ref, checks: input.watch ? await watchChecks(read, options) : await read() };
   }
 
-  async reviewers(input: PullRequestInput) {
+  async reviewers(input: PullRequestInput & { pending?: boolean; approved?: boolean }) {
+    if (input.pending && input.approved)
+      throw new ScmError("SCM_INVALID_OPTIONS", "--pending and --approved are mutually exclusive.");
     const { provider, ref } = await this.resolve(input);
+    const reviews = await provider.getReviews(ref);
 
-    return { ref, reviews: await provider.getReviews(ref) };
+    return {
+      ref,
+      reviews: reviews.filter((review) => {
+        if (input.pending) return review.state === "pending";
+        if (input.approved)
+          return review.state === "approved" || review.state === "approved-with-suggestions";
+
+        return true;
+      }),
+    };
   }
 
   private async resolve(input: PullRequestInput) {
