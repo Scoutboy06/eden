@@ -11,14 +11,42 @@ const git = {
 };
 
 test("service resolves branch searches before exact lookup", async () => {
-  const { provider } = githubProvider((url) =>
-    Response.json(url.pathname.endsWith("/pulls") ? [githubPr()] : githubPr()),
-  );
+  const selected = { ...ref, number: 37 };
+  const calls: string[] = [];
+  const { provider } = githubProvider(() => Response.json(githubPr()));
+  provider.findOpenPullRequests = mock(async (query) => {
+    expect(query).toEqual({
+      repository: { provider: "github", owner: "acme", repository: "app" },
+      sourceBranch: "topic",
+    });
+    calls.push("search");
+
+    return [selected];
+  });
+  provider.getPullRequest = mock(async (lookup) => {
+    expect(lookup).toEqual(selected);
+    calls.push("fetch");
+
+    return {
+      ref: selected,
+      url: "https://github.com/acme/app/pull/37",
+      title: "Selected PR",
+      body: "",
+      state: "open" as const,
+      isDraft: false,
+      sourceBranch: "topic",
+      targetBranch: "main",
+    };
+  });
   const create = mock(async () => provider);
   const service = new PullRequestService(git, create);
 
-  expect((await service.show({})).ref).toEqual(ref);
+  expect((await service.show({})).ref).toEqual(selected);
+  expect(calls).toEqual(["search", "fetch"]);
+  expect(provider.findOpenPullRequests).toHaveBeenCalledTimes(1);
+  expect(provider.getPullRequest).toHaveBeenCalledTimes(1);
   expect(create).toHaveBeenCalledTimes(1);
+  expect(create).toHaveBeenCalledWith({ provider: "github", owner: "acme", repository: "app" });
 });
 
 test("show fetches optional enrichments only on request", async () => {

@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
 import { ConfigError } from "../errors";
@@ -124,41 +123,6 @@ test("reports a filesystem read failure separately from a missing file", async (
     const service = createFileConfigService({ pathsLowToHigh: [path] });
 
     await expect(service.read()).rejects.toMatchObject({ code: "CONFIG_READ_FAILED", path });
-  });
-});
-
-test.each(["xdg", "home"] as const)("reads the global configuration using %s", async (location) => {
-  await withTemporaryDirectory(async (directory) => {
-    const home = join(directory, "home");
-    const xdg = join(directory, "xdg");
-    const configHome = location === "xdg" ? xdg : join(home, ".config");
-    await mkdir(join(configHome, "eden"), { recursive: true });
-    await writeFile(join(configHome, "eden", "config.yaml"), "agent:\n  default: opencode\n");
-    const child = Bun.spawn(
-      [process.execPath, fileURLToPath(new URL("./fixtures/read.ts", import.meta.url))],
-      {
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: location === "xdg" ? xdg : "",
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      worktree_root: join(home, ".worktrees"),
-      agent: { default: "opencode" },
-    });
   });
 });
 

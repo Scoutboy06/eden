@@ -129,7 +129,19 @@ test("checks combine CI runs and latest legacy commit statuses", async () => {
     { id: "check:3", name: "optional", state: "skipped" },
     { id: "status:9", name: "external", state: "passed" },
   ]);
-  expect(calls.some((url) => url.pathname.includes("/abc/"))).toBe(true);
+  expect(calls).toHaveLength(3);
+  expect(
+    calls.map((url) => ({ path: url.pathname, query: Object.fromEntries(url.searchParams) })),
+  ).toEqual(
+    expect.arrayContaining([
+      { path: "/repos/acme/app/pulls/12", query: {} },
+      {
+        path: "/repos/acme/app/commits/abc/check-runs",
+        query: { per_page: "100", filter: "latest" },
+      },
+      { path: "/repos/acme/app/commits/abc/statuses", query: { per_page: "100" } },
+    ]),
+  );
 });
 
 test("required checks combine classic protection and rulesets, retaining missing requirements", async () => {

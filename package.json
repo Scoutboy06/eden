@@ -11,6 +11,10 @@
   "scripts": {
     "cli": "bun run apps/cli/src/main.ts",
     "test": "bun test",
+    "test:fast": "bun run scripts/test.ts fast",
+    "test:integration": "bun run scripts/test.ts integration",
+    "test:full": "bun test",
+    "test:profile": "bun run scripts/profile-tests.ts",
     "lint": "oxlint",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
