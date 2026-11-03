@@ -96,6 +96,137 @@ test("PR discovery, checks and reviewers are independently usable", async () => 
   });
 });
 
+test("checks help and completion declare required-only and watch controls", async () => {
+  const help = await runCli("pr", "checks", "--help");
+  const completion = await runCli("completion", "zsh");
+
+  for (const flag of ["--required-only", "--watch", "--interval", "--timeout"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+});
+
+test("checks watch combines required filtering with polling and emits one final JSON document", async () => {
+  const result = await runPrWithEnv(
+    { PR_CHECK_MODE: "transition" },
+    "pr",
+    "checks",
+    "https://github.com/acme/app/pull/12",
+    "--required-only",
+    "--watch",
+    "--interval",
+    "0.001",
+    "--json",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    ok: true,
+    checks: [{ name: "build", state: "passed" }],
+  });
+});
+
+test.each(["failed", "cancelled", "unknown"])(
+  "checks watch fails explicitly for %s checks",
+  async (mode) => {
+    const result = await runPrWithEnv(
+      { PR_CHECK_MODE: mode },
+      "pr",
+      "checks",
+      "https://github.com/acme/app/pull/12",
+      "--watch",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      error: { code: mode === "unknown" ? "SCM_UNKNOWN_CHECK_STATE" : "SCM_CHECKS_FAILED" },
+    });
+  },
+);
+
+test("checks watch times out and reports absent checks without hanging", async () => {
+  const timedOut = await runPrWithEnv(
+    { PR_CHECK_MODE: "pending" },
+    "pr",
+    "checks",
+    "https://github.com/acme/app/pull/12",
+    "--watch",
+    "--timeout",
+    "0.01",
+    "--json",
+  );
+  const empty = await runPrWithEnv(
+    { PR_CHECK_MODE: "empty" },
+    "pr",
+    "checks",
+    "https://github.com/acme/app/pull/12",
+    "--watch",
+  );
+
+  expect(timedOut.exitCode).toBe(1);
+  expect(JSON.parse(timedOut.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "SCM_WATCH_TIMEOUT" },
+  });
+  expect(empty.exitCode).toBe(0);
+  expect(empty.stdout).toBe("No checks.\n");
+});
+
+test.each(["SIGINT", "SIGTERM"])(
+  "checks watch handles %s with structured cancellation and exit 130",
+  async (signal) => {
+    const result = await runPrWithEnv(
+      { PR_CHECK_MODE: "pending", PR_SIGNAL: signal },
+      "pr",
+      "checks",
+      "https://github.com/acme/app/pull/12",
+      "--watch",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(130);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "CANCELLED" } });
+  },
+);
+
+test("checks rejects invalid watch options and renders human failures on stderr", async () => {
+  const misplaced = await runPr(
+    "pr",
+    "checks",
+    "https://github.com/acme/app/pull/12",
+    "--interval",
+    "1",
+    "--json",
+  );
+  const invalid = await runPr(
+    "pr",
+    "checks",
+    "https://github.com/acme/app/pull/12",
+    "--watch",
+    "--interval",
+    "0",
+    "--json",
+  );
+  const failed = await runPrWithEnv(
+    { PR_CHECK_MODE: "failed" },
+    "pr",
+    "checks",
+    "https://github.com/acme/app/pull/12",
+    "--watch",
+  );
+
+  expect(misplaced.exitCode).toBe(1);
+  expect(JSON.parse(misplaced.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
+  expect(failed.exitCode).toBe(1);
+  expect(failed.stdout).toBe("");
+  expect(failed.stderr).toContain("Build".toLowerCase());
+});
+
 test("PR SDK failures preserve existing Eden JSON error conventions without secrets", async () => {
   const result = await runPr(
     "pr",
@@ -123,10 +254,14 @@ test("unsupported hosts fail before credential or network access", async () => {
 });
 
 async function runPr(...args: string[]) {
+  return runPrWithEnv({}, ...args);
+}
+
+async function runPrWithEnv(env: Record<string, string>, ...args: string[]) {
   const child = Bun.spawn([process.execPath, fixture, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, GH_TOKEN: "fake-test-token" },
+    env: { ...process.env, GH_TOKEN: "fake-test-token", ...env },
   });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,

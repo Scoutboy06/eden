@@ -1,4 +1,5 @@
 import { defineCommand } from "../../../../src/modules/cli";
+import { ScmError } from "../../../../src/modules/pull-requests/errors";
 
 const args = {
   ref: {
@@ -58,9 +59,45 @@ const show = defineCommand({
 const checks = defineCommand({
   name: "checks",
   description: "Show automated CI and build results for a PR",
-  args,
+  args: {
+    ...args,
+    "required-only": {
+      type: "boolean",
+      description: "Show required automated checks only (requires access to branch rules)",
+    },
+    watch: {
+      type: "boolean",
+      description: "Wait for checks to finish; fail on failed, cancelled or unknown checks",
+    },
+    interval: { type: "number", description: "Watch polling interval in seconds (default: 10)" },
+    timeout: { type: "number", description: "Watch timeout in seconds (default: 600)" },
+  },
   async run(ctx, { pullRequests, output }) {
-    const result = await pullRequests.checks(ctx.values);
+    if (
+      !ctx.values.watch &&
+      (ctx.values.interval !== undefined || ctx.values.timeout !== undefined)
+    )
+      throw new ScmError("SCM_INVALID_OPTIONS", "--interval and --timeout require --watch.");
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (ctx.values.watch) {
+      process.on("SIGINT", cancel);
+      process.on("SIGTERM", cancel);
+    }
+    let result;
+    try {
+      result = await pullRequests.checks(
+        { ...ctx.values, requiredOnly: ctx.values["required-only"] },
+        {
+          signal: controller.signal,
+          intervalMs: ctx.values.interval === undefined ? undefined : ctx.values.interval * 1000,
+          timeoutMs: ctx.values.timeout === undefined ? undefined : ctx.values.timeout * 1000,
+        },
+      );
+    } finally {
+      process.off("SIGINT", cancel);
+      process.off("SIGTERM", cancel);
+    }
 
     output.write({
       data: result,
