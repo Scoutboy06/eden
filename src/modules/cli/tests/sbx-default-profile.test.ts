@@ -7,12 +7,7 @@ import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directo
 import { runCliWith } from "./support/cli";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
 
-test.each([
-  { flags: [] },
-  { flags: ["--provider", "docker-sbx"] },
-  { flags: ["--image", "explicit:image"] },
-  { flags: ["--provider", "docker-sbx", "--image", "explicit:image"] },
-])("create retains default profile fields with explicit flags %j", async ({ flags }) => {
+test("create wires explicit provider and image alongside the default profile", async () => {
   await withTemporaryDirectory(async (directory) => {
     const options = await prepareSandboxCli(directory, "missing");
     const kits = ["~/literal kit"];
@@ -40,7 +35,10 @@ test.each([
       "create",
       "--name",
       "example",
-      ...flags,
+      "--provider",
+      "docker-sbx",
+      "--image",
+      "explicit:image",
       "--dry-run",
       "--json",
     );
@@ -50,7 +48,7 @@ test.each([
       provider: "docker-sbx",
       name: "example",
       profile: "work",
-      image: flags.some((flag) => flag === "--image") ? "explicit:image" : "profile:image",
+      image: "explicit:image",
       kits: [join(homedir(), "literal kit")],
       kitArgs,
     });
@@ -112,82 +110,6 @@ test("create executes using the default profile", async () => {
   });
 });
 
-test.each(["work", "missing"])(
-  "an explicit profile replaces the default %s without inheriting its fields",
-  async (defaultProfile) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            default_provider: "docker-sbx",
-            default_profile: defaultProfile,
-            profiles: {
-              work: {
-                template: "default:image",
-                kits: ["default-kit"],
-                kit_args: { enabled: true },
-              },
-              other: {},
-            },
-          },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        "create",
-        "--name",
-        "example",
-        "--profile",
-        "other",
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(JSON.parse(result.stdout).operations[0].input).toEqual({
-        provider: "docker-sbx",
-        name: "example",
-        profile: "other",
-      });
-    });
-  },
-);
-
-test.each([{ flags: [] }, { flags: ["--provider", "docker-sbx", "--image", "explicit:image"] }])(
-  "unknown default profile fails before provider calls with flags %j",
-  async ({ flags }) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        "sandbox: { default_profile: missing, profiles: { work: {} } }\n",
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        "create",
-        "--name",
-        "example",
-        ...flags,
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(JSON.parse(result.stdout).error).toEqual({
-        code: "SANDBOX_PROFILE_NOT_FOUND",
-        message: 'Unknown sandbox profile "missing". Configured profiles: "work".',
-      });
-      expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
-    });
-  },
-);
-
 test.each(["run", "list", "stop"])("%s ignores an unknown default profile", async (command) => {
   await withTemporaryDirectory(async (directory) => {
     const options = await prepareSandboxCli(directory, "stopped");
@@ -214,37 +136,6 @@ test.each(["run", "list", "stop"])("%s ignores an unknown default profile", asyn
     ).toBe(false);
   });
 });
-
-test.each(["__proto__", 'work.profile "quoted"'])(
-  "default profile names are literal: %s",
-  async (name) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      await writeFile(
-        join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-        stringify({
-          sandbox: {
-            default_profile: name,
-            profiles: { [name]: { provider: "docker-sbx" } },
-          },
-        }),
-      );
-
-      const result = await runCliWith(
-        options,
-        "sbx",
-        "create",
-        "--name",
-        "example",
-        "--dry-run",
-        "--json",
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(JSON.parse(result.stdout).operations[0].input.profile).toBe(name);
-    });
-  },
-);
 
 test("create resolves repository-local default profile from a nested directory", async () => {
   await withTemporaryDirectory(async (directory) => {

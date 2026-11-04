@@ -1,5 +1,4 @@
 import { defineCommand } from "../../command";
-import { runCli } from "../../parser";
 import completion from "../../../../../apps/cli/src/commands/completion";
 
 const create = defineCommand({
@@ -28,7 +27,7 @@ const create = defineCommand({
   },
 });
 
-await runCli({
+export const completionCommands = {
   completion,
   internal: defineCommand({ name: "internal", internal: true }),
   choose: defineCommand({
@@ -61,4 +60,4 @@ await runCli({
     description: "Manage workspaces",
     subCommands: { create },
   }),
-});
+};

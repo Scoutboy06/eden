@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { runCli, runFixture } from "./support/cli";
+import { runCli } from "./support/cli";
+import { parseCommands, parseFixture as runFixture } from "./support/parser";
+import mkdir from "../../../../apps/cli/src/commands/mkdir";
+import completion from "../../../../apps/cli/src/commands/completion";
 
 test("silent commands still return one JSON success response", async () => {
   const result = await runFixture("silent", "--json");
@@ -11,7 +14,7 @@ test("silent commands still return one JSON success response", async () => {
 });
 
 test("completion scripts retain their native format with the JSON flag", async () => {
-  const result = await runCli("completion", "zsh", "--json");
+  const result = await parseCommands({ completion }, "completion", "zsh", "--json");
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).not.toContain('{"ok":true}');
@@ -27,7 +30,7 @@ test("the application registers mkdir in root help", async () => {
 });
 
 test("command help does not require positional input", async () => {
-  const result = await runCli("mkdir", "--help");
+  const result = await parseCommands({ mkdir }, "mkdir", "--help");
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("USAGE:\n  eden mkdir <OPTIONS> <path>");
@@ -54,7 +57,7 @@ test.each(["--bogus", "--dryrun"])(
     await withTemporaryDirectory(async (directory) => {
       const path = join(directory, "not-created");
 
-      const result = await runCli("mkdir", path, option, "--json");
+      const result = await parseCommands({ mkdir }, "mkdir", path, option, "--json");
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toBe("");
@@ -82,7 +85,7 @@ test.each([
 test("CLI mkdir dry-run reports its plan without creating the directory", async () => {
   await withTemporaryDirectory(async (directory) => {
     const path = join(directory, "not-created");
-    const result = await runCli("mkdir", path, "--dry-run", "--json");
+    const result = await parseCommands({ mkdir }, "mkdir", path, "--dry-run", "--json");
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");

@@ -59,6 +59,9 @@ cheapest boundary that can catch it:
 - Retain real CLI, shell, terminal, timeout, cancellation and descendant-cleanup tests
   when the process boundary is the behavior being protected. Prefer readiness/exit
   signals to arbitrary sleeps; do not remove genuine deadline or grace-period checks.
+- When migrating subprocess tests, follow the [focused-boundary recipes](docs/testing-performance.md#focused-boundaries).
+  A migration is complete when equivalent focused assertions pass and the duplicate
+  CLI case is removed; retain representative CLI wiring and presentation contracts.
 
 Partial assertions and mocks are intentional when omitted fields are irrelevant or an
 external service is not the subject. Strengthen assertions that could accept the wrong

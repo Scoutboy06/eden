@@ -3,14 +3,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { completionCommands } from "../fixtures/completion-commands";
 import { runCli } from "../support/cli";
+import { parseCommands } from "../support/parser";
 
 const interaction = fileURLToPath(new URL("../fixtures/complete.ps1", import.meta.url));
-const fixture = fileURLToPath(new URL("../fixtures/completion.ts", import.meta.url));
 let script: string;
 
 beforeAll(async () => {
-  script = await Bun.$`${process.execPath} ${fixture} completion pwsh`.text();
+  script = (await parseCommands(completionCommands, "completion", "pwsh")).stdout;
 });
 
 const pwshTest = test.skipIf(Bun.which("pwsh") === null);

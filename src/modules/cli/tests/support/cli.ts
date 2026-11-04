@@ -1,7 +1,6 @@
 import { fileURLToPath } from "node:url";
 
 const application = fileURLToPath(new URL("../../../../../apps/cli/src/main.ts", import.meta.url));
-const fixture = fileURLToPath(new URL("../fixtures/main.ts", import.meta.url));
 
 type CliOptions = { cwd: string; env?: Record<string, string | undefined> };
 
@@ -45,10 +44,6 @@ export function runCliWith(
   ...argv: string[]
 ) {
   return execute(application, argv, options);
-}
-
-export function runFixture(...argv: string[]) {
-  return execute(fixture, argv);
 }
 
 async function execute(

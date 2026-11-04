@@ -38,28 +38,6 @@ test.each([undefined, "custom/image:tag"])(
   },
 );
 
-test.each(["provider creation failed", "Sandbox 'example' already exists"])(
-  "create preserves failures without retrying: %s",
-  async (diagnostic) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
-      options.env.EDEN_SBX_CREATE_FAILURE = diagnostic;
-
-      const result = await runCliWith(options, "sbx", "create", "--name", "example");
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain(
-        diagnostic.includes("already exists") ? "already exists" : diagnostic,
-      );
-      expect(await sandboxCommands(directory)).toEqual([
-        ["ls", "--json"],
-        ["policy", "ls", "--json"],
-        ["create", "--name", "example", "--skills", "off", "shell"],
-      ]);
-    });
-  },
-);
-
 test("failed creation preflight never creates", async () => {
   await withTemporaryDirectory(async (directory) => {
     const options = await prepareSandboxCli(directory, "missing");

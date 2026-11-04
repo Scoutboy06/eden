@@ -29,6 +29,8 @@ test("real CLI, Git, environment and lifecycle suites stay outside the fast loop
 test("in-process output, config and adapter contracts remain fast", () => {
   const files = [
     "src/modules/cli/tests/output.test.ts",
+    "src/modules/cli/tests/errors.test.ts",
+    "src/modules/cli/tests/parser-contract.test.ts",
     "src/modules/config/tests/layers.test.ts",
     "src/external/github/tests/github-provider.test.ts",
     "src/external/docker-sbx/tests/docker-sbx.test.ts",

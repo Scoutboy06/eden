@@ -24,7 +24,12 @@ export async function discoverTests(root: URL): Promise<string[]> {
 }
 
 function isIntegration(file: string): boolean {
-  if (file === "src/modules/cli/tests/output.test.ts") return false;
+  if (
+    file === "src/modules/cli/tests/output.test.ts" ||
+    file === "src/modules/cli/tests/errors.test.ts" ||
+    file === "src/modules/cli/tests/parser-contract.test.ts"
+  )
+    return false;
 
   return (
     file.startsWith("src/modules/cli/tests/") ||

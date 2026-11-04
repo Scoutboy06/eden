@@ -1,4 +1,3 @@
-import { runCli } from "../../parser";
 import { defineCommand } from "../../command";
 import {
   codedFailure,
@@ -10,7 +9,7 @@ import {
   uncodedFailure,
 } from "./commands";
 
-await runCli({
+export const parserCommands = {
   silent: defineCommand({ name: "silent", run() {} }),
   "late-failure": defineCommand({
     name: "late-failure",
@@ -27,4 +26,4 @@ await runCli({
   "empty-aggregate": emptyAggregate,
   "single-aggregate": singleAggregate,
   "loading-failure": loadingFailure,
-});
+};

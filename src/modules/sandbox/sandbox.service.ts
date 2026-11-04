@@ -254,6 +254,7 @@ export async function createSandboxService(
     hooks?: HookService;
     onHook?: () => void;
     interactiveCreate?: boolean;
+    providerFactory?: typeof createSandboxProvider;
   } = {},
 ): Promise<SandboxService> {
   const settings =
@@ -275,7 +276,11 @@ export async function createSandboxService(
 
   return new SandboxService(
     execution,
-    createSandboxProvider(name, onCreateOutput, options.interactiveCreate),
+    (options.providerFactory ?? createSandboxProvider)(
+      name,
+      onCreateOutput,
+      options.interactiveCreate,
+    ),
     selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
     options.onWarning,
     options.hooks,

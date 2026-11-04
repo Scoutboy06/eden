@@ -151,3 +151,109 @@ This implements the overlapping profiling, split and avoidable-wait scope of rel
 task `eden-07i` without a second competing runner. Beads' configured Dolt host was
 unreachable during this work; task acceptance criteria were recovered from the task
 creation record rather than invented, and tracker status was not assumed updated.
+
+## Focused boundaries
+
+The November 4 follow-up moves detailed cases below the executable boundary instead
+of emulating a child process inside the test runner. The real CLI helper remains
+subprocess-backed for integration tests. No cwd/environment/TTY/home-directory or
+nested-process compatibility layer is needed.
+
+Choose the smallest real boundary that protects the assertion:
+
+- **Parser and errors:** `src/modules/cli/tests/support/parser.ts` accepts the relevant
+  command map. It captures output and exit status only; it runs serially with the
+  ordinary test runner and does not isolate process-global command side effects.
+  Use it for argument validation, help, output and fixture-command failures, not
+  commands that require changing cwd, environment, terminal state or process signals.
+
+  ```ts
+  const result = await parseCommands({ mkdir }, "mkdir", path, "--bogus", "--json");
+  expect(result.exitCode).toBe(1);
+  expect(JSON.parse(result.stdout).error.code).toBe("err:arg:unknown-option");
+  ```
+
+- **Configuration:** `src/modules/config/tests/support/config.ts` constructs the real
+  file service and execution with an explicit path. Use `selectConfig`, file contents,
+  errors and recorded operations directly. Layer tests supply `pathsLowToHigh` to
+  `createFileConfigService`; environment-based discovery remains an integration case.
+
+  ```ts
+  const { config } = createConfigHarness(path);
+  await config.set("agent.default", "claude");
+  expect(selectConfig(await config.read(), "agent.default")).toBe("claude");
+  ```
+
+- **Sandbox:** `src/modules/sandbox/tests/support/sandbox.ts` uses the real config
+  schema, service factory, service and Docker adapter. Its injected command runner
+  records arguments and options rather than starting executable fixtures. A temporary
+  hooks directory prevents reading the user's hooks. Supply `run` for adapter responses,
+  use absolute workspace/mount paths when cwd is not the subject, and inspect recorded
+  operations for dry-run behavior. Genuine executable inheritance, cwd discovery and
+  terminal/lifecycle behavior stay in CLI integration tests.
+
+  ```ts
+  const { service, execution, commands } = await createSandboxHarness({
+    directory,
+    dryRun: true,
+    profile: "work",
+    config: { sandbox: { profiles: { work: { provider: "docker-sbx", template: "image:tag" } } } },
+  });
+  await service.create({ name: "example" });
+  expect(execution.operations[0]?.input).toMatchObject({ image: "image:tag", profile: "work" });
+  expect(commands.map(({ args }) => args)).toEqual([
+    ["ls", "--json"],
+    ["policy", "ls", "--json"],
+  ]);
+  ```
+
+- **Completion:** generate from the import-safe `fixtures/completion-commands.ts` map
+  through the focused parser, then pass the resulting script to the real shell test.
+  Application-registration checks still launch the actual application.
+
+Before removing a CLI matrix, map every assertion to its focused replacement or an
+existing equivalent test. Include formatting preservation, dry-run validation,
+preflight ordering and absence of mutation/retry/cleanup where originally asserted.
+Adding direct tests while leaving the same CLI matrix in place is not a performance
+migration. New module suites and parser-only error/contract suites join the fast group;
+mixed CLI files remain integration suites.
+
+### November 4 validation
+
+This follow-up was measured locally with Bun 1.4.2 on Linux. Bash and Zsh were
+available; PowerShell was not. The untouched baseline full run passed in **93.53 s**
+(746 pass, seven PowerShell skips, zero failures). Two sequential full runs of the
+final migration passed in **34.60 s and 34.87 s** (767 pass, the same seven skips,
+zero failures, 1,895 assertions, 774 tests across 78 files). An earlier intermediate
+run took 70.56 s; host/run variability means these samples are not a guaranteed
+speedup elsewhere. The final fast group passed all 502 tests across 44 files in
+0.584 s. The full runs were not timed concurrently with other verification commands.
+
+Static subprocess-launch call sites under the CLI tests changed as follows. These
+are source counts, not runtime process counts: parameterized cases and loops can
+execute a call site repeatedly.
+
+| Launch mechanism                          | Before | After |
+| ----------------------------------------- | -----: | ----: |
+| `runCli`                                  |     22 |    18 |
+| `runCliWith`                              |    170 |   125 |
+| Executable `runFixture`                   |     19 |     0 |
+| `withRunningCli`                          |      8 |     8 |
+| Completion fixture generation via `Bun.$` |      9 |     0 |
+
+The 77 removed launch sites are replaced by focused parser, config, sandbox or Docker
+adapter assertions, or were redundant with existing equivalent module assertions.
+Real shell execution, lifecycle/PTY checks, process environment inheritance, HOME/XDG
+discovery, nested-repository discovery and representative executable wiring remain.
+Parser fixture command graphs are import-safe modules; their unused executable
+adapters and the subprocess fixture helper were removed.
+
+The only production change is an optional provider factory in `createSandboxService`.
+The default remains `createSandboxProvider`, and a contract test checks that provider
+selection and IO options reach the factory unchanged. This lets focused tests exercise
+the real profile resolution, service and Docker adapter without starting executable
+fixtures or reading the user's hooks.
+
+`bun run check` and `git diff --check` pass. Root TypeScript checking still reports
+the existing `apps/web-ui` alias/DOM/import-meta configuration errors, with no `src/`
+or `scripts/` diagnostics. No commits were made.

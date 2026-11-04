@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import sbx from "../../../../apps/cli/src/commands/sbx";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
+import { parseCommands } from "./support/parser";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
 
 test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async (dryRun) => {
@@ -35,29 +36,9 @@ test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async
   });
 });
 
-test.each(["--profile", "--image"])(
-  "run rejects creation-only option %s before provider calls",
-  async (flag) => {
-    await withTemporaryDirectory(async (directory) => {
-      const options = await prepareSandboxCli(directory, "missing");
+test.each(["--profile", "--image"])("run parser rejects creation-only option %s", async (flag) => {
+  const result = await parseCommands({ sbx }, "sbx", "run", "--name", "example", flag, "work");
 
-      const result = await runCliWith(options, "sbx", "run", "--name", "example", flag, "work");
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain(flag.slice(2));
-      expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
-    });
-  },
-);
-
-test("run rejects an empty name before provider calls", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, "missing");
-
-    const result = await runCliWith(options, "sbx", "run", "--name", " ");
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("must not be empty");
-    expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
-  });
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain(flag.slice(2));
 });

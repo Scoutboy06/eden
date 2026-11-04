@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { runFixture } from "./support/cli";
+import { parseFixture as runFixture } from "./support/parser";
 
 test("a late failure replaces prepared output with one execution-owned result", async () => {
   const result = await runFixture("late-failure", "--json", "--dry-run");

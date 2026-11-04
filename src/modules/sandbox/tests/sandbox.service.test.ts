@@ -7,8 +7,39 @@ import { findRepositoryPath } from "../../config/repository";
 import { rootPrefix } from "../../config/tests/support/root";
 import { createExecution } from "../../execution";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { createSandboxService, SandboxService } from "../sandbox.service";
+import { createSandboxProvider, createSandboxService, SandboxService } from "../sandbox.service";
 import type { SandboxProvider } from "../provider";
+
+test("sandbox construction passes resolved selection and IO options to its provider factory", async () => {
+  const execution = createExecution({ dryRun: false });
+  const provider = createSandboxProvider("docker-sbx");
+  const calls: Parameters<typeof createSandboxProvider>[] = [];
+  const onOutput = () => {};
+
+  const service = await createSandboxService(
+    execution,
+    undefined,
+    {
+      read: async () => ({
+        worktree_root: rootPrefix,
+        sandbox: { profiles: { work: { provider: "docker-sbx" } } },
+      }),
+    },
+    onOutput,
+    "work",
+    {
+      interactiveCreate: true,
+      providerFactory: (...args) => {
+        calls.push(args);
+        return provider;
+      },
+    },
+  );
+
+  expect(service.providerName).toBe("docker-sbx");
+  expect(calls).toEqual([["docker-sbx", onOutput, true]]);
+  expect(execution.operations).toEqual([]);
+});
 
 test.each([
   ["running", false, true],

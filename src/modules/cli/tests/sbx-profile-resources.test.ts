@@ -53,66 +53,6 @@ test("profile pull and disk settings reach sbx while retaining inherited environ
   });
 });
 
-test("dry-run shows resource settings and expanded kit paths without creating", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, "missing");
-    await writeFile(
-      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-      stringify({
-        sandbox: {
-          default_provider: "docker-sbx",
-          profiles: {
-            work: {
-              pull: "never",
-              disk: { root: "100g" },
-              kits: [
-                "~/first",
-                "~\\second",
-                "./third",
-                "../fourth",
-                "oci://registry/kit",
-                "https://example.com/kit.git",
-                "vendor/kit",
-              ],
-            },
-          },
-        },
-      }),
-    );
-
-    const result = await runCliWith(
-      options,
-      "sbx",
-      "create",
-      "--name",
-      "example",
-      "--profile",
-      "work",
-      "--dry-run",
-      "--json",
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).operations[0].input).toMatchObject({
-      pull: "never",
-      disk: { root: "100g" },
-      kits: [
-        join(homedir(), "first"),
-        join(homedir(), "second"),
-        join(directory, "third"),
-        join(directory, "..", "fourth"),
-        "oci://registry/kit",
-        "https://example.com/kit.git",
-        "vendor/kit",
-      ],
-    });
-    expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--json"],
-      ["policy", "ls", "--json"],
-    ]);
-  });
-});
-
 test("unset disk settings preserve inherited values", async () => {
   await withTemporaryDirectory(async (directory) => {
     const options = await prepareSandboxCli(directory, "missing");

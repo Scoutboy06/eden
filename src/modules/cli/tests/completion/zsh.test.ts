@@ -3,12 +3,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { completionCommands } from "../fixtures/completion-commands";
 import { runCli } from "../support/cli";
+import { parseCommands } from "../support/parser";
 
 const interaction = fileURLToPath(new URL("../fixtures/complete.zsh", import.meta.url));
-const fixture = fileURLToPath(new URL("../fixtures/completion.ts", import.meta.url));
-
 const zshTest = test.skipIf(Bun.which("zsh") === null);
+
+async function generateFixtureCompletion(shell: string): Promise<string> {
+  return (await parseCommands(completionCommands, "completion", shell)).stdout;
+}
 
 async function complete(script: string, input: string) {
   const directory = await mkdtemp(join(tmpdir(), "eden-completion-"));
@@ -61,13 +65,13 @@ zshTest("Zsh offers the parser's short option aliases", async () => {
 });
 
 zshTest("Zsh completes a nested command without invoking its handler", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
 
   expect(await complete(script, "eden workspace cr")).toContain("RESULT:workspace create\r\n");
 });
 
 zshTest("Zsh completes a nested command's declared option values", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
 
   expect(await complete(script, "eden workspace create --output j")).toContain(
     "RESULT:workspace create --output json\r\n",
@@ -75,7 +79,7 @@ zshTest("Zsh completes a nested command's declared option values", async () => {
 });
 
 zshTest("Zsh completes inline option values after preceding global flags", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
 
   expect(await complete(script, "eden --json workspace create --output=j")).toContain(
     "RESULT:--json workspace create --output=json\r\n",
@@ -89,7 +93,7 @@ zshTest("Zsh completes the declared shell positional choice", async () => {
 });
 
 zshTest("Zsh treats shell-sensitive descriptions and choices as literal text", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
   const output = await complete(script, "eden workspace create --label l");
 
   expect(output).toContain(
@@ -99,13 +103,13 @@ zshTest("Zsh treats shell-sensitive descriptions and choices as literal text", a
 });
 
 zshTest("Zsh completes command names containing a description delimiter", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
 
   expect(await complete(script, "eden odd")).toContain("RESULT:odd:command\r\n");
 });
 
 zshTest("Zsh uses the option spelling accepted by a kebab-case command", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
 
   expect(await complete(script, "eden workspace create --workspace-ro")).toContain(
     "RESULT:workspace create --workspace-root\r\n",
@@ -113,7 +117,7 @@ zshTest("Zsh uses the option spelling accepted by a kebab-case command", async (
 });
 
 zshTest("Zsh displays option descriptions without interpreting their punctuation", async () => {
-  const script = await Bun.$`${process.execPath} ${fixture} completion zsh`.text();
+  const script = await generateFixtureCompletion("zsh");
   const output = await complete(script, "eden workspace create --\t");
 
   expect(output).toContain("Choose [label]: don't evaluate $text");
