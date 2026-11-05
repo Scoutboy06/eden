@@ -1,6 +1,6 @@
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
-import { AppLayout } from "@/layout/AppLayout";
+import { AppLayout } from "@/layouts/AppLayout";
 import { navigation } from "@/navigation";
 import { ThemeEffect } from "@/settings/theme-settings";
 
