@@ -9,6 +9,7 @@
   ],
   "type": "module",
   "scripts": {
+    "tasks": "bd list --brief --flat --skip-labels --status open,in_progress --sort priority --limit 50",
     "cli": "bun run apps/cli/src/main.ts",
     "test": "bun test",
     "test:fast": "bun run scripts/test.ts fast",
