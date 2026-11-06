@@ -29,6 +29,8 @@
   --accent-foreground: #161a23;
   --attention: #c25a12;
   --attention-foreground: #ffffff;
+  --success: #26805a;
+  --success-foreground: #ffffff;
   --destructive: #c2352b;
   --destructive-foreground: #ffffff;
   --border: #d5d9e2;
@@ -78,6 +80,8 @@ body {
   --color-border: var(--border);
   --color-attention: var(--attention);
   --color-attention-foreground: var(--attention-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
@@ -122,6 +126,8 @@ body {
   --accent-foreground: #e7e9f0;
   --attention: #f0975a;
   --attention-foreground: #ffffff;
+  --success: #62bd91;
+  --success-foreground: #0b0d13;
   --destructive: #f07167;
   --destructive-foreground: #ffffff;
   --border: #262b3a;
@@ -152,5 +158,17 @@ body {
   }
   html {
     @apply font-sans;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pr-row-actions-trigger {
+    opacity: 0;
+  }
+
+  .group:hover .pr-row-actions-trigger,
+  .group:focus-within .pr-row-actions-trigger,
+  .pr-row-actions-trigger[aria-expanded="true"] {
+    opacity: 1;
   }
 }
