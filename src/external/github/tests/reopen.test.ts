@@ -3,6 +3,48 @@ import { githubPr, githubProvider } from "./support/github";
 
 const ref = { provider: "github" as const, owner: "acme", repository: "app", number: 12 };
 
+test.each(["edit", "reopen"])(
+  "GitHub %s accepts canonical owner and repository casing",
+  async (operation) => {
+    const target = { ...ref, owner: "ACME", repository: "App" };
+    const { provider } = githubProvider((_, request) =>
+      Response.json(githubPr({ state: request.method === "PATCH" ? "open" : "closed" })),
+    );
+
+    const result =
+      operation === "edit"
+        ? await provider.editPullRequest(target, { title: "Improve login" })
+        : await provider.reopenPullRequest(target);
+
+    expect(result.ref).toEqual(ref);
+  },
+);
+
+test.each(["other-owner", "other-repository"])(
+  "GitHub reopen still rejects a genuinely different %s before writing",
+  async (mismatch) => {
+    const { provider, calls } = githubProvider(() =>
+      Response.json(
+        githubPr({
+          state: "closed",
+          base: {
+            ref: "main",
+            repo: {
+              owner: { login: mismatch === "other-owner" ? "other" : "acme" },
+              name: mismatch === "other-repository" ? "other" : "app",
+            },
+          },
+        }),
+      ),
+    );
+
+    await expect(provider.reopenPullRequest(ref)).rejects.toMatchObject({
+      code: "SCM_INVALID_RESPONSE",
+    });
+    expect(calls).toHaveLength(1);
+  },
+);
+
 test("GitHub reopens a closed PR through the exact repository and PR number", async () => {
   const writes: unknown[] = [];
   const { provider } = githubProvider((url, request) => {

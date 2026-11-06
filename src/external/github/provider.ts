@@ -400,8 +400,8 @@ function assertPullRequestIdentity(
   if (
     result.ref.provider !== "github" ||
     result.ref.number !== ref.number ||
-    result.ref.owner !== ref.owner ||
-    result.ref.repository !== ref.repository
+    result.ref.owner.toLowerCase() !== ref.owner.toLowerCase() ||
+    result.ref.repository.toLowerCase() !== ref.repository.toLowerCase()
   )
     invalidResponse();
 }
