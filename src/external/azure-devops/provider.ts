@@ -22,6 +22,7 @@ import type {
   PullRequestPatch,
   PullRequestRef,
   PullRequestWriter,
+  PullRequestReopener,
   PullRequestReview,
   RepositoryRef,
 } from "../../modules/pull-requests/provider";
@@ -39,7 +40,9 @@ export type AzureGitClient = Pick<
 >;
 export type AzurePolicyClient = Pick<IPolicyApi, "getPolicyEvaluations">;
 
-export class AzureDevOpsApiProvider implements PullRequestProvider, PullRequestWriter {
+export class AzureDevOpsApiProvider
+  implements PullRequestProvider, PullRequestWriter, PullRequestReopener
+{
   constructor(
     private readonly organizationUrl: string,
     private readonly git: AzureGitClient,
@@ -119,6 +122,44 @@ export class AzureDevOpsApiProvider implements PullRequestProvider, PullRequestW
         throw possiblyApplied(
           error,
           "Pull request changes may have been applied, but its response could not be verified.",
+        );
+      }
+    });
+  }
+
+  reopenPullRequest(ref: PullRequestRef): Promise<PullRequest> {
+    return providerRequest(async () => {
+      const id = this.id(ref);
+      if (ref.provider !== "azure-devops") invalidResponse();
+      const current = await this.git.getPullRequestById(id);
+      const { repository, project } = context(current);
+      assertKnownIdentity(current, ref, repository, project);
+      const normalized = normalizeAzurePullRequest(current, this.organizationUrl, ref, {
+        repository,
+        project,
+      });
+      if (normalized.state === "merged")
+        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be reopened.");
+      if (normalized.state === "open") return normalized;
+      const updated = await this.git.updatePullRequest(
+        { status: PullRequestStatus.Active },
+        repository,
+        id,
+        project,
+      );
+      try {
+        assertKnownIdentity(updated, ref, repository, project);
+        const result = normalizeAzurePullRequest(updated, this.organizationUrl, ref, {
+          repository,
+          project,
+        });
+        if (result.state !== "open") invalidResponse();
+
+        return result;
+      } catch (error) {
+        throw possiblyApplied(
+          error,
+          "The pull request may have reopened, but its response could not be verified.",
         );
       }
     });

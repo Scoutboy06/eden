@@ -215,8 +215,23 @@ const status = defineCommand({
   },
 });
 
+const reopen = defineCommand({
+  name: "reopen",
+  description: "Reopen a closed PR (merged PRs cannot be reopened)",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+  },
+  async run(ctx, { pullRequests, output }) {
+    const pr = await pullRequests.reopen(ctx.values);
+
+    if (pr) output.write({ data: { pr }, human: () => `${pr.title}\n${pr.state}\n${pr.url}` });
+  },
+});
+
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { show, checks, reviewers, open, edit, status },
+  subCommands: { show, checks, reviewers, open, edit, status, reopen },
 });

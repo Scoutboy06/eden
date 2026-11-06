@@ -15,7 +15,7 @@ test("PR help and completion expose the read commands and show enrichments", asy
   expect(help.stdout).toContain("show");
   expect(help.stdout).toContain("checks");
   expect(help.stdout).toContain("reviewers");
-  expect(help.stdout).not.toContain("merge");
+  expect(help.stdout).not.toMatch(/\n  merge\s/);
   expect(completion.stdout).toContain("--remote");
   expect(completion.stdout).toContain("--head");
   for (const flag of ["--raw", "--comments", "--checks"]) {
@@ -579,4 +579,39 @@ test("PR status renders absent reviews and checks and preserves missing-PR error
   expect(empty.stdout).toContain("No checks.");
   expect(missing.exitCode).toBe(1);
   expect(JSON.parse(missing.stdout)).toMatchObject({ ok: false, error: { code: "SCM_NOT_FOUND" } });
+});
+
+test("PR reopen handles closed, open and merged PRs through human and JSON output", async () => {
+  const ref = "https://github.com/acme/app/pull/12";
+  const reopened = await runPrWithEnv({ PR_STATE: "closed" }, "pr", "reopen", ref, "--json");
+  const open = await runPr("pr", "reopen", ref);
+  const merged = await runPrWithEnv({ PR_STATE: "merged" }, "pr", "reopen", ref, "--json");
+  const dryRun = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    "pr",
+    "reopen",
+    ref,
+    "--json",
+    "--dry-run",
+  );
+  const help = await runCli("pr", "reopen", "--help");
+  const completion = await runCli("completion", "bash");
+
+  expect(reopened.exitCode).toBe(0);
+  expect(JSON.parse(reopened.stdout)).toMatchObject({ ok: true, pr: { state: "open" } });
+  expect(open.exitCode).toBe(0);
+  expect(open.stdout).toContain(`open\n${ref}`);
+  expect(merged.exitCode).toBe(1);
+  expect(JSON.parse(merged.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "SCM_INVALID_STATE" },
+  });
+  expect(dryRun.exitCode).toBe(0);
+  expect(JSON.parse(dryRun.stdout)).toMatchObject({
+    ok: true,
+    operations: [{ type: "github-pr-reopen" }],
+  });
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout).toContain("Exact PR number or URL");
+  expect(completion.stdout).toContain("reopen");
 });

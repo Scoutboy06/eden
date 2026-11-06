@@ -93,3 +93,7 @@ export interface PullRequestWriter {
   createPullRequest(input: PullRequestCreateInput): Promise<PullRequest>;
   editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest>;
 }
+
+export interface PullRequestReopener {
+  reopenPullRequest(ref: PullRequestRef): Promise<PullRequest>;
+}

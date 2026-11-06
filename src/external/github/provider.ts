@@ -10,11 +10,14 @@ import type {
   PullRequestPatch,
   PullRequestRef,
   PullRequestWriter,
+  PullRequestReopener,
   PullRequestReview,
   RepositoryRef,
 } from "../../modules/pull-requests/provider";
 
-export class GitHubApiProvider implements PullRequestProvider, PullRequestWriter {
+export class GitHubApiProvider
+  implements PullRequestProvider, PullRequestWriter, PullRequestReopener
+{
   constructor(private readonly client: Octokit) {}
 
   createPullRequest(input: PullRequestCreateInput): Promise<PullRequest> {
@@ -39,6 +42,33 @@ export class GitHubApiProvider implements PullRequestProvider, PullRequestWriter
 
   editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest> {
     return providerRequest(() => editPullRequest(this.client, ref, patch));
+  }
+
+  reopenPullRequest(ref: PullRequestRef): Promise<PullRequest> {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      const input = parameters(ref);
+      const { data } = await this.client.pulls.get(input);
+      const current = normalizePullRequest(data);
+      assertPullRequestIdentity(current, ref);
+      if (current.state === "merged")
+        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be reopened.");
+      if (current.state === "open") return current;
+      const { data: updated } = await this.client.pulls.update({ ...input, state: "open" });
+      try {
+        const result = normalizePullRequest(updated);
+        assertPullRequestIdentity(result, ref);
+        if (result.state !== "open") invalidResponse();
+
+        return result;
+      } catch (error) {
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          `The pull request may have reopened, but its response could not be verified. ${safeFailureDetails(error)}`,
+        );
+      }
+    });
   }
 
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {

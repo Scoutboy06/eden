@@ -4,8 +4,8 @@ const pr = {
   html_url: "https://github.com/acme/app/pull/12",
   title: "Improve login",
   body: "Details",
-  state: "open",
-  merged: false,
+  state: process.env.PR_STATE === "closed" || process.env.PR_STATE === "merged" ? "closed" : "open",
+  merged: process.env.PR_STATE === "merged",
   draft: true,
   head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
   base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
@@ -18,12 +18,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   );
   if (url.hostname !== "api.github.com") throw new Error("Unexpected request host");
   if (process.env.PR_FORBID_REQUESTS) throw new Error("SDK requests are forbidden for this test");
-  if (init?.method === "PATCH") {
-    const patch = JSON.parse(String(init.body));
-    if (patch.title !== undefined) pr.title = patch.title;
-    if (patch.body !== undefined) pr.body = patch.body;
-    if (patch.base !== undefined) pr.base.ref = patch.base;
-  }
+  if (init?.method === "PATCH") applyPatch(init);
   if (url.pathname === "/graphql") {
     const body = JSON.parse(String(init?.body));
     pr.draft = body.query.includes("convertPullRequestToDraft");
@@ -40,6 +35,14 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 }) as typeof fetch;
 
 await import("../../../../../apps/cli/src/main");
+
+function applyPatch(request: RequestInit) {
+  const patch = JSON.parse(String(request.body));
+  if (patch.title !== undefined) pr.title = patch.title;
+  if (patch.body !== undefined) pr.body = patch.body;
+  if (patch.base !== undefined) pr.base.ref = patch.base;
+  if (patch.state !== undefined) pr.state = patch.state;
+}
 
 function respond(url: URL): Response {
   if (/\/(pulls|issues)\/404(?:\/|$)/.test(url.pathname))

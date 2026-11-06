@@ -6,6 +6,7 @@ import type {
   PullRequestProvider,
   PullRequestRef,
   PullRequestWriter,
+  PullRequestReopener,
   RepositoryRef,
 } from "./provider";
 import { createExecution } from "../execution/execution";
@@ -89,11 +90,37 @@ export class PullRequestService {
   }
 
   async editByReference(input: PullRequestInput & { ref: string }, patch: PullRequestPatch) {
-    if (!input.ref) invalidInput("An explicit PR number or URL is required for editing.");
-    const lookup = await resolvePullRequestLookup(input, this.git);
-    if (lookup.kind !== "exact") invalidInput("An exact PR target is required for editing.");
+    return this.edit(await this.exactReference(input), patch);
+  }
 
-    return this.edit(lookup.ref, patch);
+  async reopen(input: PullRequestInput & { ref: string }) {
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("reopenPullRequest" in provider) || typeof provider.reopenPullRequest !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot reopen pull requests.");
+    const reopener = provider as PullRequestProvider & PullRequestReopener;
+    let result: Awaited<ReturnType<PullRequestReopener["reopenPullRequest"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: `${ref.provider}-pr-reopen`,
+        description: `Reopen ${ref.provider} pull request`,
+        input: { ref },
+      },
+      async () => {
+        result = await reopener.reopenPullRequest(ref);
+      },
+    );
+
+    return result;
+  }
+
+  private async exactReference(input: PullRequestInput & { ref: string }) {
+    if (!input.ref) invalidInput("An explicit PR number or URL is required for mutations.");
+    const lookup = await resolvePullRequestLookup(input, this.git);
+    if (lookup.kind !== "exact") invalidInput("An exact PR target is required for mutations.");
+
+    return lookup.ref;
   }
 
   async show(input: PullRequestInput & { raw?: boolean; comments?: boolean; checks?: boolean }) {
@@ -222,6 +249,17 @@ function validateCreate(
 }
 
 function validateEdit(ref: PullRequestRef, patch: PullRequestPatch) {
+  validateReference(ref);
+  const keys = Object.keys(patch);
+  if (keys.some((key) => !["title", "body", "targetBranch", "isDraft"].includes(key)))
+    invalidInput("Only title, body, targetBranch, and isDraft may be edited.");
+  if (keys.length === 0) invalidInput("At least one pull request field must be changed.");
+  if (patch.title !== undefined && !patch.title.trim())
+    invalidInput("A pull request title must not be blank.");
+  if (patch.targetBranch !== undefined) validateBranch(patch.targetBranch);
+}
+
+function validateReference(ref: PullRequestRef) {
   if (ref.provider === "github") {
     if (
       !ref.owner.trim() ||
@@ -232,13 +270,6 @@ function validateEdit(ref: PullRequestRef, patch: PullRequestPatch) {
       invalidInput("A valid exact GitHub pull request target is required.");
   } else if (!ref.organizationUrl.trim() || !Number.isSafeInteger(ref.id) || ref.id < 1)
     invalidInput("A valid exact Azure DevOps pull request target is required.");
-  const keys = Object.keys(patch);
-  if (keys.some((key) => !["title", "body", "targetBranch", "isDraft"].includes(key)))
-    invalidInput("Only title, body, targetBranch, and isDraft may be edited.");
-  if (keys.length === 0) invalidInput("At least one pull request field must be changed.");
-  if (patch.title !== undefined && !patch.title.trim())
-    invalidInput("A pull request title must not be blank.");
-  if (patch.targetBranch !== undefined) validateBranch(patch.targetBranch);
 }
 
 function validateBranch(branch: string) {

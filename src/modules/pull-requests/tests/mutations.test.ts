@@ -199,6 +199,42 @@ test("edit by reference rejects missing, conflicting and invalid targets without
   expect(execution.operations).toEqual([]);
 });
 
+test("reopen requires provider capability before recording a mutation", async () => {
+  const { service, execution } = fixture();
+
+  await expect(
+    service.reopen({ ref: "https://github.com/acme/app/pull/12" }),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  expect(execution.operations).toEqual([]);
+});
+
+test("reopen dry-run records exact targets without any GitHub or Azure SDK requests", async () => {
+  const gh = githubProvider(() => {
+    throw new Error("must not call SDK");
+  });
+  const read = mock(async () => {
+    throw new Error("must not call SDK");
+  });
+  const azure = azureProvider({ getPullRequestById: read });
+  const execution = createExecution({ dryRun: true });
+  const service = new PullRequestService(
+    undefined,
+    async (repository) => (repository.provider === "github" ? gh.provider : azure),
+    execution,
+  );
+
+  expect(await service.reopen({ ref: "https://github.com/acme/app/pull/12" })).toBeUndefined();
+  expect(
+    await service.reopen({ ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42" }),
+  ).toBeUndefined();
+  expect(gh.calls).toEqual([]);
+  expect(read).not.toHaveBeenCalled();
+  expect(execution.operations.map((op) => op.type)).toEqual([
+    "github-pr-reopen",
+    "azure-devops-pr-reopen",
+  ]);
+});
+
 test("Azure dry-run records writes without resolving or mutating the PR through the SDK", async () => {
   const getPullRequestById = mock<AzureGitClient["getPullRequestById"]>(async () => {
     throw new Error("must not call SDK");
