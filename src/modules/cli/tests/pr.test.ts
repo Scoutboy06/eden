@@ -530,3 +530,53 @@ test("PR edit reads body-file through the CLI and requires an explicit PR target
     expect(JSON.parse(absent.stdout).ok).toBe(false);
   });
 });
+
+test("PR status composes live state, reviewers and checks in human and JSON output", async () => {
+  const ref = "https://github.com/acme/app/pull/12";
+  const human = await runPr("pr", "status", ref);
+  const json = await runPr(
+    "pr",
+    "status",
+    "--repo",
+    "https://github.com/acme/app",
+    "--head",
+    "topic",
+    "--refresh",
+    "--json",
+    "--dry-run",
+  );
+  const help = await runCli("pr", "status", "--help");
+  const completion = await runCli("completion", "bash");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("open (draft)");
+  expect(human.stdout).toContain("approved\talice");
+  expect(human.stdout).toContain("passed\tbuild");
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    pr: { ref: { number: 12 } },
+    reviews: [{ state: "approved" }],
+    checks: [{ state: "passed" }],
+  });
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout).toContain("--refresh");
+  expect(completion.stdout).toContain("--refresh");
+});
+
+test("PR status renders absent reviews and checks and preserves missing-PR errors", async () => {
+  const empty = await runPrWithEnv(
+    { PR_REVIEW_MODE: "empty", PR_CHECK_MODE: "empty" },
+    "pr",
+    "status",
+    "https://github.com/acme/app/pull/12",
+  );
+  const missing = await runPr("pr", "status", "https://github.com/acme/app/pull/404", "--json");
+
+  expect(empty.exitCode).toBe(0);
+  expect(empty.stdout).toContain("No reviewers.");
+  expect(empty.stdout).toContain("No checks.");
+  expect(missing.exitCode).toBe(1);
+  expect(JSON.parse(missing.stdout)).toMatchObject({ ok: false, error: { code: "SCM_NOT_FOUND" } });
+});

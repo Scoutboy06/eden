@@ -268,3 +268,53 @@ test("checks watch resolves a branch only once and forwards required-only on eac
     signal: expect.any(AbortSignal),
   });
 });
+
+test("status resolves once and reads fresh PR, reviews and checks on every invocation", async () => {
+  const { provider } = githubProvider(() => Response.json(githubPr()));
+  const find = mock(async () => [ref]);
+  const getPr = mock(provider.getPullRequest.bind(provider));
+  const getReviews = mock(async () => []);
+  const getChecks = mock(async () => []);
+  provider.findOpenPullRequests = find;
+  provider.getPullRequest = getPr;
+  provider.getReviews = getReviews;
+  provider.getChecks = getChecks;
+  const service = new PullRequestService(git, async () => provider);
+
+  expect(await service.status({})).toMatchObject({ pr: { ref }, reviews: [], checks: [] });
+  expect(find).toHaveBeenCalledTimes(1);
+  await service.status({ ref: "12" });
+
+  for (const read of [getPr, getReviews, getChecks]) {
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledWith(ref);
+  }
+});
+
+test.each([0, 2])(
+  "status preserves missing/ambiguous branch errors (%i matches)",
+  async (count) => {
+    const { provider } = githubProvider(() => Response.json(githubPr()));
+    provider.findOpenPullRequests = async () =>
+      Array.from({ length: count }, (_, index) => ({ ...ref, number: index + 1 }));
+    const read = mock(async () => []);
+    provider.getChecks = read;
+    const service = new PullRequestService(git, async () => provider);
+
+    await expect(service.status({})).rejects.toMatchObject({
+      code: count === 0 ? "SCM_NOT_FOUND" : "SCM_AMBIGUOUS_PULL_REQUEST",
+    });
+    expect(read).not.toHaveBeenCalled();
+  },
+);
+
+test("status fails rather than reporting incomplete successful status when a provider read fails", async () => {
+  const { provider } = githubProvider((url) =>
+    url.pathname.endsWith("/pulls/12")
+      ? Response.json(githubPr())
+      : Response.json({}, { status: 403 }),
+  );
+  const service = new PullRequestService(git, async () => provider);
+
+  await expect(service.status({ ref: "12" })).rejects.toMatchObject({ code: "SCM_ACCESS_DENIED" });
+});

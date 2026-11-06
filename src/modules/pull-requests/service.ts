@@ -122,6 +122,17 @@ export class PullRequestService {
     return { ref, checks: input.watch ? await watchChecks(read, options) : await read() };
   }
 
+  async status(input: PullRequestInput) {
+    const { provider, ref } = await this.resolve(input);
+    const [pr, reviews, checks] = await Promise.all([
+      provider.getPullRequest(ref),
+      provider.getReviews(ref),
+      provider.getChecks(ref),
+    ]);
+
+    return { pr, reviews, checks };
+  }
+
   async reviewers(input: PullRequestInput & { pending?: boolean; approved?: boolean }) {
     if (input.pending && input.approved)
       throw new ScmError("SCM_INVALID_OPTIONS", "--pending and --approved are mutually exclusive.");

@@ -189,8 +189,34 @@ const edit = defineCommand({
   },
 });
 
+const status = defineCommand({
+  name: "status",
+  description: "Show current PR state, reviewers and automated checks",
+  args: {
+    ...args,
+    refresh: {
+      type: "boolean",
+      description: "Read fresh provider state (status reads are always uncached)",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.status(ctx.values);
+    const { pr, reviews, checks } = result;
+
+    output.write({
+      data: result,
+      human: () =>
+        [
+          `${pr.title}\n${pr.state}${pr.isDraft ? " (draft)" : ""} · ${pr.sourceBranch} → ${pr.targetBranch}\n${pr.url}`,
+          `Reviewers\n${reviews.map((review) => `${review.state}\t${review.reviewer.name}`).join("\n") || "No reviewers."}`,
+          `Checks\n${checks.map((check) => `${check.state}\t${check.name}${check.url ? `\t${check.url}` : ""}`).join("\n") || "No checks."}`,
+        ].join("\n\n"),
+    });
+  },
+});
+
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { show, checks, reviewers, open, edit },
+  subCommands: { show, checks, reviewers, open, edit, status },
 });
