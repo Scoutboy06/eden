@@ -165,3 +165,10 @@ export function IssueComments({ count }: { count?: number }) {
     </span>
   );
 }
+
+/** Higher number = more urgent; for sorting. */
+export const priorityRank: Record<Priority, number> = { highest: 3, high: 2, medium: 1, low: 0 };
+
+export function issueTypeLabel(type: IssueType) {
+  return typeMeta[type].label;
+}

@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { IssueTable } from "@/components/issue-table/issue-table";
 import { IssueList } from "@/components/issue-list/issue-list";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import { sampleGroups } from "@/pages/board-data";
@@ -58,7 +59,7 @@ export function BoardPage() {
         <IssueList groups={groups} />
       </TabsContent>
       <TabsContent value="table" className="pt-4">
-        <p>Table view</p>
+        <IssueTable groups={groups} />
       </TabsContent>
     </Tabs>
   );
