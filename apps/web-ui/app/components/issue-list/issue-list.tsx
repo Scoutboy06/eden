@@ -13,6 +13,7 @@ import {
   IssueKey,
   IssueLabel,
   IssuePriority,
+  IssuePullRequestStatus,
   IssueTypeIcon,
 } from "@/components/issue/issue";
 
@@ -84,6 +85,7 @@ function IssueListRow({ issue }: { issue: Issue }) {
         ))}
         <IssueDueDate issue={issue} />
       </div>
+      <IssuePullRequestStatus pullRequest={issue.pullRequest} />
       <IssueComments count={issue.commentCount} />
       <IssuePriority priority={issue.priority} />
       <IssueAssignee assignee={issue.assignee} />

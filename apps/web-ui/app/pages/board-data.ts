@@ -24,6 +24,13 @@ export const sampleGroups: IssueGroup[] = [
       {
         id: "3",
         key: "EDEN-19",
+        pullRequest: {
+          provider: "azure-devops",
+          number: 1251,
+          url: "https://dev.azure.com/example/eden/_git/eden/pullrequest/1251",
+          state: "closed",
+          isDraft: false,
+        },
         title: "Theme picker forgets selection on reload",
         type: "bug",
         priority: "medium",
@@ -39,6 +46,13 @@ export const sampleGroups: IssueGroup[] = [
       {
         id: "4",
         key: "EDEN-11",
+        pullRequest: {
+          provider: "github",
+          number: 41,
+          url: "https://github.com/example/eden/pull/41",
+          state: "open",
+          isDraft: true,
+        },
         title: "List view with grouping by status",
         type: "story",
         priority: "medium",
@@ -63,6 +77,13 @@ export const sampleGroups: IssueGroup[] = [
       {
         id: "6",
         key: "EDEN-9",
+        pullRequest: {
+          provider: "github",
+          number: 44,
+          url: "https://github.com/example/eden/pull/44",
+          state: "open",
+          isDraft: false,
+        },
         title: "Kanban card contents",
         type: "story",
         priority: "highest",
@@ -74,6 +95,13 @@ export const sampleGroups: IssueGroup[] = [
       {
         id: "7",
         key: "EDEN-10",
+        pullRequest: {
+          provider: "azure-devops",
+          number: 1287,
+          url: "https://dev.azure.com/example/eden/_git/eden/pullrequest/1287",
+          state: "open",
+          isDraft: false,
+        },
         title: "Project selector overflows on narrow screens",
         type: "bug",
         priority: "high",
@@ -89,6 +117,13 @@ export const sampleGroups: IssueGroup[] = [
       {
         id: "8",
         key: "EDEN-8",
+        pullRequest: {
+          provider: "github",
+          number: 38,
+          url: "https://github.com/example/eden/pull/38",
+          state: "merged",
+          isDraft: false,
+        },
         title: "Board page header with view tabs",
         type: "story",
         priority: "medium",

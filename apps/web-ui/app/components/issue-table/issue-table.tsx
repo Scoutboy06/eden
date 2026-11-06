@@ -13,14 +13,25 @@ import {
   IssueKey,
   IssueLabel,
   IssuePriority,
+  IssuePullRequestStatus,
   IssueTypeIcon,
   issueTypeLabel,
   priorityRank,
+  pullRequestStatus,
+  pullRequestStatusRank,
 } from "@/components/issue/issue";
 
 type Row = { issue: Issue; status: IssueGroup; statusIndex: number };
 
-type SortKey = "type" | "key" | "title" | "status" | "priority" | "assignee" | "dueDate";
+type SortKey =
+  | "type"
+  | "key"
+  | "title"
+  | "status"
+  | "priority"
+  | "pullRequest"
+  | "assignee"
+  | "dueDate";
 type Sort = { key: SortKey; direction: "asc" | "desc" } | null;
 
 /** Sort value per column. `undefined` always sorts last, whatever the direction. */
@@ -31,6 +42,8 @@ const sortValue: Record<SortKey, (row: Row) => string | number | undefined> = {
   title: (row) => row.issue.title.toLowerCase(),
   status: (row) => row.statusIndex,
   priority: (row) => priorityRank[row.issue.priority],
+  pullRequest: (row) =>
+    row.issue.pullRequest && pullRequestStatusRank[pullRequestStatus(row.issue.pullRequest)],
   assignee: (row) => row.issue.assignee?.name.toLowerCase(),
   dueDate: (row) => row.issue.dueDate,
 };
@@ -51,6 +64,7 @@ const columns: { key: SortKey | null; label: string; className?: string }[] = [
   { key: "title", label: "Summary" },
   { key: "status", label: "Status", className: "w-32" },
   { key: "priority", label: "Priority", className: "w-20" },
+  { key: "pullRequest", label: "PR", className: "w-16" },
   { key: "assignee", label: "Assignee", className: "w-40" },
   { key: null, label: "Labels", className: "w-36" },
   { key: "dueDate", label: "Due", className: "w-24" },
@@ -86,7 +100,7 @@ export function IssueTable({
       className={cn("overflow-x-auto rounded-xl bg-card ring-1 ring-foreground/10", className)}
       {...props}
     >
-      <table className="w-full min-w-[56rem] text-sm">
+      <table className="w-full min-w-[58rem] text-sm">
         <thead className="border-b border-border text-xs text-muted-foreground">
           <tr>
             {columns.map((column) => {
@@ -147,6 +161,9 @@ export function IssueTable({
               </td>
               <td className="px-3 py-2">
                 <IssuePriority priority={issue.priority} />
+              </td>
+              <td className="px-3 py-2">
+                <IssuePullRequestStatus pullRequest={issue.pullRequest} />
               </td>
               <td className="px-3 py-2">
                 <span className="flex items-center gap-2">

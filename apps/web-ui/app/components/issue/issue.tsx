@@ -7,6 +7,10 @@ import {
   Calendar03Icon,
   CheckmarkSquare02Icon,
   EqualSignIcon,
+  GitMergeIcon,
+  GitPullRequestClosedIcon,
+  GitPullRequestDraftIcon,
+  GitPullRequestIcon,
   Message01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -16,6 +20,51 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 export type IssueType = "story" | "bug" | "task";
 export type Priority = "highest" | "high" | "medium" | "low";
+
+/**
+ * Pull request linked to an issue. Mirrors `PullRequest` in
+ * src/modules/pull-requests/provider.ts, where GitHub and Azure DevOps
+ * statuses are normalized to `state` + `isDraft`.
+ */
+export type IssuePullRequest = {
+  provider: "github" | "azure-devops";
+  number: number;
+  url: string;
+  state: "open" | "closed" | "merged";
+  isDraft: boolean;
+};
+
+export type PullRequestStatus = "draft" | "open" | "merged" | "closed";
+
+export function pullRequestStatus(pr: IssuePullRequest): PullRequestStatus {
+  return pr.state === "open" && pr.isDraft ? "draft" : pr.state;
+}
+
+/** Board-flow order for sorting: draft → open → merged → closed. */
+export const pullRequestStatusRank: Record<PullRequestStatus, number> = {
+  draft: 0,
+  open: 1,
+  merged: 2,
+  closed: 3,
+};
+
+const pullRequestMeta = {
+  draft: { icon: GitPullRequestDraftIcon, className: "text-muted-foreground" },
+  open: { icon: GitPullRequestIcon, className: "text-primary" },
+  merged: { icon: GitMergeIcon, className: "text-chart-4" },
+  closed: { icon: GitPullRequestClosedIcon, className: "text-destructive" },
+} satisfies Record<PullRequestStatus, { icon: unknown; className: string }>;
+
+/** Each provider's own wording for the same status. */
+const pullRequestLabels = {
+  github: { draft: "Draft", open: "Open", merged: "Merged", closed: "Closed" },
+  "azure-devops": { draft: "Draft", open: "Active", merged: "Completed", closed: "Abandoned" },
+} satisfies Record<IssuePullRequest["provider"], Record<PullRequestStatus, string>>;
+
+const providerMeta = {
+  github: { name: "GitHub", prefix: "#" },
+  "azure-devops": { name: "Azure DevOps", prefix: "!" },
+} satisfies Record<IssuePullRequest["provider"], { name: string; prefix: string }>;
 
 export type Issue = {
   id: string;
@@ -30,6 +79,7 @@ export type Issue = {
   dueDate?: string;
   commentCount?: number;
   done?: boolean;
+  pullRequest?: IssuePullRequest;
 };
 
 const typeMeta = {
@@ -171,4 +221,33 @@ export const priorityRank: Record<Priority, number> = { highest: 3, high: 2, med
 
 export function issueTypeLabel(type: IssueType) {
   return typeMeta[type].label;
+}
+
+/** PR status icon (number only in the tooltip), linking to the PR on its provider. */
+export function IssuePullRequestStatus({ pullRequest }: { pullRequest?: IssuePullRequest }) {
+  if (!pullRequest) return null;
+  const status = pullRequestStatus(pullRequest);
+  const meta = pullRequestMeta[status];
+  const provider = providerMeta[pullRequest.provider];
+  const label = pullRequestLabels[pullRequest.provider][status];
+  const number = `${provider.prefix}${pullRequest.number}`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<a href={pullRequest.url} target="_blank" rel="noreferrer" />}
+        aria-label={`Pull request ${number}: ${label}`}
+        onClick={(event) => event.stopPropagation()}
+        className={cn(
+          "inline-flex shrink-0 items-center rounded-sm hover:opacity-80",
+          meta.className,
+        )}
+      >
+        <HugeiconsIcon icon={meta.icon} strokeWidth={2} className="size-4" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {label} · {provider.name} pull request {number}
+      </TooltipContent>
+    </Tooltip>
+  );
 }

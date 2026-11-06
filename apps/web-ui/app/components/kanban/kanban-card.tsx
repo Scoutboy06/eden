@@ -9,6 +9,7 @@ import {
   IssueKey,
   IssueLabel,
   IssuePriority,
+  IssuePullRequestStatus,
   IssueTypeIcon,
 } from "@/components/issue/issue";
 import { Card } from "@/components/ui/card";
@@ -43,6 +44,7 @@ export function KanbanCard({
         <IssueTypeIcon type={item.type} />
         <IssueKey issue={item} />
         <div className="ml-auto flex items-center gap-2">
+          <IssuePullRequestStatus pullRequest={item.pullRequest} />
           <IssueComments count={item.commentCount} />
           <IssuePriority priority={item.priority} />
           <IssueAssignee assignee={item.assignee} />
