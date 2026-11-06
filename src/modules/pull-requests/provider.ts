@@ -72,13 +72,15 @@ export interface PullRequestProvider {
 }
 
 export type PullRequestCreateInput = {
-  repository: RepositoryRef & { provider: "github" };
   title: string;
   body: string;
   sourceBranch: string;
   targetBranch: string;
   draft: boolean;
-};
+} & (
+  | { repository: Extract<RepositoryRef, { provider: "github" }> }
+  | { repository: Extract<RepositoryRef, { provider: "azure-devops" }> }
+);
 
 export type PullRequestPatch = {
   title?: string;

@@ -19,6 +19,8 @@ export class GitHubApiProvider implements PullRequestProvider, PullRequestWriter
 
   createPullRequest(input: PullRequestCreateInput): Promise<PullRequest> {
     return providerRequest(async () => {
+      if (input.repository.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub repository.");
       const { data } = await this.client.pulls.create({
         owner: input.repository.owner,
         repo: input.repository.repository,

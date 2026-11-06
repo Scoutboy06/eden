@@ -37,7 +37,11 @@ export class PullRequestService {
     const writer = pullRequestWriter(provider);
     let result: Awaited<ReturnType<PullRequestWriter["createPullRequest"]>> | undefined;
     await this.execution.mutate(
-      { type: "github-pr-create", description: "Create GitHub pull request", input },
+      {
+        type: `${input.repository.provider}-pr-create`,
+        description: `Create ${input.repository.provider} pull request`,
+        input,
+      },
       async () => {
         result = await writer.createPullRequest(input as PullRequestCreateInput);
       },
@@ -52,7 +56,11 @@ export class PullRequestService {
     const writer = pullRequestWriter(provider);
     let result: Awaited<ReturnType<PullRequestWriter["editPullRequest"]>> | undefined;
     await this.execution.mutate(
-      { type: "github-pr-edit", description: "Edit GitHub pull request", input: { ref, patch } },
+      {
+        type: `${ref.provider}-pr-edit`,
+        description: `Edit ${ref.provider} pull request`,
+        input: { ref, patch },
+      },
       async () => {
         result = await writer.editPullRequest(ref, patch);
       },
@@ -150,40 +158,42 @@ function repositoryForRef(ref: PullRequestRef): RepositoryRef {
   if (ref.provider === "github")
     return { provider: "github", owner: ref.owner, repository: ref.repository };
 
-  throw new ScmError(
-    "SCM_UNSUPPORTED_OPERATION",
-    "Pull request editing is supported only for GitHub.",
-  );
+  return {
+    provider: "azure-devops",
+    organizationUrl: ref.organizationUrl,
+    project: "_",
+    repository: "_",
+  };
 }
 
 function validateCreate(
   input: Omit<PullRequestCreateInput, "repository"> & { repository: RepositoryRef },
 ) {
-  if (input.repository.provider !== "github")
-    throw new ScmError(
-      "SCM_UNSUPPORTED_OPERATION",
-      "Pull request creation is supported only for GitHub.",
-    );
-  if (!input.repository.owner.trim() || !input.repository.repository.trim())
-    invalidInput("A GitHub repository target is required.");
+  if (input.repository.provider === "github") {
+    if (!input.repository.owner.trim() || !input.repository.repository.trim())
+      invalidInput("A GitHub repository target is required.");
+  } else if (
+    !input.repository.organizationUrl.trim() ||
+    !input.repository.project.trim() ||
+    !input.repository.repository.trim()
+  )
+    invalidInput("An Azure DevOps organization, project, and repository target are required.");
   if (!input.title.trim()) invalidInput("A pull request title must not be blank.");
   validateBranch(input.sourceBranch);
   validateBranch(input.targetBranch);
 }
 
 function validateEdit(ref: PullRequestRef, patch: PullRequestPatch) {
-  if (ref.provider !== "github")
-    throw new ScmError(
-      "SCM_UNSUPPORTED_OPERATION",
-      "Pull request editing is supported only for GitHub.",
-    );
-  if (
-    !ref.owner.trim() ||
-    !ref.repository.trim() ||
-    !Number.isSafeInteger(ref.number) ||
-    ref.number < 1
-  )
-    invalidInput("A valid exact GitHub pull request target is required.");
+  if (ref.provider === "github") {
+    if (
+      !ref.owner.trim() ||
+      !ref.repository.trim() ||
+      !Number.isSafeInteger(ref.number) ||
+      ref.number < 1
+    )
+      invalidInput("A valid exact GitHub pull request target is required.");
+  } else if (!ref.organizationUrl.trim() || !Number.isSafeInteger(ref.id) || ref.id < 1)
+    invalidInput("A valid exact Azure DevOps pull request target is required.");
   const keys = Object.keys(patch);
   if (keys.some((key) => !["title", "body", "targetBranch", "isDraft"].includes(key)))
     invalidInput("Only title, body, targetBranch, and isDraft may be edited.");

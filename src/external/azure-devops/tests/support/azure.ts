@@ -28,6 +28,13 @@ export function azureProvider(
 ) {
   const client: AzureGitClient = {
     getPullRequestById: async () => azurePr(),
+    getRepository: async () => ({
+      id: "repo-id",
+      name: "app",
+      project: { id: "project-id", name: "Product" },
+    }),
+    createPullRequest: async () => azurePr(),
+    updatePullRequest: async () => azurePr(),
     getPullRequests: async () => [],
     getPullRequestStatuses: async () => [],
     getPullRequestReviewers: async () => [],

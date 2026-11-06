@@ -18,7 +18,10 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestProvider,
+  PullRequestCreateInput,
+  PullRequestPatch,
   PullRequestRef,
+  PullRequestWriter,
   PullRequestReview,
   RepositoryRef,
 } from "../../modules/pull-requests/provider";
@@ -26,6 +29,9 @@ import type {
 export type AzureGitClient = Pick<
   IGitApi,
   | "getPullRequestById"
+  | "createPullRequest"
+  | "updatePullRequest"
+  | "getRepository"
   | "getPullRequests"
   | "getPullRequestStatuses"
   | "getPullRequestReviewers"
@@ -33,39 +39,116 @@ export type AzureGitClient = Pick<
 >;
 export type AzurePolicyClient = Pick<IPolicyApi, "getPolicyEvaluations">;
 
-export class AzureDevOpsApiProvider implements PullRequestProvider {
+export class AzureDevOpsApiProvider implements PullRequestProvider, PullRequestWriter {
   constructor(
     private readonly organizationUrl: string,
     private readonly git: AzureGitClient,
     private readonly policies: AzurePolicyClient,
   ) {}
 
+  createPullRequest(input: PullRequestCreateInput): Promise<PullRequest> {
+    return providerRequest(async () => {
+      const repository = azureRepository(input.repository, this.organizationUrl);
+      const resolved = await this.git.getRepository(repository.repository, repository.project);
+      const repositoryId = resolved.id ?? invalidResponse();
+      const projectId = resolved.project?.id ?? invalidResponse();
+      if (!resolved.name || !resolved.project?.name) invalidResponse();
+      const created = await this.git.createPullRequest(
+        {
+          title: input.title,
+          description: input.body,
+          sourceRefName: fullBranch(input.sourceBranch),
+          targetRefName: fullBranch(input.targetBranch),
+          isDraft: input.draft,
+        },
+        repositoryId,
+        projectId,
+      );
+      try {
+        if (
+          !sameAzureIdentity(created.repository?.id, repositoryId) ||
+          !sameAzureIdentity(created.repository?.project?.id, projectId)
+        )
+          invalidResponse();
+        return normalizeAzurePullRequest(
+          created,
+          this.organizationUrl,
+          {
+            id: created.pullRequestId ?? invalidResponse(),
+            provider: "azure-devops",
+            organizationUrl: this.organizationUrl,
+          },
+          { repository: resolved.name, project: resolved.project.name },
+        );
+      } catch (error) {
+        throw possiblyApplied(
+          error,
+          "Pull request creation may have succeeded, but its response could not be verified.",
+        );
+      }
+    });
+  }
+
+  editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest> {
+    return providerRequest(async () => {
+      if (ref.provider !== "azure-devops")
+        throw new ScmError(
+          "SCM_PROVIDER_MISMATCH",
+          "Expected a PR in the selected Azure organization.",
+        );
+      const id = this.id(ref);
+      const current = await this.git.getPullRequestById(id);
+      const { repository, project } = context(current);
+      assertKnownIdentity(current, ref, repository, project);
+      const update: GitPullRequest = {
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.body !== undefined ? { description: patch.body } : {}),
+        ...(patch.targetBranch !== undefined
+          ? { targetRefName: fullBranch(patch.targetBranch) }
+          : {}),
+        ...(patch.isDraft !== undefined ? { isDraft: patch.isDraft } : {}),
+      };
+      const updated = await this.git.updatePullRequest(update, repository, id, project);
+      try {
+        assertKnownIdentity(updated, ref, repository, project);
+        return normalizeAzurePullRequest(updated, this.organizationUrl, ref, {
+          repository,
+          project,
+        });
+      } catch (error) {
+        throw possiblyApplied(
+          error,
+          "Pull request changes may have been applied, but its response could not be verified.",
+        );
+      }
+    });
+  }
+
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
-      const pr = await this.git.getPullRequestById(this.id(ref));
+      const id = this.id(ref);
+      const pr = await this.git.getPullRequestById(id);
       const { repository, project } = context(pr);
-      const state =
-        pr.status === PullRequestStatus.Active
-          ? "open"
-          : pr.status === PullRequestStatus.Abandoned
-            ? "closed"
-            : pr.status === PullRequestStatus.Completed
-              ? "merged"
-              : invalidResponse();
-      if (!pr.title || !pr.sourceRefName || !pr.targetRefName) invalidResponse();
-
-      return {
+      return normalizeAzurePullRequest(
+        pr,
+        this.organizationUrl,
         ref,
-        url: `${this.organizationUrl}/${encodeURIComponent(project)}/_git/${encodeURIComponent(repository)}/pullrequest/${this.id(ref)}`,
-        title: pr.title,
-        body: pr.description ?? "",
-        state,
-        isDraft: pr.isDraft ?? false,
-        sourceBranch: shortBranch(pr.sourceRefName),
-        targetBranch: shortBranch(pr.targetRefName),
-        ...(options.raw ? { raw: pr } : {}),
-      };
+        { repository, project },
+        options.raw,
+      );
     });
+  }
+
+  private id(ref: PullRequestRef): number {
+    if (
+      ref.provider !== "azure-devops" ||
+      ref.organizationUrl.toLowerCase() !== this.organizationUrl.toLowerCase()
+    )
+      throw new ScmError(
+        "SCM_PROVIDER_MISMATCH",
+        "Expected a PR in the selected Azure organization.",
+      );
+    return ref.id;
   }
 
   getComments(ref: PullRequestRef): Promise<PullRequestComment[]> {
@@ -212,19 +295,6 @@ export class AzureDevOpsApiProvider implements PullRequestProvider {
     });
   }
 
-  private id(ref: PullRequestRef): number {
-    if (
-      ref.provider !== "azure-devops" ||
-      ref.organizationUrl.toLowerCase() !== this.organizationUrl.toLowerCase()
-    )
-      throw new ScmError(
-        "SCM_PROVIDER_MISMATCH",
-        "Expected a PR in the selected Azure organization.",
-      );
-
-    return ref.id;
-  }
-
   private async checkPolicies(projectId: string, id: number) {
     const result = [];
     for (let skip = 0; ; skip += 100) {
@@ -300,6 +370,76 @@ function context(pr: GitPullRequest): { repository: string; project: string } {
     repository: pr.repository?.id ?? invalidResponse(),
     project: pr.repository?.project?.name ?? invalidResponse(),
   };
+}
+
+function azureRepository(repository: RepositoryRef, organizationUrl: string) {
+  if (
+    repository.provider !== "azure-devops" ||
+    repository.organizationUrl.toLowerCase() !== organizationUrl.toLowerCase()
+  )
+    throw new ScmError(
+      "SCM_PROVIDER_MISMATCH",
+      "Expected a repository in the selected Azure organization.",
+    );
+  return repository;
+}
+
+function normalizeAzurePullRequest(
+  pr: GitPullRequest,
+  organizationUrl: string,
+  ref: PullRequestRef,
+  identity: { repository: string; project: string },
+  includeRaw = false,
+): PullRequest {
+  const state =
+    pr.status === PullRequestStatus.Active
+      ? "open"
+      : pr.status === PullRequestStatus.Abandoned
+        ? "closed"
+        : pr.status === PullRequestStatus.Completed
+          ? "merged"
+          : invalidResponse();
+  if (!pr.title || !pr.sourceRefName || !pr.targetRefName || !pr.pullRequestId) invalidResponse();
+  return {
+    ref,
+    url: `${organizationUrl}/${encodeURIComponent(identity.project)}/_git/${encodeURIComponent(identity.repository)}/pullrequest/${pr.pullRequestId}`,
+    title: pr.title,
+    body: pr.description ?? "",
+    state,
+    isDraft: pr.isDraft ?? false,
+    sourceBranch: shortBranch(pr.sourceRefName),
+    targetBranch: shortBranch(pr.targetRefName),
+    ...(includeRaw ? { raw: pr } : {}),
+  };
+}
+
+function assertKnownIdentity(
+  pr: GitPullRequest,
+  ref: Extract<PullRequestRef, { provider: "azure-devops" }>,
+  repository: string,
+  project: string,
+) {
+  if (
+    pr.pullRequestId !== ref.id ||
+    !sameAzureIdentity(pr.repository?.id, repository) ||
+    !sameAzureIdentity(pr.repository?.project?.name, project)
+  )
+    invalidResponse();
+}
+
+function fullBranch(branch: string) {
+  return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
+}
+
+function possiblyApplied(error: unknown, message: string): ScmError {
+  return new ScmError(
+    "SCM_PARTIAL_FAILURE",
+    `${message} ${error instanceof ScmError ? `${error.code}: ${error.message}` : "The provider returned an invalid response."}`,
+  );
+}
+
+function sameAzureIdentity(left: string | undefined, right: string | undefined): boolean {
+  return left !== undefined && right !== undefined && left.toLowerCase() === right.toLowerCase();
 }
 
 function shortBranch(ref: string): string {

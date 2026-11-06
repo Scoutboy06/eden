@@ -1,9 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { createExecution } from "../../execution/execution";
 import { PullRequestService } from "../service";
 import { ScmError } from "../errors";
 import type { PullRequestProvider, PullRequestWriter, RepositoryRef } from "../provider";
 import { githubProvider } from "../../../external/github/tests/support/github";
+import { azureProvider } from "../../../external/azure-devops/tests/support/azure";
+import type { AzureGitClient } from "../../../external/azure-devops/provider";
 
 const repository: RepositoryRef = { provider: "github", owner: "acme", repository: "app" };
 const pr = {
@@ -169,5 +171,50 @@ test("create preserves false and empty body while edit preserves explicit false"
       draft: false,
     },
     { ref: pr.ref, patch: { body: "", isDraft: false } },
+  ]);
+});
+
+test("Azure dry-run records writes without resolving or mutating the PR through the SDK", async () => {
+  const getPullRequestById = mock<AzureGitClient["getPullRequestById"]>(async () => {
+    throw new Error("must not call SDK");
+  });
+  const getRepository = mock<AzureGitClient["getRepository"]>(async () => {
+    throw new Error("must not call SDK");
+  });
+  const createPullRequest = mock<AzureGitClient["createPullRequest"]>(async () => {
+    throw new Error("must not call SDK");
+  });
+  const provider = azureProvider({ getPullRequestById, getRepository, createPullRequest });
+  const execution = createExecution({ dryRun: true });
+  const service = new PullRequestService(undefined, async () => provider, execution);
+  const azureRepository: RepositoryRef = {
+    provider: "azure-devops",
+    organizationUrl: "https://dev.azure.com/acme",
+    project: "Product",
+    repository: "app",
+  };
+  const azureRef = {
+    provider: "azure-devops" as const,
+    organizationUrl: azureRepository.organizationUrl,
+    id: 42,
+  };
+
+  expect(
+    await service.create({
+      repository: azureRepository,
+      title: "Title",
+      body: "",
+      sourceBranch: "topic",
+      targetBranch: "main",
+      draft: false,
+    }),
+  ).toBeUndefined();
+  expect(await service.edit(azureRef, { body: "", isDraft: false })).toBeUndefined();
+  expect(getPullRequestById).not.toHaveBeenCalled();
+  expect(getRepository).not.toHaveBeenCalled();
+  expect(createPullRequest).not.toHaveBeenCalled();
+  expect(execution.operations.map(({ type }) => type)).toEqual([
+    "azure-devops-pr-create",
+    "azure-devops-pr-edit",
   ]);
 });
