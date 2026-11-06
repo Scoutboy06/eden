@@ -6,6 +6,18 @@ Separate logical blocks with one blank line, including setup, action, and assert
 
 After imports and supporting types, place the file's primary class or function before its implementation helpers.
 
+## External integrations
+
+Keep named vendor integration mechanics in `src/external/`: SDK construction,
+vendor API calls, wire formats and provider-specific response normalization.
+Application modules own workflow policy, provider selection and feature contracts;
+they call adapters rather than constructing vendor clients.
+
+`bun run lint` restricts static runtime imports of GitHub's Octokit and Azure
+DevOps SDKs, including SDK subpaths. Adapter code and its tests under `src/external/`
+may import them; type-only contract dependencies remain allowed elsewhere. Extend
+the restricted SDK patterns in `.oxlintrc.json` when introducing another vendor SDK.
+
 ## Test placement
 
 Place module tests in a `tests/` folder inside the module, not alongside its
