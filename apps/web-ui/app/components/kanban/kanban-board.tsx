@@ -29,6 +29,7 @@ import { KanbanCard } from "./kanban-card";
 
 type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
   columns: IssueGroup[];
+  allowReorder?: boolean;
   /** Called with the new layout after a card is dropped. */
   onColumnsChange: (columns: IssueGroup[]) => void;
 };
@@ -41,6 +42,7 @@ function findColumnId(columns: IssueGroup[], id: string) {
 
 export function KanbanBoard({
   columns: committedColumns,
+  allowReorder = true,
   onColumnsChange,
   className,
   ...props
@@ -95,12 +97,20 @@ export function KanbanBoard({
   function handleDragEnd({ active, over }: DragEndEvent) {
     setActiveItem(null);
     setDraft(null);
+    if (!over) return;
+
+    const sourceColumnId = findColumnId(committedColumns, String(active.id));
+    const destinationColumnId = findColumnId(columns, String(active.id));
+    if (!allowReorder) {
+      if (sourceColumnId !== destinationColumnId) onColumnsChange(columns);
+      return;
+    }
 
     // `columns` already includes any cross-column move made in handleDragOver.
     const columnId = findColumnId(columns, String(active.id));
     const column = columns.find((c) => c.id === columnId);
     const oldIndex = column?.items.findIndex((i) => i.id === active.id) ?? -1;
-    const newIndex = over ? (column?.items.findIndex((i) => i.id === over.id) ?? -1) : -1;
+    const newIndex = column?.items.findIndex((i) => i.id === over.id) ?? -1;
     const next =
       oldIndex === -1 || newIndex === -1 || oldIndex === newIndex
         ? columns

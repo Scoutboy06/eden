@@ -75,6 +75,7 @@ export type Issue = {
   priority: Priority;
   labels?: string[];
   assignee?: { name: string };
+  updatedAt?: string;
   /** ISO date (yyyy-mm-dd). */
   dueDate?: string;
   commentCount?: number;

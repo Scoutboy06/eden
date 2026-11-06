@@ -13,6 +13,7 @@ export const sampleGroups: IssueGroup[] = [
         type: "story",
         priority: "high",
         labels: ["board"],
+        updatedAt: "2026-11-04T14:20:00Z",
       },
       {
         id: "2",
@@ -20,6 +21,7 @@ export const sampleGroups: IssueGroup[] = [
         title: "Keyboard shortcuts for switching views",
         type: "task",
         priority: "low",
+        updatedAt: "2026-11-03T09:15:00Z",
       },
       {
         id: "3",
@@ -36,6 +38,7 @@ export const sampleGroups: IssueGroup[] = [
         priority: "medium",
         labels: ["settings"],
         commentCount: 2,
+        updatedAt: "2026-11-01T16:40:00Z",
       },
     ],
   },
@@ -59,6 +62,7 @@ export const sampleGroups: IssueGroup[] = [
         labels: ["list"],
         assignee: { name: "Elias Wennerlund" },
         dueDate: "2026-11-20",
+        updatedAt: "2026-11-05T11:05:00Z",
       },
       {
         id: "5",
@@ -67,6 +71,7 @@ export const sampleGroups: IssueGroup[] = [
         type: "task",
         priority: "medium",
         labels: ["table"],
+        updatedAt: "2026-11-02T13:25:00Z",
       },
     ],
   },
@@ -91,6 +96,7 @@ export const sampleGroups: IssueGroup[] = [
         assignee: { name: "Elias Wennerlund" },
         dueDate: "2026-11-04",
         commentCount: 5,
+        updatedAt: "2026-11-05T08:30:00Z",
       },
       {
         id: "7",
@@ -107,6 +113,7 @@ export const sampleGroups: IssueGroup[] = [
         priority: "high",
         assignee: { name: "Claude" },
         commentCount: 1,
+        updatedAt: "2026-11-04T17:55:00Z",
       },
     ],
   },
@@ -130,6 +137,7 @@ export const sampleGroups: IssueGroup[] = [
         labels: ["board"],
         assignee: { name: "Elias Wennerlund" },
         done: true,
+        updatedAt: "2026-10-30T10:10:00Z",
       },
     ],
   },
