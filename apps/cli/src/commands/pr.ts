@@ -141,20 +141,6 @@ const reviewers = defineCommand({
   },
 });
 
-const open = defineCommand({
-  name: "open",
-  description: "Open the native PR page in a browser",
-  args: {
-    ...args,
-    "print-url": { type: "boolean", description: "Print the PR URL without opening a browser" },
-  },
-  async run(ctx, { pullRequests, output }) {
-    const result = await pullRequests.open({ ...ctx.values, printUrl: ctx.values["print-url"] });
-
-    output.write({ data: result, human: () => result.url });
-  },
-});
-
 const edit = defineCommand({
   name: "edit",
   description: "Update selected PR metadata fields",
@@ -233,5 +219,5 @@ const reopen = defineCommand({
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { show, checks, reviewers, open, edit, status, reopen },
+  subCommands: { show, checks, reviewers, edit, status, reopen },
 });

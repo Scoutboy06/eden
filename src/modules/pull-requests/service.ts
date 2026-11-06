@@ -1,5 +1,4 @@
 import { ScmError } from "./errors";
-import { openBrowser } from "./browser";
 import type {
   PullRequestCreateInput,
   PullRequestPatch,
@@ -17,7 +16,7 @@ import {
   type GitContext,
   type PullRequestInput,
 } from "./resolve";
-import { parsePullRequestUrl, repositoryUrl } from "./targets";
+import { repositoryUrl } from "./targets";
 import { watchChecks, type WatchOptions } from "./watch";
 
 export class PullRequestService {
@@ -31,25 +30,7 @@ export class PullRequestService {
       return createPullRequestProvider(repository);
     },
     private readonly execution: Execution = createExecution({ dryRun: false }),
-    private readonly launchBrowser: (url: string) => Promise<void> = openBrowser,
   ) {}
-
-  async open(input: PullRequestInput & { printUrl?: boolean }) {
-    const pr = await this.show(input);
-    parsePullRequestUrl(pr.url);
-    let opened = false;
-    if (!input.printUrl) {
-      await this.execution.mutate(
-        { type: "pr-open", description: "Open pull request in browser", input: { url: pr.url } },
-        async () => {
-          await this.launchBrowser(pr.url);
-          opened = true;
-        },
-      );
-    }
-
-    return { ref: pr.ref, url: pr.url, opened };
-  }
 
   async create(input: Omit<PullRequestCreateInput, "repository"> & { repository: RepositoryRef }) {
     validateCreate(input);

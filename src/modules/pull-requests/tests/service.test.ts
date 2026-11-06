@@ -3,74 +3,12 @@ import { PullRequestService } from "../service";
 import type { PullRequestProvider, PullRequestRef } from "../provider";
 import { githubPr, githubProvider } from "../../../external/github/tests/support/github";
 import { azureProvider } from "../../../external/azure-devops/tests/support/azure";
-import { createExecution } from "../../execution";
 
 const ref: PullRequestRef = { provider: "github", owner: "acme", repository: "app", number: 12 };
 const git = {
   remotes: async () => [{ name: "origin", url: "https://github.com/acme/app" }],
   branch: async () => "topic",
 };
-
-test.each(["launch", "print", "dry-run"])(
-  "PR open %s respects the browser mutation boundary",
-  async (mode) => {
-    const execution = createExecution({ dryRun: mode === "dry-run" });
-    const launch = mock(async () => {});
-    const { provider } = githubProvider(() => Response.json(githubPr()));
-    const service = new PullRequestService(git, async () => provider, execution, launch);
-
-    const result = await service.open({ ref: "12", printUrl: mode === "print" });
-
-    expect(result).toEqual({
-      ref,
-      url: "https://github.com/acme/app/pull/12",
-      opened: mode === "launch",
-    });
-    expect(launch).toHaveBeenCalledTimes(mode === "launch" ? 1 : 0);
-    expect(execution.operations).toHaveLength(mode === "print" ? 0 : 1);
-  },
-);
-
-test("PR open resolves the Azure native URL without constructing it from the ID", async () => {
-  const launch = mock(async () => {});
-  const service = new PullRequestService(git, async () => azureProvider(), undefined, launch);
-
-  const result = await service.open({
-    ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42",
-  });
-
-  expect(result.url).toBe("https://dev.azure.com/acme/Product/_git/repo-id/pullrequest/42");
-  expect(launch).toHaveBeenCalledWith(result.url);
-});
-
-test("PR open propagates missing PRs and launcher failures without retrying", async () => {
-  const launch = mock(async () => {
-    throw new Error("launcher failed");
-  });
-  const { provider } = githubProvider(() => Response.json({}, { status: 404 }));
-  const service = new PullRequestService(git, async () => provider, undefined, launch);
-
-  await expect(service.open({ ref: "12" })).rejects.toMatchObject({ code: "SCM_NOT_FOUND" });
-  expect(launch).not.toHaveBeenCalled();
-
-  const valid = githubProvider(() => Response.json(githubPr())).provider;
-
-  await expect(
-    new PullRequestService(git, async () => valid, undefined, launch).open({ ref: "12" }),
-  ).rejects.toThrow("launcher failed");
-  expect(launch).toHaveBeenCalledTimes(1);
-});
-
-test("PR open rejects unsafe provider URLs before launching", async () => {
-  const launch = mock(async () => {});
-  const { provider } = githubProvider(() =>
-    Response.json(githubPr({ html_url: "file:///tmp/unsafe" })),
-  );
-  const service = new PullRequestService(git, async () => provider, undefined, launch);
-
-  await expect(service.open({ ref: "12" })).rejects.toMatchObject({ code: "SCM_INVALID_URL" });
-  expect(launch).not.toHaveBeenCalled();
-});
 
 test("service resolves branch searches before exact lookup", async () => {
   const selected = { ...ref, number: 37 };
