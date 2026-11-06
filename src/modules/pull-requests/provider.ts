@@ -70,3 +70,24 @@ export interface PullRequestProvider {
   ): Promise<PullRequestCheck[]>;
   getReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
 }
+
+export type PullRequestCreateInput = {
+  repository: RepositoryRef & { provider: "github" };
+  title: string;
+  body: string;
+  sourceBranch: string;
+  targetBranch: string;
+  draft: boolean;
+};
+
+export type PullRequestPatch = {
+  title?: string;
+  body?: string;
+  targetBranch?: string;
+  isDraft?: boolean;
+};
+
+export interface PullRequestWriter {
+  createPullRequest(input: PullRequestCreateInput): Promise<PullRequest>;
+  editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest>;
+}

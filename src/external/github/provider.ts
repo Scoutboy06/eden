@@ -6,37 +6,43 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestProvider,
+  PullRequestCreateInput,
+  PullRequestPatch,
   PullRequestRef,
+  PullRequestWriter,
   PullRequestReview,
   RepositoryRef,
 } from "../../modules/pull-requests/provider";
 
-export class GitHubApiProvider implements PullRequestProvider {
+export class GitHubApiProvider implements PullRequestProvider, PullRequestWriter {
   constructor(private readonly client: Octokit) {}
+
+  createPullRequest(input: PullRequestCreateInput): Promise<PullRequest> {
+    return providerRequest(async () => {
+      const { data } = await this.client.pulls.create({
+        owner: input.repository.owner,
+        repo: input.repository.repository,
+        title: input.title,
+        body: input.body,
+        head: input.sourceBranch,
+        base: input.targetBranch,
+        draft: input.draft,
+      });
+      return normalizePullRequest(data, {
+        ...input.repository,
+        number: data.number,
+      });
+    });
+  }
+
+  editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest> {
+    return providerRequest(() => editPullRequest(this.client, ref, patch));
+  }
 
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       const { data } = await this.client.pulls.get(parameters(ref));
-      if (!data.title || !data.html_url || !data.head?.ref || !data.base?.ref) invalidResponse();
-      const state = data.merged
-        ? "merged"
-        : data.state === "open"
-          ? "open"
-          : data.state === "closed"
-            ? "closed"
-            : invalidResponse();
-
-      return {
-        ref,
-        url: data.html_url,
-        title: data.title,
-        body: data.body ?? "",
-        state,
-        isDraft: data.draft ?? false,
-        sourceBranch: data.head.ref,
-        targetBranch: data.base.ref,
-        ...(options.raw ? { raw: data } : {}),
-      };
+      return { ...normalizePullRequest(data, ref), ...(options.raw ? { raw: data } : {}) };
     });
   }
 
@@ -296,6 +302,109 @@ function parameters(ref: PullRequestRef) {
     throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
 
   return { owner: ref.owner, repo: ref.repository, pull_number: ref.number };
+}
+
+async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: PullRequestPatch) {
+  if (ref.provider !== "github")
+    throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+  const input = parameters(ref);
+  const { data: current } = await client.pulls.get(input);
+  const restPatch = restFields(patch);
+  let updated = current;
+  if (Object.keys(restPatch).length > 0)
+    updated = (await client.pulls.update({ ...input, ...restPatch })).data;
+  if (patch.isDraft !== undefined && patch.isDraft !== (updated.draft ?? false)) {
+    try {
+      await providerRequest(() => changeDraftState(client, updated.node_id, patch.isDraft!));
+    } catch (error) {
+      if (Object.keys(restPatch).length === 0) throw error;
+      const cause = safeFailureDetails(error);
+      throw new ScmError(
+        "SCM_PARTIAL_FAILURE",
+        `Pull request fields were updated, but its draft state change failed. ${cause}`,
+      );
+    }
+    try {
+      updated = (await providerRequest(() => client.pulls.get(input))).data;
+    } catch (error) {
+      throw new ScmError(
+        "SCM_PARTIAL_FAILURE",
+        `Pull request changes may have been applied, but confirmation failed. ${safeFailureDetails(error)}`,
+      );
+    }
+  }
+  const result = normalizePullRequest(updated);
+  assertPullRequestIdentity(result, ref);
+
+  return result;
+}
+
+function safeFailureDetails(error: unknown): string {
+  return error instanceof ScmError
+    ? `${error.code}: ${error.message}`
+    : "The provider request failed.";
+}
+
+function restFields(patch: PullRequestPatch) {
+  return {
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.body !== undefined ? { body: patch.body } : {}),
+    ...(patch.targetBranch !== undefined ? { base: patch.targetBranch } : {}),
+  };
+}
+
+async function changeDraftState(client: Octokit, nodeId: string | null, isDraft: boolean) {
+  if (!nodeId) invalidResponse();
+  const mutation = isDraft
+    ? "mutation($pullRequestId: ID!) { convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }"
+    : "mutation($pullRequestId: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }";
+  await client.graphql(mutation, { pullRequestId: nodeId });
+}
+
+function assertPullRequestIdentity(
+  result: PullRequest,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+) {
+  if (
+    result.ref.provider !== "github" ||
+    result.ref.number !== ref.number ||
+    result.ref.owner !== ref.owner ||
+    result.ref.repository !== ref.repository
+  )
+    invalidResponse();
+}
+
+function normalizePullRequest(
+  data:
+    | Awaited<ReturnType<Octokit["pulls"]["get"]>>["data"]
+    | Awaited<ReturnType<Octokit["pulls"]["create"]>>["data"]
+    | Awaited<ReturnType<Octokit["pulls"]["update"]>>["data"],
+  ref?: PullRequestRef,
+): PullRequest {
+  if (!data.title || !data.html_url || !data.head?.ref || !data.base?.ref) invalidResponse();
+  const state = data.merged
+    ? "merged"
+    : data.state === "open"
+      ? "open"
+      : data.state === "closed"
+        ? "closed"
+        : invalidResponse();
+
+  return {
+    ref: ref ?? {
+      provider: "github",
+      owner: data.base.repo?.owner?.login ?? "",
+      repository: data.base.repo?.name ?? "",
+      number: data.number,
+    },
+    url: data.html_url,
+    title: data.title,
+    body: data.body ?? "",
+    state,
+    isDraft: data.draft ?? false,
+    sourceBranch: data.head.ref,
+    targetBranch: data.base.ref,
+  };
 }
 
 function githubRepository(repository: RepositoryRef) {

@@ -3,6 +3,7 @@ import { GitHubApiProvider } from "../../provider";
 
 export function githubProvider(
   respond: (url: URL, request: RequestInit) => Response | Promise<Response>,
+  token?: string,
 ) {
   const calls: URL[] = [];
   const fetch = async (input: string | URL | Request, init?: RequestInit) => {
@@ -19,7 +20,11 @@ export function githubProvider(
 
   return {
     provider: new GitHubApiProvider(
-      new Octokit({ request: { fetch }, log: { debug() {}, info() {}, warn() {}, error() {} } }),
+      new Octokit({
+        auth: token,
+        request: { fetch },
+        log: { debug() {}, info() {}, warn() {}, error() {} },
+      }),
     ),
     calls,
   };
@@ -28,14 +33,15 @@ export function githubProvider(
 export function githubPr(overrides: Record<string, unknown> = {}) {
   return {
     number: 12,
+    node_id: "PR_node_12",
     html_url: "https://github.com/acme/app/pull/12",
     title: "Improve login",
     body: null,
     state: "open",
     merged: false,
     draft: true,
-    head: { ref: "topic", sha: "abc" },
-    base: { ref: "main" },
+    head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
+    base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
     ...overrides,
   };
 }
