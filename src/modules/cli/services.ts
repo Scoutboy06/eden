@@ -32,7 +32,7 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
   return {
     output,
     get pullRequests() {
-      return new PullRequestService();
+      return new PullRequestService(undefined, undefined, execution);
     },
     readResolvedConfig,
     readConfig,

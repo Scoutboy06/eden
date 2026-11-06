@@ -360,6 +360,41 @@ async function runPr(...args: string[]) {
   return runPrWithEnv({}, ...args);
 }
 
+test("PR open help and completion expose print-url", async () => {
+  const help = await runCli("pr", "open", "--help");
+  const completion = await runCli("completion", "bash");
+
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout).toContain("--print-url");
+  expect(completion.stdout).toContain("--print-url");
+});
+
+test("PR open prints human and JSON URLs and dry-run never launches a browser", async () => {
+  const ref = "https://github.com/acme/app/pull/12";
+  const human = await runPr("pr", "open", ref, "--print-url");
+  const json = await runPr("pr", "open", ref, "--print-url", "--json");
+  const dryRun = await runPr("pr", "open", ref, "--dry-run", "--json");
+  const missing = await runPr(
+    "pr",
+    "open",
+    "https://github.com/acme/app/pull/404",
+    "--print-url",
+    "--json",
+  );
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toBe(`${ref}\n`);
+  expect(JSON.parse(json.stdout)).toMatchObject({ ok: true, url: ref, opened: false });
+  expect(dryRun.exitCode).toBe(0);
+  expect(JSON.parse(dryRun.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "pr-open" }],
+  });
+  expect(missing.exitCode).toBe(1);
+  expect(JSON.parse(missing.stdout)).toMatchObject({ ok: false, error: { code: "SCM_NOT_FOUND" } });
+});
+
 async function runPrWithEnv(env: Record<string, string>, ...args: string[]) {
   const child = Bun.spawn([process.execPath, fixture, ...args], {
     stdout: "pipe",
