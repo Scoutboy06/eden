@@ -20,7 +20,7 @@ export interface Task {
     provider: PullRequestTask["provider"];
     number: number;
   } | null;
-  runningAgents: readonly { id: string; harness: AgentHarness }[];
+  runningAgents: readonly { id: string; harness: AgentHarness; title: string }[];
   ci?: CIStatusValue;
   reviewCount?: number;
 }
@@ -41,9 +41,13 @@ export const tasks: readonly Task[] = [
     worktree: { name: "shared-bundle-titles", branch: "work/shared-bundle-titles" },
     pullRequest: null,
     runningAgents: [
-      { id: "shared-bundle-titles-claude", harness: "claude-code" },
-      { id: "shared-bundle-titles-codex", harness: "codex" },
-      { id: "shared-bundle-titles-opencode", harness: "opencode" },
+      {
+        id: "shared-bundle-titles-claude",
+        harness: "claude-code",
+        title: "Plan shared bundle titles",
+      },
+      { id: "shared-bundle-titles-codex", harness: "codex", title: "Implement title resolution" },
+      { id: "shared-bundle-titles-opencode", harness: "opencode", title: "Review bundle coverage" },
     ],
     ci: "pending",
   },
@@ -67,7 +71,13 @@ export const tasks: readonly Task[] = [
     title: "Feature already in progress",
     worktree: { name: "feature-progress", branch: "feature/progress" },
     pullRequest: null,
-    runningAgents: [{ id: "feature-progress-claude", harness: "claude-code" }],
+    runningAgents: [
+      {
+        id: "feature-progress-claude",
+        harness: "claude-code",
+        title: "Investigate failing checks",
+      },
+    ],
     ci: "failing",
   },
   {
@@ -75,7 +85,9 @@ export const tasks: readonly Task[] = [
     title: "Polish sandbox lifecycle",
     worktree: { name: "sandbox-lifecycle", branch: "chore/sandbox-lifecycle" },
     pullRequest: { provider: "azure-devops", number: 26114 },
-    runningAgents: [{ id: "sandbox-lifecycle-codex", harness: "codex" }],
+    runningAgents: [
+      { id: "sandbox-lifecycle-codex", harness: "codex", title: "Polish sandbox lifecycle" },
+    ],
     ci: "passing",
   },
 ];

@@ -19,7 +19,10 @@ export function TasksSidebar({ open }: { open: boolean }) {
           task.worktree?.branch,
           task.pullRequest &&
             formatPullRequestReference(task.pullRequest.provider, task.pullRequest.number),
-          ...task.runningAgents.map((agent) => agentHarnesses[agent.harness].title),
+          ...task.runningAgents.flatMap((agent) => [
+            agentHarnesses[agent.harness].title,
+            agent.title,
+          ]),
         ]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(normalizedQuery)),
@@ -65,7 +68,7 @@ export function TasksSidebar({ open }: { open: boolean }) {
           </button>
         ) : null}
       </label>
-      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-3">
         {activeTasks.map((task) => (
           <TaskCard
             key={task.key}
@@ -94,7 +97,7 @@ export function TasksSidebar({ open }: { open: boolean }) {
               <span className="flex-1">Inactive</span>
               <span className="font-mono">{inactiveTasks.length}</span>
             </button>
-            <div id="inactive-tasks" hidden={!inactiveContentExpanded} className="space-y-0.5">
+            <div id="inactive-tasks" hidden={!inactiveContentExpanded} className="space-y-1.5">
               {inactiveTasks.map((task) => (
                 <TaskCard
                   key={task.key}
