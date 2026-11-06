@@ -24,7 +24,7 @@ export function KanbanCard({
     <Card
       size="sm"
       className={cn(
-        "cursor-pointer gap-3 shadow-xs transition-colors hover:bg-accent/50",
+        "cursor-pointer gap-3 shadow-xs hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-2",
         className,
       )}
       {...props}

@@ -73,7 +73,7 @@ function IssueListGroup({ group }: { group: IssueGroup }) {
 
 function IssueListRow({ issue }: { issue: Issue }) {
   return (
-    <li className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-accent/50">
+    <li className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]">
       <IssueTypeIcon type={issue.type} />
       <span className="w-16">
         <IssueKey issue={issue} />

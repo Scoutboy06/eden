@@ -146,7 +146,10 @@ export function IssueTable({
         </thead>
         <tbody className="divide-y divide-border">
           {rows.map(({ issue, status }) => (
-            <tr key={issue.id} className="cursor-pointer transition-colors hover:bg-accent/50">
+            <tr
+              key={issue.id}
+              className="cursor-pointer hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]"
+            >
               <td className="px-3 py-2">
                 <IssueTypeIcon type={issue.type} />
               </td>
