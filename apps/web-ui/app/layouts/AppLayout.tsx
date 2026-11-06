@@ -1,5 +1,5 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useMatch } from "react-router-dom";
 
 import { ActivityBar } from "@/components/activity-bar";
 import { TasksSidebar } from "@/components/tasks-sidebar";
@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 const DRAG_THRESHOLD = 24;
 
 export function AppLayout() {
+  const isDoingPage = useMatch("/doing") !== null;
   const [tasksOpen, setTasksOpen] = useState(
     () => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches,
   );
@@ -74,9 +75,10 @@ export function AppLayout() {
       <div className="relative flex h-svh overflow-hidden">
         <ActivityBar />
         <div
+          hidden={!isDoingPage}
           className={`relative h-svh shrink-0 transition-[width] duration-200 ${tasksOpen ? "w-64 sm:w-72 lg:w-80" : "w-0"}`}
         >
-          <TasksSidebar open={tasksOpen} />
+          <TasksSidebar open={isDoingPage && tasksOpen} />
           <button
             type="button"
             aria-label={tasksOpen ? "Hide tasks sidebar" : "Show tasks sidebar"}
