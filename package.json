@@ -19,7 +19,10 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "analyze": "fallow",
-    "check": "bun run lint && bun run fmt:check && bun run analyze",
+    "typecheck": "bun run typecheck:backend && bun run typecheck:web",
+    "typecheck:backend": "tsc --project tsconfig.json",
+    "typecheck:web": "tsc --project apps/web-ui/tsconfig.json",
+    "check": "bun run typecheck && bun run lint && bun run fmt:check && bun run analyze",
     "prepare": "husky",
     "web:dev": "bun run --cwd apps/web-ui dev",
     "web:build": "bun run --cwd apps/web-ui build"

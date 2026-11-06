@@ -19,6 +19,12 @@ inside strings. Keep assertions in the tests, not in helpers.
 
 ## Running tests
 
+- `bun run check` runs backend and web typechecking, lint, formatting and static
+  analysis. `bun run typecheck` checks both TypeScript scopes without emitting files;
+  `typecheck:backend` and `typecheck:web` check them individually. The root TypeScript
+  configuration covers `src/`, `apps/cli/` and `scripts/`, including tests and fixtures.
+  `apps/web-ui/tsconfig.json` covers the web app, themes, scripts and Vite configuration
+  with browser types, Vite asset declarations and the `@/*` alias.
 - `bun run test:fast` runs in-process logic, service and adapter contracts, including
   isolated filesystem tests. Use it while editing.
 - `bun run test:integration` runs real CLI, Git (including PR resolution), shell, environment and process-lifecycle
