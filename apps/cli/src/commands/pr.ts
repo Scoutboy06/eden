@@ -1,5 +1,6 @@
 import { defineCommand } from "../../../../src/modules/cli";
 import { ScmError } from "../../../../src/modules/pull-requests/errors";
+import { buildPullRequestPatch } from "../../../../src/modules/pull-requests/edit-input";
 
 const args = {
   ref: {
@@ -154,8 +155,42 @@ const open = defineCommand({
   },
 });
 
+const edit = defineCommand({
+  name: "edit",
+  description: "Update selected PR metadata fields",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    title: { type: "string", parse: (value) => value, description: "Replace the PR title" },
+    body: {
+      type: "string",
+      parse: (value) => value,
+      description: "Replace the description (empty string clears it)",
+    },
+    "body-file": {
+      type: "string",
+      parse: (value) => value,
+      description: "Read the replacement description from a UTF-8 file",
+    },
+    base: { type: "string", parse: (value) => value, description: "Change the target branch" },
+    draft: { type: "boolean", description: "Mark the PR as a draft; excludes --ready" },
+    ready: { type: "boolean", description: "Mark the PR ready for review; excludes --draft" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const patch = await buildPullRequestPatch({
+      ...ctx.values,
+      bodyFile: ctx.values["body-file"],
+      targetBranch: ctx.values.base,
+    });
+    const pr = await pullRequests.editByReference(ctx.values, patch);
+
+    if (pr) output.write({ data: { pr }, human: () => `${pr.title}\n${pr.url}` });
+  },
+});
+
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { show, checks, reviewers, open },
+  subCommands: { show, checks, reviewers, open, edit },
 });

@@ -1,21 +1,38 @@
 const pr = {
   number: 12,
+  node_id: "PR_node_12",
   html_url: "https://github.com/acme/app/pull/12",
   title: "Improve login",
   body: "Details",
   state: "open",
   merged: false,
   draft: true,
-  head: { ref: "topic", sha: "abc" },
-  base: { ref: "main" },
+  head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
+  base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
 };
 let checkReads = 0;
 
-globalThis.fetch = (async (input: string | URL | Request) => {
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(
     typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
   );
   if (url.hostname !== "api.github.com") throw new Error("Unexpected request host");
+  if (process.env.PR_FORBID_REQUESTS) throw new Error("SDK requests are forbidden for this test");
+  if (init?.method === "PATCH") {
+    const patch = JSON.parse(String(init.body));
+    if (patch.title !== undefined) pr.title = patch.title;
+    if (patch.body !== undefined) pr.body = patch.body;
+    if (patch.base !== undefined) pr.base.ref = patch.base;
+  }
+  if (url.pathname === "/graphql") {
+    const body = JSON.parse(String(init?.body));
+    pr.draft = body.query.includes("convertPullRequestToDraft");
+    const operation = pr.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
+
+    return Response.json({
+      data: { [operation]: { pullRequest: { id: pr.node_id, isDraft: pr.draft } } },
+    });
+  }
   const response = respond(url);
   Object.defineProperty(response, "url", { value: url.href });
 

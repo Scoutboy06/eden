@@ -174,6 +174,31 @@ test("create preserves false and empty body while edit preserves explicit false"
   ]);
 });
 
+test("edit by reference resolves an explicit number without fetching the PR", async () => {
+  const { service, calls } = fixture();
+
+  await service.editByReference({ ref: "12", repo: "https://github.com/acme/app" }, { body: "" });
+
+  expect(calls).toEqual([{ ref: pr.ref, patch: { body: "" } }]);
+});
+
+test("edit by reference rejects missing, conflicting and invalid targets without writes", async () => {
+  const { service, calls, execution } = fixture();
+
+  for (const input of [
+    { ref: "" },
+    { ref: "topic", repo: "https://github.com/acme/app" },
+    { ref: "https://github.com/acme/app/pull/12", repo: "https://github.com/acme/other" },
+  ]) {
+    await expect(service.editByReference(input, { title: "Updated" })).rejects.toBeInstanceOf(
+      ScmError,
+    );
+  }
+
+  expect(calls).toEqual([]);
+  expect(execution.operations).toEqual([]);
+});
+
 test("Azure dry-run records writes without resolving or mutating the PR through the SDK", async () => {
   const getPullRequestById = mock<AzureGitClient["getPullRequestById"]>(async () => {
     throw new Error("must not call SDK");

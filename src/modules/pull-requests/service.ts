@@ -88,6 +88,14 @@ export class PullRequestService {
     return result;
   }
 
+  async editByReference(input: PullRequestInput & { ref: string }, patch: PullRequestPatch) {
+    if (!input.ref) invalidInput("An explicit PR number or URL is required for editing.");
+    const lookup = await resolvePullRequestLookup(input, this.git);
+    if (lookup.kind !== "exact") invalidInput("An exact PR target is required for editing.");
+
+    return this.edit(lookup.ref, patch);
+  }
+
   async show(input: PullRequestInput & { raw?: boolean; comments?: boolean; checks?: boolean }) {
     const { provider, ref } = await this.resolve(input);
     const [pr, comments, checks] = await Promise.all([

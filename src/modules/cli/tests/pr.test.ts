@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
@@ -409,3 +411,122 @@ async function runPrWithEnv(env: Record<string, string>, ...args: string[]) {
 
   return { exitCode, stdout, stderr };
 }
+
+test("PR edit help and completion declare supported metadata options", async () => {
+  const help = await runCli("pr", "edit", "--help");
+  const completion = await runCli("completion", "zsh");
+
+  expect(help.exitCode).toBe(0);
+  for (const flag of ["--title", "--body", "--body-file", "--base", "--draft", "--ready"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+});
+
+test("PR edit updates only supplied fields and renders human and JSON success", async () => {
+  const ref = "https://github.com/acme/app/pull/12";
+  const json = await runPr(
+    "pr",
+    "edit",
+    ref,
+    "--body",
+    "",
+    "--base",
+    "release",
+    "--ready",
+    "--json",
+  );
+  const human = await runPr("pr", "edit", ref, "--title", "New title");
+
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    pr: { title: "Improve login", body: "", targetBranch: "release", isDraft: false },
+  });
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toBe(`New title\n${ref}\n`);
+});
+
+test("PR edit dry-run records the exact patch without sending SDK requests", async () => {
+  const result = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    "pr",
+    "edit",
+    "12",
+    "--repo",
+    "https://github.com/acme/app",
+    "--body",
+    "",
+    "--ready",
+    "--json",
+    "--dry-run",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [
+      {
+        type: "github-pr-edit",
+        input: { ref: { number: 12 }, patch: { body: "", isDraft: false } },
+      },
+    ],
+  });
+});
+
+test("PR edit rejects no-op patches and flag conflicts, preserving structured provider errors", async () => {
+  const ref = "https://github.com/acme/app/pull/12";
+  for (const flags of [
+    [],
+    ["--draft", "--ready"],
+    ["--body", "", "--body-file", "missing"],
+    ["--title", " "],
+  ]) {
+    const result = await runPrWithEnv(
+      { PR_FORBID_REQUESTS: "1" },
+      "pr",
+      "edit",
+      ref,
+      ...flags,
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).ok).toBe(false);
+  }
+  const missing = await runPr(
+    "pr",
+    "edit",
+    "https://github.com/acme/app/pull/404",
+    "--title",
+    "Updated",
+    "--json",
+  );
+
+  expect(missing.exitCode).toBe(1);
+  expect(JSON.parse(missing.stdout)).toMatchObject({ ok: false, error: { code: "SCM_NOT_FOUND" } });
+  expect(missing.stdout).not.toContain("secret-token");
+});
+
+test("PR edit reads body-file through the CLI and requires an explicit PR target", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const path = join(directory, "body.md");
+    await Bun.write(path, "New description\n");
+
+    const result = await runPr(
+      "pr",
+      "edit",
+      "https://github.com/acme/app/pull/12",
+      "--body-file",
+      path,
+      "--json",
+    );
+    const absent = await runPr("pr", "edit", "--title", "Updated", "--json");
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ pr: { body: "New description\n" } });
+    expect(absent.exitCode).toBe(1);
+    expect(JSON.parse(absent.stdout).ok).toBe(false);
+  });
+});
