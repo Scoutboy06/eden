@@ -1,14 +1,126 @@
+import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { Outlet } from "react-router-dom";
 
 import { ActivityBar } from "@/components/activity-bar";
+import { TasksSidebar } from "@/components/tasks-sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
+const DRAG_THRESHOLD = 24;
+
 export function AppLayout() {
+  const [tasksOpen, setTasksOpen] = useState(
+    () => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches,
+  );
+  const pointerStartRef = useRef<{ x: number; open: boolean } | null>(null);
+  const didDragRef = useRef(false);
+  const suppressClickRef = useRef(false);
+
+  function toggleSidebar() {
+    setTasksOpen((open) => !open);
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+
+    pointerStartRef.current = { x: event.clientX, open: tasksOpen };
+    didDragRef.current = false;
+    suppressClickRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLButtonElement>) {
+    const start = pointerStartRef.current;
+    if (!start) return;
+
+    const delta = event.clientX - start.x;
+    if (Math.abs(delta) < DRAG_THRESHOLD) return;
+
+    didDragRef.current = true;
+
+    if ((!start.open && delta > 0) || (start.open && delta < 0)) {
+      setTasksOpen(!start.open);
+    }
+  }
+
+  function handlePointerUp(event: PointerEvent<HTMLButtonElement>) {
+    pointerStartRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (didDragRef.current) {
+      suppressClickRef.current = true;
+    }
+    didDragRef.current = false;
+  }
+
+  function handlePointerCancel() {
+    pointerStartRef.current = null;
+    didDragRef.current = false;
+    suppressClickRef.current = false;
+  }
+
+  function handleClick(event: MouseEvent<HTMLButtonElement>) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+
+    if (event.detail <= 1) toggleSidebar();
+  }
+
   return (
     <TooltipProvider>
-      <div className="flex h-svh">
+      <div className="relative flex h-svh overflow-hidden">
         <ActivityBar />
-        <main className="flex min-w-0 flex-1 flex-col overflow-auto p-4">
+        <div
+          className={`relative h-svh shrink-0 transition-[width] duration-200 ${tasksOpen ? "w-64 sm:w-72 lg:w-80" : "w-0"}`}
+        >
+          <TasksSidebar open={tasksOpen} />
+          <button
+            type="button"
+            aria-label={tasksOpen ? "Hide tasks sidebar" : "Show tasks sidebar"}
+            aria-controls="tasks-sidebar"
+            aria-expanded={tasksOpen}
+            title={tasksOpen ? "Hide tasks sidebar" : "Show tasks sidebar"}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
+            onClick={handleClick}
+            className="group/sidebar-edge absolute inset-y-0 left-full z-20 h-full w-2 touch-none cursor-pointer rounded-none border-0 bg-transparent p-0 outline-none"
+          >
+            <span
+              aria-hidden="true"
+              className="absolute inset-y-0 left-0 w-px bg-sidebar-border transition-colors group-hover/sidebar-edge:bg-muted-foreground/50"
+            />
+            <span
+              aria-hidden="true"
+              className="absolute left-0 top-1/2 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-sidebar-border bg-background text-muted-foreground shadow-sm transition-colors group-hover/sidebar-edge:border-muted-foreground/50 group-focus-visible/sidebar-edge:outline-2 group-focus-visible/sidebar-edge:outline-offset-2 group-focus-visible/sidebar-edge:outline-current"
+            >
+              <svg viewBox="0 0 16 16" className="size-3.5" fill="none">
+                {tasksOpen ? (
+                  <path
+                    d="m10 3-5 5 5 5"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ) : (
+                  <path
+                    d="m6 3 5 5-5 5"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+              </svg>
+            </span>
+          </button>
+        </div>
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4">
           <Outlet />
         </main>
       </div>

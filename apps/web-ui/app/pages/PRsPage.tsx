@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { CIStatus } from "@/components/ci-status";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   deriveReviewRows,
   formatPullRequestReference,
@@ -26,7 +28,6 @@ import {
   type QueuePosition,
   type ReviewRow,
 } from "@/pages/prs-data";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const voteLabels = {
   approved: "Approved",
@@ -243,24 +244,6 @@ function RowActions({ task }: { task: ReviewRow["task"] }) {
               : ""}
       </span>
     </div>
-  );
-}
-
-function CIStatus({ status }: { status: "passing" | "pending" | "failing" }) {
-  const details = {
-    passing: { label: "Passing", className: "bg-success" },
-    pending: { label: "Pending", className: "bg-attention" },
-    failing: { label: "Failing", className: "bg-destructive" },
-  }[status];
-
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span />} className="inline-flex items-center">
-        <span aria-hidden="true" className={`size-2 rounded-full ${details.className}`} />
-        <span className="sr-only">{details.label}</span>
-      </TooltipTrigger>
-      <TooltipContent>{details.label}</TooltipContent>
-    </Tooltip>
   );
 }
 
