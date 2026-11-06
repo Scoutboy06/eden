@@ -23,37 +23,32 @@ import { cn } from "cn";
 import { useState } from "react";
 import type * as React from "react";
 
-import { KanbanCard, type KanbanItem } from "./kanban-card";
+import type { Issue, IssueGroup } from "@/components/issue/issue";
 
-export type KanbanColumnData = {
-  id: string;
-  title: string;
-  items: KanbanItem[];
-};
+import { KanbanCard } from "./kanban-card";
 
 type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
-  /** Initial columns; the board keeps its own state after mount. */
-  columns: KanbanColumnData[];
+  columns: IssueGroup[];
   /** Called with the new layout after a card is dropped. */
-  onColumnsChange?: (columns: KanbanColumnData[]) => void;
+  onColumnsChange: (columns: IssueGroup[]) => void;
 };
 
 /** Id of the column containing `id`, where `id` is a card or a column. */
-function findColumnId(columns: KanbanColumnData[], id: string) {
+function findColumnId(columns: IssueGroup[], id: string) {
   if (columns.some((column) => column.id === id)) return id;
   return columns.find((column) => column.items.some((item) => item.id === id))?.id;
 }
 
 export function KanbanBoard({
-  columns: initialColumns,
+  columns: committedColumns,
   onColumnsChange,
   className,
   ...props
 }: KanbanBoardProps) {
-  const [columns, setColumns] = useState(initialColumns);
-  const [activeItem, setActiveItem] = useState<KanbanItem | null>(null);
-  // Snapshot to restore if the drag is cancelled after crossing columns.
-  const [dragStartColumns, setDragStartColumns] = useState<KanbanColumnData[] | null>(null);
+  // Layout while a drag is in progress; committed to the parent on drop, discarded on cancel.
+  const [draft, setDraft] = useState<IssueGroup[] | null>(null);
+  const columns = draft ?? committedColumns;
+  const [activeItem, setActiveItem] = useState<Issue | null>(null);
 
   const sensors = useSensors(
     // Small distance so clicks on a card still register as clicks.
@@ -64,7 +59,7 @@ export function KanbanBoard({
   function handleDragStart({ active }: DragStartEvent) {
     const item = columns.flatMap((column) => column.items).find((i) => i.id === active.id);
     setActiveItem(item ?? null);
-    setDragStartColumns(columns);
+    setDraft(committedColumns);
   }
 
   // Move the card into another column while hovering, so that column makes room for it.
@@ -74,7 +69,8 @@ export function KanbanBoard({
     const toId = findColumnId(columns, String(over.id));
     if (!fromId || !toId || fromId === toId) return;
 
-    setColumns((prev) => {
+    setDraft((current) => {
+      const prev = current ?? committedColumns;
       const from = prev.find((c) => c.id === fromId)!;
       const to = prev.find((c) => c.id === toId)!;
       const item = from.items.find((i) => i.id === active.id)!;
@@ -98,30 +94,26 @@ export function KanbanBoard({
   // Reorder within the final column.
   function handleDragEnd({ active, over }: DragEndEvent) {
     setActiveItem(null);
-    setDragStartColumns(null);
-    if (!over) return;
+    setDraft(null);
 
+    // `columns` already includes any cross-column move made in handleDragOver.
     const columnId = findColumnId(columns, String(active.id));
     const column = columns.find((c) => c.id === columnId);
-    if (!column) return;
-
-    const oldIndex = column.items.findIndex((i) => i.id === active.id);
-    const newIndex = column.items.findIndex((i) => i.id === over.id);
+    const oldIndex = column?.items.findIndex((i) => i.id === active.id) ?? -1;
+    const newIndex = over ? (column?.items.findIndex((i) => i.id === over.id) ?? -1) : -1;
     const next =
-      newIndex === -1 || oldIndex === newIndex
+      oldIndex === -1 || newIndex === -1 || oldIndex === newIndex
         ? columns
         : columns.map((c) =>
             c.id === columnId ? { ...c, items: arrayMove(c.items, oldIndex, newIndex) } : c,
           );
 
-    setColumns(next);
-    onColumnsChange?.(next);
+    if (next !== committedColumns) onColumnsChange(next);
   }
 
   function handleDragCancel() {
-    if (dragStartColumns) setColumns(dragStartColumns);
     setActiveItem(null);
-    setDragStartColumns(null);
+    setDraft(null);
   }
 
   return (
@@ -147,7 +139,7 @@ export function KanbanBoard({
   );
 }
 
-function KanbanColumn({ column }: { column: KanbanColumnData }) {
+function KanbanColumn({ column }: { column: IssueGroup }) {
   // The column itself is a drop target so empty columns can receive cards.
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
@@ -177,7 +169,7 @@ function KanbanColumn({ column }: { column: KanbanColumnData }) {
   );
 }
 
-function SortableKanbanCard({ item }: { item: KanbanItem }) {
+function SortableKanbanCard({ item }: { item: Issue }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
   });

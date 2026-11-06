@@ -1,0 +1,167 @@
+import {
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  ArrowUpDoubleIcon,
+  Bookmark02Icon,
+  Bug01Icon,
+  Calendar03Icon,
+  CheckmarkSquare02Icon,
+  EqualSignIcon,
+  Message01Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { cn } from "cn";
+
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+export type IssueType = "story" | "bug" | "task";
+export type Priority = "highest" | "high" | "medium" | "low";
+
+export type Issue = {
+  id: string;
+  /** Human-readable key, e.g. "EDEN-42". */
+  key: string;
+  title: string;
+  type: IssueType;
+  priority: Priority;
+  labels?: string[];
+  assignee?: { name: string };
+  /** ISO date (yyyy-mm-dd). */
+  dueDate?: string;
+  commentCount?: number;
+  done?: boolean;
+};
+
+const typeMeta = {
+  story: { label: "Story", icon: Bookmark02Icon, className: "bg-chart-2/15 text-chart-2" },
+  bug: { label: "Bug", icon: Bug01Icon, className: "bg-destructive/15 text-destructive" },
+  task: { label: "Task", icon: CheckmarkSquare02Icon, className: "bg-primary/15 text-primary" },
+} satisfies Record<IssueType, { label: string; icon: unknown; className: string }>;
+
+const priorityMeta = {
+  highest: {
+    label: "Highest",
+    icon: ArrowUpDoubleIcon,
+    className: "text-destructive",
+  },
+  high: { label: "High", icon: ArrowUp01Icon, className: "text-attention" },
+  medium: { label: "Medium", icon: EqualSignIcon, className: "text-muted-foreground" },
+  low: { label: "Low", icon: ArrowDown01Icon, className: "text-muted-foreground/70" },
+} satisfies Record<Priority, { label: string; icon: unknown; className: string }>;
+
+const dueFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function isOverdue(dueDate: string) {
+  return new Date(`${dueDate}T23:59:59`) < new Date();
+}
+
+/** A status column / group of issues, shared by the board, list and table views. */
+export type IssueGroup = {
+  id: string;
+  title: string;
+  items: Issue[];
+};
+
+export function IssueTypeIcon({ type }: { type: IssueType }) {
+  const meta = typeMeta[type];
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span />}
+        className={cn("grid size-4 shrink-0 place-items-center rounded-sm", meta.className)}
+      >
+        <HugeiconsIcon icon={meta.icon} strokeWidth={2.5} className="size-3" />
+      </TooltipTrigger>
+      <TooltipContent>{meta.label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function IssueKey({ issue }: { issue: Issue }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 text-xs font-medium text-muted-foreground",
+        issue.done && "line-through",
+      )}
+    >
+      {issue.key}
+    </span>
+  );
+}
+
+export function IssuePriority({ priority }: { priority: Priority }) {
+  const meta = priorityMeta[priority];
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />} className={cn("shrink-0", meta.className)}>
+        <HugeiconsIcon icon={meta.icon} strokeWidth={2.5} className="size-4" />
+      </TooltipTrigger>
+      <TooltipContent>{meta.label} priority</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function IssueAssignee({ assignee }: { assignee: Issue["assignee"] }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span />}
+        className={cn(
+          "grid size-6 shrink-0 place-items-center rounded-full text-[10px] font-semibold",
+          assignee
+            ? "bg-primary text-primary-foreground"
+            : "border border-dashed border-muted-foreground/50 text-muted-foreground",
+        )}
+      >
+        {assignee ? initials(assignee.name) : "?"}
+      </TooltipTrigger>
+      <TooltipContent>{assignee?.name ?? "Unassigned"}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function IssueLabel({ label }: { label: string }) {
+  return (
+    <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground uppercase">
+      {label}
+    </span>
+  );
+}
+
+export function IssueDueDate({ issue }: { issue: Issue }) {
+  if (!issue.dueDate) return null;
+  const overdue = !issue.done && isOverdue(issue.dueDate);
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium",
+        overdue ? "bg-destructive/10 text-destructive" : "text-muted-foreground",
+      )}
+    >
+      <HugeiconsIcon icon={Calendar03Icon} strokeWidth={2} className="size-3" />
+      {dueFormat.format(new Date(`${issue.dueDate}T00:00:00`))}
+    </span>
+  );
+}
+
+export function IssueComments({ count }: { count?: number }) {
+  if (!count) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground tabular-nums">
+      <HugeiconsIcon icon={Message01Icon} strokeWidth={2} className="size-3.5" />
+      {count}
+    </span>
+  );
+}
