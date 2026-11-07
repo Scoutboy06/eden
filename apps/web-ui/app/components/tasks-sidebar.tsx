@@ -4,9 +4,16 @@ import { TaskCard } from "@/components/task-card";
 import { agentHarnesses, tasks } from "@/components/tasks-sidebar-data";
 import { formatPullRequestReference } from "@/pages/prs-data";
 
-export function TasksSidebar({ open }: { open: boolean }) {
+export function TasksSidebar({
+  open,
+  selectedTaskKey,
+  onSelectTask,
+}: {
+  open: boolean;
+  selectedTaskKey: string;
+  onSelectTask: (key: string) => void;
+}) {
   const [query, setQuery] = useState("");
-  const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const [inactiveExpanded, setInactiveExpanded] = useState(false);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredTasks = useMemo(
@@ -74,7 +81,7 @@ export function TasksSidebar({ open }: { open: boolean }) {
             key={task.key}
             task={task}
             selected={selectedTaskKey === task.key}
-            onSelect={() => setSelectedTaskKey(task.key)}
+            onSelect={() => onSelectTask(task.key)}
           />
         ))}
         {inactiveTasks.length > 0 ? (
@@ -103,7 +110,7 @@ export function TasksSidebar({ open }: { open: boolean }) {
                   key={task.key}
                   task={task}
                   selected={selectedTaskKey === task.key}
-                  onSelect={() => setSelectedTaskKey(task.key)}
+                  onSelect={() => onSelectTask(task.key)}
                 />
               ))}
             </div>

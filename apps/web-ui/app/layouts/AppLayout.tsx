@@ -3,12 +3,14 @@ import { Outlet, useMatch } from "react-router-dom";
 
 import { ActivityBar } from "@/components/activity-bar";
 import { TasksSidebar } from "@/components/tasks-sidebar";
+import { tasks } from "@/components/tasks-sidebar-data";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const DRAG_THRESHOLD = 24;
 
 export function AppLayout() {
   const isDoingPage = useMatch("/doing") !== null;
+  const [selectedTaskKey, setSelectedTaskKey] = useState(tasks[0]!.key);
   const [tasksOpen, setTasksOpen] = useState(
     () => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches,
   );
@@ -78,7 +80,11 @@ export function AppLayout() {
           hidden={!isDoingPage}
           className={`relative h-svh shrink-0 transition-[width] duration-200 ${tasksOpen ? "w-64 sm:w-72 lg:w-80" : "w-0"}`}
         >
-          <TasksSidebar open={isDoingPage && tasksOpen} />
+          <TasksSidebar
+            open={isDoingPage && tasksOpen}
+            selectedTaskKey={selectedTaskKey}
+            onSelectTask={setSelectedTaskKey}
+          />
           <button
             type="button"
             aria-label={tasksOpen ? "Hide tasks sidebar" : "Show tasks sidebar"}
@@ -122,8 +128,10 @@ export function AppLayout() {
             </span>
           </button>
         </div>
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4">
-          <Outlet />
+        <main
+          className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-auto ${isDoingPage ? "" : "p-4"}`}
+        >
+          <Outlet context={{ selectedTaskKey }} />
         </main>
       </div>
     </TooltipProvider>
