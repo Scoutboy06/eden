@@ -52,7 +52,11 @@ test("imports existing repositories, canonicalizes worktrees, and preserves glob
 });
 
 async function git(...args: string[]) {
-  const process = Bun.spawn(["git", ...args], { stdout: "ignore", stderr: "pipe" });
-  const error = await new Response(process.stderr).text();
-  if (await process.exited) throw new Error(error);
+  const child = Bun.spawn(["git", ...args], {
+    stdout: "ignore",
+    stderr: "pipe",
+    env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+  });
+  const error = await new Response(child.stderr).text();
+  if (await child.exited) throw new Error(error);
 }
