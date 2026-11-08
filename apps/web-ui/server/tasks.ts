@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { listBeadsTasks } from "../../../src/external/beads/tasks";
 import { createConfigService } from "../../../src/modules/config/config.service";
+import { handleProjectImport } from "./import-project";
 
 export function createTasksMiddleware(
   _cwd: string,
@@ -20,14 +21,14 @@ export function createTasksMiddleware(
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("Cache-Control", "no-store");
 
-    if (
-      request.headers.origin &&
-      !["http", "https"].some(
-        (scheme) => request.headers.origin === `${scheme}://${request.headers.host}`,
-      )
-    ) {
+    if (isCrossOrigin(request)) {
       response.statusCode = 403;
       response.end(JSON.stringify({ error: "Cross-origin task requests are not allowed." }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/projects") {
+      await handleProjectImport(request, response);
       return;
     }
 
@@ -75,4 +76,12 @@ export function createTasksMiddleware(
       );
     }
   };
+}
+
+function isCrossOrigin(request: IncomingMessage) {
+  const origin = request.headers.origin;
+  return (
+    origin !== undefined &&
+    !["http", "https"].some((scheme) => origin === `${scheme}://${request.headers.host}`)
+  );
 }

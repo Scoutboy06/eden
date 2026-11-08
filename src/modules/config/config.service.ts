@@ -22,6 +22,7 @@ export type ConfigSource = { type: "file"; path: string } | { type: "default" };
 export type ResolvedConfig = { config: Config; provenance: Record<string, ConfigSource> };
 
 export interface ConfigService extends ResolvedConfigReader {
+  addProject(key: string, project: { name: string; path: string }): Promise<void>;
   set(key: string, value: string): Promise<void>;
   editGlobal(): Promise<ConfigDraft>;
 }
@@ -103,6 +104,22 @@ export function createFileConfigService(
 
   const service: ConfigService = {
     ...reader,
+    async addProject(key, project) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (Object.hasOwn(config.projects ?? {}, key)) throw new Error("Project key already exists.");
+      const document = parseDocument(text ?? "{}");
+      if (!config.projects) document.set("projects", document.createNode({}));
+      document.setIn(["projects", key], project);
+      const edited = document.toString();
+      validateConfig(parseConfigYaml(edited, path), path);
+      if ((await readConfigFile(path)) !== text)
+        throw new Error("Configuration changed. Try again.");
+      await execution.mutate(
+        { type: "config.setup", description: "Import local project", input: { key, ...project } },
+        () => writeConfigFile(path, edited),
+      );
+    },
     async editGlobal() {
       const { text, parsed } = await readValidatedConfig(path);
 

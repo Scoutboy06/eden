@@ -1,17 +1,19 @@
-import { Select as SelectPrimitive } from "@base-ui/react/select";
+import { Add01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useState } from "react";
+import { ImportProject } from "@/components/import-project";
 import { cn } from "cn";
-import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-} from "@/components/ui/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { fetchProjects, type Project } from "@/pages/projects";
+import { useProjects } from "@/pages/use-projects";
 
 /** Initials from the project name's words: "Inet.Server" → "IS", "Webshop" → "WE". */
 function monogram(name: string) {
@@ -46,51 +48,51 @@ function ProjectTile({ name, className }: { name: string; className?: string }) 
 export function ProjectSelect() {
   const { project: key = "" } = useParams();
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const project = projects.find((item) => item.key === key);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetchProjects(controller.signal)
-      .then(setProjects)
-      .catch(() => {});
-    return () => controller.abort();
-  }, []);
+  const [importOpen, setImportOpen] = useState(false);
+  const { projects } = useProjects();
+  const project = projects?.find((item) => item.key === key);
 
   if (!project) return null;
 
   return (
-    <Select
-      value={key}
-      onValueChange={(next) => next !== null && navigate(`/p/${encodeURIComponent(next)}`)}
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SelectPrimitive.Trigger
-              aria-label={`Project: ${project.name}`}
-              className="flex size-12 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    <>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <DropdownMenuTrigger
+                aria-label={`Project: ${project.name}`}
+                className="flex size-12 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              />
+            }
+          >
+            <ProjectTile
+              name={project.name}
+              className="transition-shadow hover:ring-2 hover:ring-ring/50"
             />
-          }
-        >
-          <ProjectTile
-            name={project.name}
-            className="transition-shadow hover:ring-2 hover:ring-ring/50"
-          />
-        </TooltipTrigger>
-        <TooltipContent side="right">{project.name}</TooltipContent>
-      </Tooltip>
-      <SelectContent side="right" align="start" alignItemWithTrigger={false} className="min-w-52">
-        <SelectGroup>
-          <SelectLabel>Projects</SelectLabel>
-          {projects.map(({ key: projectKey, name }) => (
-            <SelectItem key={projectKey} value={projectKey}>
+          </TooltipTrigger>
+          <TooltipContent side="right">{project.name}</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent side="right" align="start" className="min-w-52">
+          <div className="px-1.5 py-1 text-xs text-muted-foreground">Projects</div>
+          {projects?.map(({ key: projectKey, name }) => (
+            <DropdownMenuItem
+              key={projectKey}
+              onClick={() => navigate(`/p/${encodeURIComponent(projectKey)}`)}
+              aria-current={projectKey === key ? "page" : undefined}
+            >
               <ProjectTile name={name} className="size-5 rounded text-[0.6rem]" />
               {name}
-            </SelectItem>
+            </DropdownMenuItem>
           ))}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setImportOpen(true)}>
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            Import project
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ImportProject open={importOpen} onOpenChange={setImportOpen} />
+    </>
   );
 }
