@@ -17,6 +17,19 @@ export async function importProject(input: unknown) {
   return operation;
 }
 
+export async function removeProject(input: unknown) {
+  const operation = pending.then(async () => {
+    if (!input || typeof input !== "object" || !("key" in input) || typeof input.key !== "string")
+      throw new Error("Specify a project key.");
+    await createConfigService(createExecution({ dryRun: false })).removeProject(input.key);
+  });
+  pending = operation.then(
+    () => {},
+    () => {},
+  );
+  return operation;
+}
+
 async function saveProject(input: unknown) {
   const repository = await resolveRepository(input);
   const name = projectName(input, repository);
@@ -54,14 +67,20 @@ export async function handleProjectImport(request: IncomingMessage, response: Se
       body += chunk.toString();
       if (Buffer.byteLength(body) > 8192) throw new Error("Request is too large.");
     }
-    const project = await importProject(JSON.parse(body));
-    response.statusCode = 201;
-    response.end(JSON.stringify({ project }));
+    const input: unknown = JSON.parse(body);
+    if (request.method === "DELETE") {
+      await removeProject(input);
+      response.end(JSON.stringify({ removed: true }));
+    } else {
+      const project = await importProject(input);
+      response.statusCode = 201;
+      response.end(JSON.stringify({ project }));
+    }
   } catch (error) {
     response.statusCode = 400;
     response.end(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Could not import project.",
+        error: error instanceof Error ? error.message : "Could not update projects.",
       }),
     );
   }

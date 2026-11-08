@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { importProject } from "./import-project";
+import { importProject, removeProject } from "./import-project";
 
 test("imports existing repositories, canonicalizes worktrees, and preserves global settings", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "eden-import-"));
@@ -44,6 +44,15 @@ test("imports existing repositories, canonicalizes worktrees, and preserves glob
     const worktree = join(temporary, "worktree");
     await git("-C", repository, "worktree", "add", "-b", "example", worktree);
     await expect(importProject({ path: worktree })).rejects.toThrow("already imported");
+    await expect(removeProject({ key: "missing" })).rejects.toThrow("not found");
+    await expect(removeProject({ key: "__proto__" })).rejects.toThrow("not found");
+    await removeProject({ key: project.key });
+    const removed = await readFile(config, "utf8");
+    expect(removed).not.toContain("Example.Project");
+    expect(removed).toContain("# Keep preferences");
+    expect(removed).toContain("worktree_root: ~/worktrees");
+    await git("-C", repository, "rev-parse", "--show-toplevel");
+    expect(await importProject({ path: repository, name: "Example.Project" })).toEqual(project);
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = previous;

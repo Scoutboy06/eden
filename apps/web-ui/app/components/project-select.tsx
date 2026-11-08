@@ -1,7 +1,9 @@
-import { Add01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { ImportProject } from "@/components/import-project";
+import { DeleteProject } from "@/components/delete-project";
+import type { Project } from "@/pages/projects";
 import { cn } from "cn";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -49,6 +51,7 @@ export function ProjectSelect() {
   const { project: key = "" } = useParams();
   const navigate = useNavigate();
   const [importOpen, setImportOpen] = useState(false);
+  const [removing, setRemoving] = useState<Project | null>(null);
   const { projects } = useProjects();
   const project = projects?.find((item) => item.key === key);
 
@@ -76,14 +79,24 @@ export function ProjectSelect() {
         <DropdownMenuContent side="right" align="start" className="min-w-52">
           <div className="px-1.5 py-1 text-xs text-muted-foreground">Projects</div>
           {projects?.map(({ key: projectKey, name }) => (
-            <DropdownMenuItem
-              key={projectKey}
-              onClick={() => navigate(`/p/${encodeURIComponent(projectKey)}`)}
-              aria-current={projectKey === key ? "page" : undefined}
-            >
-              <ProjectTile name={name} className="size-5 rounded text-[0.6rem]" />
-              {name}
-            </DropdownMenuItem>
+            <div key={projectKey} className="group flex items-center">
+              <DropdownMenuItem
+                className="flex-1"
+                onClick={() => navigate(`/p/${encodeURIComponent(projectKey)}`)}
+                aria-current={projectKey === key ? "page" : undefined}
+              >
+                <ProjectTile name={name} className="size-5 rounded text-[0.6rem]" />
+                {name}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                aria-label={`Remove ${name}`}
+                title={`Remove ${name}`}
+                onClick={() => setRemoving({ key: projectKey, name })}
+                className="text-muted-foreground hover:text-destructive data-highlighted:opacity-100 focus:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
+              >
+                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+              </DropdownMenuItem>
+            </div>
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setImportOpen(true)}>
@@ -93,6 +106,7 @@ export function ProjectSelect() {
         </DropdownMenuContent>
       </DropdownMenu>
       <ImportProject open={importOpen} onOpenChange={setImportOpen} />
+      <DeleteProject project={removing} onClose={() => setRemoving(null)} />
     </>
   );
 }

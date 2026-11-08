@@ -2,6 +2,10 @@ import type { IssueGroup } from "../components/issue/issue";
 
 const projects = new Map<string, IssueGroup[]>();
 
+export function forgetTaskGroups(project: string) {
+  projects.delete(project);
+}
+
 export function cachedTaskGroups(project: string) {
   return projects.get(project);
 }

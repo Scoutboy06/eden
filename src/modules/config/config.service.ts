@@ -22,6 +22,7 @@ export type ConfigSource = { type: "file"; path: string } | { type: "default" };
 export type ResolvedConfig = { config: Config; provenance: Record<string, ConfigSource> };
 
 export interface ConfigService extends ResolvedConfigReader {
+  removeProject(key: string): Promise<void>;
   addProject(key: string, project: { name: string; path: string }): Promise<void>;
   set(key: string, value: string): Promise<void>;
   editGlobal(): Promise<ConfigDraft>;
@@ -104,6 +105,14 @@ export function createFileConfigService(
 
   const service: ConfigService = {
     ...reader,
+    async removeProject(key) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (!Object.hasOwn(config.projects ?? {}, key)) throw new Error("Project not found.");
+      const document = parseDocument(text ?? "{}");
+      document.deleteIn(["projects", key]);
+      await saveProjectRegistry({ path, text, document, execution });
+    },
     async addProject(key, project) {
       const { text, parsed } = await readValidatedConfig(path);
       const config = validateConfig(parsed, path);
@@ -111,14 +120,7 @@ export function createFileConfigService(
       const document = parseDocument(text ?? "{}");
       if (!config.projects) document.set("projects", document.createNode({}));
       document.setIn(["projects", key], project);
-      const edited = document.toString();
-      validateConfig(parseConfigYaml(edited, path), path);
-      if ((await readConfigFile(path)) !== text)
-        throw new Error("Configuration changed. Try again.");
-      await execution.mutate(
-        { type: "config.setup", description: "Import local project", input: { key, ...project } },
-        () => writeConfigFile(path, edited),
-      );
+      await saveProjectRegistry({ path, text, document, execution });
     },
     async editGlobal() {
       const { text, parsed } = await readValidatedConfig(path);
@@ -391,4 +393,24 @@ function validateConfig(parsed: unknown, path: string): Config {
   }
 
   return result.output;
+}
+
+async function saveProjectRegistry({
+  path,
+  text,
+  document,
+  execution,
+}: {
+  path: string;
+  text: string | undefined;
+  document: ReturnType<typeof parseDocument>;
+  execution: Execution;
+}) {
+  const edited = document.toString();
+  validateConfig(parseConfigYaml(edited, path), path);
+  if ((await readConfigFile(path)) !== text) throw new Error("Configuration changed. Try again.");
+  await execution.mutate(
+    { type: "config.setup", description: "Update project registry", input: { path } },
+    () => writeConfigFile(path, edited),
+  );
 }

@@ -135,14 +135,9 @@ export function KanbanBoard({
           <section
             key={column.id}
             aria-label={column.title}
-            className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/50 p-2"
+            className="flex w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
           >
-            <header className="flex items-center justify-between px-1 py-0.5">
-              <h2 className="text-sm font-medium">{column.title}</h2>
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {column.items.length}
-              </span>
-            </header>
+            <ColumnHeader column={column} />
             {column.items.map((item) => (
               <KanbanCard key={item.id} item={item} className="cursor-default" />
             ))}
@@ -180,14 +175,8 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
   return (
-    <section
-      aria-label={column.title}
-      className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/50 p-2"
-    >
-      <header className="flex items-center justify-between px-1 py-0.5">
-        <h2 className="text-sm font-medium">{column.title}</h2>
-        <span className="text-xs text-muted-foreground tabular-nums">{column.items.length}</span>
-      </header>
+    <section aria-label={column.title} className="flex w-72 shrink-0 flex-col gap-2 rounded-xl p-2">
+      <ColumnHeader column={column} />
       <SortableContext items={column.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div
           ref={setNodeRef}
@@ -202,6 +191,29 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
         </div>
       </SortableContext>
     </section>
+  );
+}
+
+function ColumnHeader({ column }: { column: IssueGroup }) {
+  return (
+    <header className="flex min-h-7 items-center gap-2 px-1 pb-1">
+      <span
+        aria-hidden
+        className={cn("size-2 shrink-0 rounded-full", column.color ?? "bg-muted-foreground")}
+      />
+      <h2 className="shrink-0 text-xs font-semibold tracking-tight">{column.title}</h2>
+      <span className="rounded-full bg-foreground/5 px-2 py-0.5 font-mono text-[10px] leading-none text-muted-foreground ring-1 ring-foreground/10 tabular-nums">
+        {column.items.length}
+      </span>
+      {column.source && (
+        <span
+          title={column.source.detail}
+          className="ml-auto truncate font-mono text-[9px] text-muted-foreground"
+        >
+          {column.source.label}
+        </span>
+      )}
+    </header>
   );
 }
 

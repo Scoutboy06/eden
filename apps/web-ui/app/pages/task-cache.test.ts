@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { cachedTaskGroups, cacheTaskGroups } from "./task-cache";
+import { cachedTaskGroups, cacheTaskGroups, forgetTaskGroups } from "./task-cache";
 
 test("task cache isolates projects, retains empty results, replaces data, and bounds memory", () => {
   expect(cachedTaskGroups("missing")).toBeUndefined();
@@ -11,6 +11,9 @@ test("task cache isolates projects, retains empty results, replaces data, and bo
   cacheTaskGroups("eden", groups);
   expect(cachedTaskGroups("eden")).toBe(groups);
   expect(cachedTaskGroups("other")).toEqual([]);
+  forgetTaskGroups("other");
+  expect(cachedTaskGroups("other")).toBeUndefined();
+  expect(cachedTaskGroups("eden")).toBe(groups);
 
   for (let index = 0; index < 20; index++) cacheTaskGroups(`project-${index}`, []);
 

@@ -127,6 +127,8 @@ export type IssueGroup = {
   id: string;
   title: string;
   items: Issue[];
+  source?: { label: string; detail: string };
+  color?: string;
 };
 
 export function IssueTypeIcon({ type }: { type: IssueType }) {

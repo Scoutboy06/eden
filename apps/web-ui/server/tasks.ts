@@ -27,7 +27,7 @@ export function createTasksMiddleware(
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/api/projects") {
+    if (isProjectMutation(request, url)) {
       await handleProjectImport(request, response);
       return;
     }
@@ -84,4 +84,8 @@ function isCrossOrigin(request: IncomingMessage) {
     origin !== undefined &&
     !["http", "https"].some((scheme) => origin === `${scheme}://${request.headers.host}`)
   );
+}
+
+function isProjectMutation(request: IncomingMessage, url: URL) {
+  return ["POST", "DELETE"].includes(request.method ?? "") && url.pathname === "/api/projects";
 }
