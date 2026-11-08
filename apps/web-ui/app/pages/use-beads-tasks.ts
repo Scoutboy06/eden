@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import type { BeadsTask } from "../../../../src/external/beads/tasks";
 import type { IssueGroup } from "@/components/issue/issue";
 import { beadsTaskGroups } from "@/pages/beads-data";
+import { cachedTaskGroups, cacheTaskGroups } from "@/pages/task-cache";
 
 export function useBeadsTasks() {
   const { project = "" } = useParams();
@@ -17,7 +18,8 @@ export function useBeadsTasks() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setResult({ project, groups: [], loading: true, error: null });
+    const cached = cachedTaskGroups(project);
+    setResult({ project, groups: cached ?? [], loading: cached === undefined, error: null });
 
     async function load() {
       try {
@@ -32,9 +34,11 @@ export function useBeadsTasks() {
         const result = (await response.json()) as { tasks: BeadsTask[]; error?: string };
         if (!response.ok) throw new Error(result.error ?? "Could not read Beads tasks.");
         if (!controller.signal.aborted) {
+          const groups = beadsTaskGroups(result.tasks);
+          cacheTaskGroups(project, groups);
           setResult({
             project,
-            groups: beadsTaskGroups(result.tasks),
+            groups,
             loading: false,
             error: null,
           });
@@ -43,7 +47,7 @@ export function useBeadsTasks() {
         if (!controller.signal.aborted) {
           setResult({
             project,
-            groups: [],
+            groups: cachedTaskGroups(project) ?? [],
             loading: false,
             error: cause instanceof Error ? cause.message : "Could not read Beads tasks.",
           });
@@ -56,6 +60,13 @@ export function useBeadsTasks() {
   }, [project, revision]);
 
   const current =
-    result.project === project ? result : { project, groups: [], loading: true, error: null };
+    result.project === project
+      ? result
+      : {
+          project,
+          groups: cachedTaskGroups(project) ?? [],
+          loading: cachedTaskGroups(project) === undefined,
+          error: null,
+        };
   return { ...current, refresh: () => setRevision((value) => value + 1) };
 }
