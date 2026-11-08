@@ -198,43 +198,75 @@ function mergeConfigLayer(
   for (const [key, value] of Object.entries(layer)) {
     const keys = [...prefix, key];
 
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const isNewProfile =
-        prefix.length === 2 &&
-        prefix[0] === "sandbox" &&
-        prefix[1] === "profiles" &&
-        !Object.hasOwn(target, key);
-      if (isNewProfile && Object.keys(value).length === 0) {
-        provenance[formatConfigPath(keys)] = { type: "file", path };
-      } else if (
-        prefix.length === 2 &&
-        prefix[0] === "sandbox" &&
-        prefix[1] === "profiles" &&
-        Object.keys(value).length > 0
-      ) {
-        delete provenance[formatConfigPath(keys)];
-      }
+    if (isConfigObject(value)) {
+      mergeConfigObject(target, key, value, provenance, path, keys, prefix);
+      continue;
+    }
 
-      if (!Object.hasOwn(target, key)) {
-        Object.defineProperty(target, key, {
-          value: {},
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      }
+    setConfigValue(target, key, value);
+    clearConfigProvenance(provenance, keys);
+    provenance[formatConfigPath(keys)] = { type: "file", path };
+  }
+}
 
-      const nested = target[key] as Record<string, unknown>;
+function mergeConfigObject(
+  target: Record<string, unknown>,
+  key: string,
+  value: Record<string, unknown>,
+  provenance: Record<string, ConfigSource>,
+  path: string,
+  keys: string[],
+  prefix: string[],
+): void {
+  applyProfileProvenance(target, key, value, provenance, path, keys, prefix);
 
-      mergeConfigLayer(nested, value as Record<string, unknown>, provenance, path, keys);
-    } else {
-      Object.defineProperty(target, key, {
-        value,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-      provenance[formatConfigPath(keys)] = { type: "file", path };
+  const current = Object.hasOwn(target, key) ? target[key] : undefined;
+  if (!isConfigObject(current)) {
+    clearConfigProvenance(provenance, keys);
+    setConfigValue(target, key, {});
+  }
+
+  mergeConfigLayer(target[key] as Record<string, unknown>, value, provenance, path, keys);
+}
+
+function applyProfileProvenance(
+  target: Record<string, unknown>,
+  key: string,
+  value: Record<string, unknown>,
+  provenance: Record<string, ConfigSource>,
+  path: string,
+  keys: string[],
+  prefix: string[],
+): void {
+  if (prefix[0] !== "sandbox" || prefix[1] !== "profiles" || prefix.length !== 2) return;
+
+  const profilePath = formatConfigPath(keys);
+  if (Object.keys(value).length === 0 && !Object.hasOwn(target, key)) {
+    provenance[profilePath] = { type: "file", path };
+  } else if (Object.keys(value).length > 0) {
+    delete provenance[profilePath];
+  }
+}
+
+function isConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function setConfigValue(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function clearConfigProvenance(provenance: Record<string, ConfigSource>, keys: string[]): void {
+  const prefix = formatConfigPath(keys);
+
+  for (const key of Object.keys(provenance)) {
+    if (key === prefix || key.startsWith(`${prefix}.`) || key.startsWith(`${prefix}[`)) {
+      delete provenance[key];
     }
   }
 }

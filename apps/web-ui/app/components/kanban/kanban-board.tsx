@@ -27,7 +27,7 @@ import type { Issue, IssueGroup } from "@/components/issue/issue";
 
 import { KanbanCard } from "./kanban-card";
 
-type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
+export type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
   columns: IssueGroup[];
   allowReorder?: boolean;
   readOnly?: boolean;

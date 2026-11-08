@@ -1,17 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { listBeadsTasks } from "../../../src/external/beads/tasks";
+import { createConfigService } from "../../../src/modules/config/config.service";
 
 export function createTasksMiddleware(
-  cwd: string,
+  _cwd: string,
   readTasks: typeof listBeadsTasks = listBeadsTasks,
+  readProjects: () => Promise<Record<string, { name: string; path: string }>> = async () =>
+    (await createConfigService().read()).projects ?? {},
 ) {
   return async (
     request: IncomingMessage & { originalUrl?: string },
     response: ServerResponse,
     next: () => void,
   ) => {
-    if ((request.originalUrl ?? request.url)?.split("?")[0] !== "/api/tasks") return next();
+    const url = new URL(request.originalUrl ?? request.url ?? "/", "http://eden.local");
+    if (url.pathname !== "/api/tasks" && url.pathname !== "/api/projects") return next();
 
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("Cache-Control", "no-store");
@@ -34,8 +38,34 @@ export function createTasksMiddleware(
       return;
     }
 
+    let projects: Record<string, { name: string; path: string }>;
     try {
-      response.end(JSON.stringify({ tasks: await readTasks(cwd) }));
+      projects = await readProjects();
+    } catch {
+      response.statusCode = 503;
+      response.end(JSON.stringify({ error: "Could not load Eden project configuration." }));
+      return;
+    }
+
+    if (url.pathname === "/api/projects") {
+      response.end(
+        JSON.stringify({
+          projects: Object.entries(projects).map(([key, project]) => ({ key, name: project.name })),
+        }),
+      );
+      return;
+    }
+
+    const key = url.searchParams.get("project");
+    const project = key !== null && Object.hasOwn(projects, key) ? projects[key] : undefined;
+    if (!project) {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ error: "Project not found." }));
+      return;
+    }
+
+    try {
+      response.end(JSON.stringify({ tasks: await readTasks(project.path) }));
     } catch (error) {
       response.statusCode = 503;
       response.end(

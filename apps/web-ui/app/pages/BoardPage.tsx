@@ -135,7 +135,6 @@ export function BoardPage() {
       {error && (
         <p role="alert" className="py-4 text-sm text-destructive">
           {error}
-          {groups.length > 0 ? " Showing previously loaded tasks." : ""}
         </p>
       )}
       {!loading && !error && groups.length === 0 && (

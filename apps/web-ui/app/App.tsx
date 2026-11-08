@@ -2,16 +2,27 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import { AppLayout } from "@/layouts/AppLayout";
 import { navigation } from "@/navigation";
+import { ProjectPicker } from "@/pages/ProjectPicker";
+import { ProjectRoute } from "@/pages/ProjectRoute";
 import { ThemeEffect } from "@/settings/theme-settings";
 
 const router = createBrowserRouter([
+  { path: "/", Component: ProjectPicker },
   {
-    Component: AppLayout,
+    path: "/p/:project",
+    Component: ProjectRoute,
     children: [
-      ...navigation.map(({ href, Page }) => ({ path: href, Component: Page })),
-      { path: "*", element: <Navigate to="/" replace /> },
+      {
+        Component: AppLayout,
+        children: navigation.map(({ href, Page }) => ({
+          index: href === "",
+          path: href || undefined,
+          Component: Page,
+        })),
+      },
     ],
   },
+  { path: "*", element: <Navigate to="/" replace /> },
 ]);
 
 export function App() {
