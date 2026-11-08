@@ -218,14 +218,14 @@ function mergeConfigObject(
   keys: string[],
   prefix: string[],
 ): void {
-  applyProfileProvenance(target, key, value, provenance, path, keys, prefix);
-
-  const current = Object.hasOwn(target, key) ? target[key] : undefined;
+  const wasPresent = Object.hasOwn(target, key);
+  const current = wasPresent ? target[key] : undefined;
   if (!isConfigObject(current)) {
     clearConfigProvenance(provenance, keys);
     setConfigValue(target, key, {});
   }
 
+  applyProfileProvenance(target, key, value, provenance, path, keys, prefix, wasPresent);
   mergeConfigLayer(target[key] as Record<string, unknown>, value, provenance, path, keys);
 }
 
@@ -237,11 +237,12 @@ function applyProfileProvenance(
   path: string,
   keys: string[],
   prefix: string[],
+  wasPresent: boolean,
 ): void {
   if (prefix[0] !== "sandbox" || prefix[1] !== "profiles" || prefix.length !== 2) return;
 
   const profilePath = formatConfigPath(keys);
-  if (Object.keys(value).length === 0 && !Object.hasOwn(target, key)) {
+  if (Object.keys(value).length === 0 && !wasPresent) {
     provenance[profilePath] = { type: "file", path };
   } else if (Object.keys(value).length > 0) {
     delete provenance[profilePath];

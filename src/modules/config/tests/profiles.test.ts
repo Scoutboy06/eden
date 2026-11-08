@@ -154,6 +154,21 @@ test("merges profile fields and argument keys, replaces arrays, and preserves pr
   });
 });
 
+test("preserves provenance for an empty __proto__ profile without mutating prototypes", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const path = join(directory, "config.yaml");
+    await writeFile(path, 'sandbox: { profiles: { "__proto__": {} } }\n');
+
+    const { config, provenance } = await createFileConfigService({
+      pathsLowToHigh: [path],
+    }).readWithProvenance();
+
+    expect(Object.keys(config.sandbox!.profiles!)).toEqual(["__proto__"]);
+    expect(provenance["sandbox.profiles.__proto__"]).toEqual({ type: "file", path });
+    expect(Object.hasOwn(Object.prototype, "provider")).toBe(false);
+  });
+});
+
 test("rejects invalid profile fields in lower layers even when overridden", async () => {
   await withTemporaryDirectory(async (directory) => {
     const global = join(directory, "global.yaml");
