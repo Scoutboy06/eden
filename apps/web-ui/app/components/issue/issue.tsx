@@ -15,6 +15,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
+import { toast } from "@/components/ui/toast";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -149,15 +150,37 @@ export function IssueTypeIcon({ type }: { type: IssueType }) {
 }
 
 export function IssueKey({ issue }: { issue: Issue }) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(issue.key);
+      toast.add({ type: "success", title: `Copied ${issue.key}` });
+    } catch {
+      toast.add({
+        type: "error",
+        title: "Could not copy task ID",
+        description: "Clipboard access may be blocked.",
+      });
+    }
+  }
+
   return (
-    <span
+    <button
+      type="button"
+      aria-label={`Copy task ID ${issue.key}`}
+      title="Copy task ID"
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        void copy();
+      }}
       className={cn(
-        "shrink-0 text-xs font-medium text-muted-foreground",
+        "shrink-0 cursor-pointer rounded text-xs font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring",
         issue.done && "line-through",
       )}
     >
       {issue.key}
-    </span>
+    </button>
   );
 }
 

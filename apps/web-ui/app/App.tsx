@@ -5,6 +5,7 @@ import { navigation } from "@/navigation";
 import { ProjectPicker } from "@/pages/ProjectPicker";
 import { ProjectRoute } from "@/pages/ProjectRoute";
 import { ThemeEffect } from "@/settings/theme-settings";
+import { Toaster } from "@/components/ui/toast";
 
 const router = createBrowserRouter([
   { path: "/", Component: ProjectPicker },
@@ -30,6 +31,7 @@ export function App() {
     <>
       <ThemeEffect />
       <RouterProvider router={router} />
+      <Toaster timeout={2500} />
     </>
   );
 }

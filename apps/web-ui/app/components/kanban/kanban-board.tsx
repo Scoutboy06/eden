@@ -139,7 +139,7 @@ export function KanbanBoard({
           >
             <ColumnHeader column={column} />
             {column.items.map((item) => (
-              <KanbanCard key={item.id} item={item} className="cursor-default" />
+              <KanbanCard key={item.id} item={item} />
             ))}
           </section>
         ))}
