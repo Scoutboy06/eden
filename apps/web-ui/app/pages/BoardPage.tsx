@@ -1,18 +1,17 @@
 import {
-  Add01Icon,
   KanbanIcon,
   LeftToRightListBulletIcon,
   Search01Icon,
   TableIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useRef, useState, type RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { IssueTable } from "@/components/issue-table/issue-table";
 import { IssueList } from "@/components/issue-list/issue-list";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
-import { sampleGroups } from "@/pages/board-data";
+import { useBeadsTasks } from "@/pages/use-beads-tasks";
 import { issueTypeLabel } from "@/components/issue/issue";
 import type { IssueGroup } from "@/components/issue/issue";
 import { Button } from "@/components/ui/button";
@@ -31,10 +30,8 @@ import {
   type BoardFilters,
   type BoardSort,
   filterGroups,
-  issueTypes,
   parseBoardViewOptions,
   priorities,
-  reconcileVisibleGroups,
   sortGroups,
 } from "@/pages/board-filters";
 
@@ -51,13 +48,12 @@ function isView(value: string | null): value is View {
 }
 
 export function BoardPage() {
+  const { groups, loading, error, refresh } = useBeadsTasks();
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("view");
   const view: View = isView(requested) ? requested : "board";
-  const options = parseBoardViewOptions(searchParams);
+  const options = parseBoardViewOptions(searchParams, getIssueTypes(groups));
   const { filters, sort } = options;
-  // Shared by every view, so a card moved on the board shows up in the list too.
-  const [groups, setGroups] = useState(sampleGroups);
   const filteredGroups = sortGroups(filterGroups(groups, filters), sort);
   const hasResults = filteredGroups.some((group) => group.items.length > 0);
 
@@ -123,30 +119,54 @@ export function BoardPage() {
           onMultiFilterChange={updateMultiFilter}
         />
         <SortToolbar sort={sort} onSortChange={updateSort} />
-        <Button type="button" size="lg" className="px-3">
-          <HugeiconsIcon icon={Add01Icon} aria-hidden="true" strokeWidth={2} className="size-4" />
-          New task
+        <Button type="button" variant="outline" size="lg" disabled={loading} onClick={refresh}>
+          {loading ? "Loading…" : "Refresh"}
         </Button>
       </header>
       <Separator />
-      <TabsContent value="board" className="flex pt-4">
-        <div className="flex w-full flex-col gap-3">
-          {!hasResults && hasActiveFilters(filters) && <NoResults onClear={clearFilters} />}
-          <KanbanBoard
-            columns={filteredGroups}
-            allowReorder={sort === "manual"}
-            onColumnsChange={(next) =>
-              setGroups((current) => reconcileVisibleGroups(current, next, options))
-            }
-          />
-        </div>
-      </TabsContent>
-      <TabsContent value="list" className="pt-4">
-        {hasResults ? <IssueList groups={filteredGroups} /> : <NoResults onClear={clearFilters} />}
-      </TabsContent>
-      <TabsContent value="table" className="pt-4">
-        {hasResults ? <IssueTable groups={filteredGroups} /> : <NoResults onClear={clearFilters} />}
-      </TabsContent>
+      <p className="py-3 text-xs text-muted-foreground">
+        Beads · Read only · {groups.reduce((count, group) => count + group.items.length, 0)} tasks
+      </p>
+      {loading && (
+        <p role="status" className="py-4 text-sm text-muted-foreground">
+          Loading Beads tasks…
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="py-4 text-sm text-destructive">
+          {error}
+          {groups.length > 0 ? " Showing previously loaded tasks." : ""}
+        </p>
+      )}
+      {!loading && !error && groups.length === 0 && (
+        <p role="status" className="py-4 text-sm text-muted-foreground">
+          No Beads tasks in this checkout.
+        </p>
+      )}
+      {groups.length > 0 && (
+        <>
+          <TabsContent value="board" className="flex pt-4">
+            <div className="flex w-full flex-col gap-3">
+              {!hasResults && hasActiveFilters(filters) && <NoResults onClear={clearFilters} />}
+              <KanbanBoard columns={filteredGroups} readOnly />
+            </div>
+          </TabsContent>
+          <TabsContent value="list" className="pt-4">
+            {hasResults ? (
+              <IssueList groups={filteredGroups} />
+            ) : (
+              <NoResults onClear={clearFilters} />
+            )}
+          </TabsContent>
+          <TabsContent value="table" className="pt-4">
+            {hasResults ? (
+              <IssueTable groups={filteredGroups} />
+            ) : (
+              <NoResults onClear={clearFilters} />
+            )}
+          </TabsContent>
+        </>
+      )}
     </Tabs>
   );
 }
@@ -248,7 +268,7 @@ function FiltersToolbar({
         >
           <SelectGroup>
             <SelectLabel>Task type</SelectLabel>
-            {issueTypes.map((type) => (
+            {getIssueTypes(groups).map((type) => (
               <SelectItem key={type} value={type}>
                 {issueTypeLabel(type)}
               </SelectItem>
@@ -280,11 +300,15 @@ function FiltersToolbar({
         >
           <SelectGroup>
             <SelectLabel>Priority</SelectLabel>
-            {priorities.map((priority) => (
-              <SelectItem key={priority} value={priority}>
-                {priority[0]!.toUpperCase() + priority.slice(1)}
-              </SelectItem>
-            ))}
+            {priorities
+              .filter((priority) =>
+                groups.some((group) => group.items.some((issue) => issue.priority === priority)),
+              )
+              .map((priority) => (
+                <SelectItem key={priority} value={priority}>
+                  {priority[0]!.toUpperCase() + priority.slice(1)}
+                </SelectItem>
+              ))}
           </SelectGroup>
         </SelectContent>
       </Select>
@@ -351,7 +375,7 @@ function SortToolbar({
         <SelectContent align="end" alignItemWithTrigger={false} className="w-48">
           <SelectGroup>
             <SelectLabel>Sort by</SelectLabel>
-            <SelectItem value="manual">Manual order</SelectItem>
+            <SelectItem value="manual">Provider order</SelectItem>
             <SelectItem value="priority">Priority first</SelectItem>
             <SelectItem value="updated">Recently updated</SelectItem>
           </SelectGroup>
@@ -415,7 +439,11 @@ function getAssigneeOptions(groups: IssueGroup[]) {
 function sortLabel(sort: BoardSort) {
   if (sort === "priority") return "Priority first";
   if (sort === "updated") return "Recently updated";
-  return "Manual order";
+  return "Provider order";
+}
+
+function getIssueTypes(groups: IssueGroup[]) {
+  return [...new Set(groups.flatMap((group) => group.items.map((issue) => issue.type)))].sort();
 }
 
 function NoResults({ onClear }: { onClear: () => void }) {

@@ -2,12 +2,17 @@ import type { Issue, IssueGroup, IssueType, Priority } from "@/components/issue/
 import { priorityRank } from "@/components/issue/issue";
 
 const searchableIssueFields = ["key", "title"] as const satisfies readonly (keyof Issue)[];
-export const issueTypes = ["story", "bug", "task"] as const satisfies readonly IssueType[];
+const issueTypes = ["story", "bug", "task"] as const satisfies readonly IssueType[];
 export const priorities = [
   "highest",
   "high",
   "medium",
   "low",
+  "P0",
+  "P1",
+  "P2",
+  "P3",
+  "P4",
 ] as const satisfies readonly Priority[];
 
 export type BoardFilters = {
@@ -25,14 +30,17 @@ export type BoardViewOptions = {
   sort: BoardSort;
 };
 
-export function parseBoardViewOptions(params: URLSearchParams): BoardViewOptions {
+export function parseBoardViewOptions(
+  params: URLSearchParams,
+  allowedTypes: readonly string[] = issueTypes,
+): BoardViewOptions {
   const requestedSort = params.get("sort");
 
   return {
     filters: {
       query: params.get("q") ?? "",
       statuses: params.getAll("status"),
-      types: params.getAll("type").filter(isIssueType),
+      types: params.getAll("type").filter((value) => allowedTypes.includes(value)),
       priorities: params.getAll("priority").filter(isPriority),
       assignees: params.getAll("assignee").filter(isAssigneeFilter),
     },
@@ -185,10 +193,6 @@ function parseUpdatedAt(updatedAt?: string) {
 
 function isSelectedStatus(status: string, statuses: string[]) {
   return statuses.length === 0 || statuses.includes(status);
-}
-
-function isIssueType(value: string): value is IssueType {
-  return issueTypes.some((type) => type === value);
 }
 
 function isPriority(value: string): value is Priority {

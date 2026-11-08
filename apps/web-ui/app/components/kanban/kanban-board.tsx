@@ -30,8 +30,9 @@ import { KanbanCard } from "./kanban-card";
 type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
   columns: IssueGroup[];
   allowReorder?: boolean;
+  readOnly?: boolean;
   /** Called with the new layout after a card is dropped. */
-  onColumnsChange: (columns: IssueGroup[]) => void;
+  onColumnsChange?: (columns: IssueGroup[]) => void;
 };
 
 /** Id of the column containing `id`, where `id` is a card or a column. */
@@ -43,6 +44,7 @@ function findColumnId(columns: IssueGroup[], id: string) {
 export function KanbanBoard({
   columns: committedColumns,
   allowReorder = true,
+  readOnly = false,
   onColumnsChange,
   className,
   ...props
@@ -102,7 +104,7 @@ export function KanbanBoard({
     const sourceColumnId = findColumnId(committedColumns, String(active.id));
     const destinationColumnId = findColumnId(columns, String(active.id));
     if (!allowReorder) {
-      if (sourceColumnId !== destinationColumnId) onColumnsChange(columns);
+      if (sourceColumnId !== destinationColumnId) onColumnsChange?.(columns);
       return;
     }
 
@@ -118,12 +120,36 @@ export function KanbanBoard({
             c.id === columnId ? { ...c, items: arrayMove(c.items, oldIndex, newIndex) } : c,
           );
 
-    if (next !== committedColumns) onColumnsChange(next);
+    if (next !== committedColumns) onColumnsChange?.(next);
   }
 
   function handleDragCancel() {
     setActiveItem(null);
     setDraft(null);
+  }
+
+  if (readOnly) {
+    return (
+      <div className={cn("flex flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
+        {committedColumns.map((column) => (
+          <section
+            key={column.id}
+            aria-label={column.title}
+            className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/50 p-2"
+          >
+            <header className="flex items-center justify-between px-1 py-0.5">
+              <h2 className="text-sm font-medium">{column.title}</h2>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {column.items.length}
+              </span>
+            </header>
+            {column.items.map((item) => (
+              <KanbanCard key={item.id} item={item} className="cursor-default" />
+            ))}
+          </section>
+        ))}
+      </div>
+    );
   }
 
   return (

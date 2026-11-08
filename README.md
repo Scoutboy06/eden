@@ -20,4 +20,7 @@ bun run test:fast
 bun run test:full
 ```
 
+The task board reads the checkout's existing Beads (`bd`) configuration. Install
+`bd` and verify `bd list` first. Task data requires the Vite dev or preview server.
+
 See [CODE.md](CODE.md) for contribution rules.

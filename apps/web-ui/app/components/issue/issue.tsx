@@ -18,8 +18,8 @@ import { cn } from "cn";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-export type IssueType = "story" | "bug" | "task";
-export type Priority = "highest" | "high" | "medium" | "low";
+export type IssueType = string;
+export type Priority = "highest" | "high" | "medium" | "low" | "P0" | "P1" | "P2" | "P3" | "P4";
 
 /**
  * Pull request linked to an issue. Mirrors `PullRequest` in
@@ -87,7 +87,7 @@ const typeMeta = {
   story: { label: "Story", icon: Bookmark02Icon, className: "bg-chart-2/15 text-chart-2" },
   bug: { label: "Bug", icon: Bug01Icon, className: "bg-destructive/15 text-destructive" },
   task: { label: "Task", icon: CheckmarkSquare02Icon, className: "bg-primary/15 text-primary" },
-} satisfies Record<IssueType, { label: string; icon: unknown; className: string }>;
+} satisfies Record<string, { label: string; icon: unknown; className: string }>;
 
 const priorityMeta = {
   highest: {
@@ -98,6 +98,11 @@ const priorityMeta = {
   high: { label: "High", icon: ArrowUp01Icon, className: "text-attention" },
   medium: { label: "Medium", icon: EqualSignIcon, className: "text-muted-foreground" },
   low: { label: "Low", icon: ArrowDown01Icon, className: "text-muted-foreground/70" },
+  P0: { label: "P0", icon: ArrowUpDoubleIcon, className: "text-destructive" },
+  P1: { label: "P1", icon: ArrowUp01Icon, className: "text-attention" },
+  P2: { label: "P2", icon: EqualSignIcon, className: "text-muted-foreground" },
+  P3: { label: "P3", icon: ArrowDown01Icon, className: "text-muted-foreground/70" },
+  P4: { label: "P4", icon: ArrowDown01Icon, className: "text-muted-foreground/50" },
 } satisfies Record<Priority, { label: string; icon: unknown; className: string }>;
 
 const dueFormat = new Intl.DateTimeFormat(undefined, {
@@ -125,7 +130,9 @@ export type IssueGroup = {
 };
 
 export function IssueTypeIcon({ type }: { type: IssueType }) {
-  const meta = typeMeta[type];
+  const meta = Object.hasOwn(typeMeta, type)
+    ? typeMeta[type as keyof typeof typeMeta]
+    : { ...typeMeta.task, label: type };
   return (
     <Tooltip>
       <TooltipTrigger
@@ -218,10 +225,20 @@ export function IssueComments({ count }: { count?: number }) {
 }
 
 /** Higher number = more urgent; for sorting. */
-export const priorityRank: Record<Priority, number> = { highest: 3, high: 2, medium: 1, low: 0 };
+export const priorityRank: Record<Priority, number> = {
+  highest: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+  P0: 4,
+  P1: 3,
+  P2: 2,
+  P3: 1,
+  P4: 0,
+};
 
 export function issueTypeLabel(type: IssueType) {
-  return typeMeta[type].label;
+  return typeMeta[type as keyof typeof typeMeta]?.label ?? type;
 }
 
 /** PR status icon (number only in the tooltip), linking to the PR on its provider. */
