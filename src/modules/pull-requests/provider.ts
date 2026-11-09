@@ -71,6 +71,22 @@ export interface PullRequestProvider {
   getReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
 }
 
+export type PullRequestListQuery = {
+  repository: RepositoryRef;
+  state: "open" | "closed" | "merged" | "all";
+  author?: string;
+  draft?: boolean;
+  limit: number;
+};
+
+export type PullRequestListItem = PullRequest & {
+  author: { id: string; name: string } | null;
+};
+
+export interface PullRequestLister {
+  listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]>;
+}
+
 export type PullRequestCreateInput = {
   title: string;
   body: string;

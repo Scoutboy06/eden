@@ -6,6 +6,8 @@ const pr = {
   body: "Details",
   state: process.env.PR_STATE === "closed" || process.env.PR_STATE === "merged" ? "closed" : "open",
   merged: process.env.PR_STATE === "merged",
+  merged_at: process.env.PR_STATE === "merged" ? "2026-11-10T00:00:00Z" : null,
+  user: { id: 7, login: "alice" },
   draft: true,
   head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
   base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
@@ -59,7 +61,7 @@ function respond(url: URL): Response {
   if (/\/(pulls|issues)\/404(?:\/|$)/.test(url.pathname))
     return Response.json({ message: "secret-token" }, { status: 404 });
   if (url.pathname.endsWith("/pulls/12")) return Response.json(pr);
-  if (url.pathname.endsWith("/pulls")) return Response.json([pr]);
+  if (url.pathname.endsWith("/pulls")) return listResponse();
   if (url.pathname.endsWith("/issues/12/comments"))
     return Response.json([
       { id: 1, body: "Looks good", user: { id: 7, login: "alice" }, created_at: "2026-01-01" },
@@ -79,6 +81,14 @@ function respond(url: URL): Response {
     );
 
   throw new Error("Unexpected SDK request");
+}
+
+function listResponse() {
+  if (process.env.PR_LIST_MODE === "empty") return Response.json([]);
+  if (process.env.PR_LIST_MODE === "denied")
+    return Response.json({ message: "secret-token" }, { status: 403 });
+
+  return Response.json([pr]);
 }
 
 function reviewResponse() {

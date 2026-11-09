@@ -14,6 +14,41 @@ const args = {
   head: { type: "string", description: "Source branch to search for an open PR" },
 } as const;
 
+const list = defineCommand({
+  name: "list",
+  description: "List GitHub PRs, newest created first",
+  args: {
+    repo: args.repo,
+    remote: args.remote,
+    state: {
+      type: "string",
+      choices: ["open", "closed", "merged", "all"],
+      description: "PR state (default: open; closed excludes merged)",
+    },
+    author: { type: "string", description: "Filter by GitHub user login" },
+    draft: { type: "boolean", description: "Show draft PRs only" },
+    limit: { type: "number", description: "Maximum matching PRs (positive integer; default: 30)" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.list({
+      ...ctx.values,
+      state: ctx.values.state as "open" | "closed" | "merged" | "all" | undefined,
+      draft: ctx.values.draft ? true : undefined,
+    });
+
+    output.write({
+      data: result,
+      human: () =>
+        result.prs
+          .map(
+            (pr) =>
+              `${pr.ref.provider === "github" ? `#${pr.ref.number}` : pr.ref.id}\t${pr.state}${pr.isDraft ? " (draft)" : ""}\t${pr.title}\n${pr.url}`,
+          )
+          .join("\n") || "No pull requests.",
+    });
+  },
+});
+
 const create = defineCommand({
   name: "create",
   description: "Create a GitHub PR (never pushes branches)",
@@ -260,5 +295,5 @@ const reopen = defineCommand({
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { create, show, checks, reviewers, edit, status, reopen },
+  subCommands: { list, create, show, checks, reviewers, edit, status, reopen },
 });

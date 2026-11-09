@@ -6,6 +6,8 @@ import type {
   PullRequestRef,
   PullRequestWriter,
   PullRequestReopener,
+  PullRequestLister,
+  PullRequestListQuery,
   RepositoryRef,
 } from "./provider";
 import { createExecution } from "../execution/execution";
@@ -13,6 +15,7 @@ import type { Execution } from "../execution/types";
 import {
   createGitContext,
   resolvePullRequestLookup,
+  resolveRepository,
   type GitContext,
   type PullRequestInput,
 } from "./resolve";
@@ -31,6 +34,45 @@ export class PullRequestService {
     },
     private readonly execution: Execution = createExecution({ dryRun: false }),
   ) {}
+
+  async list(
+    input: Pick<PullRequestInput, "repo" | "remote"> & {
+      state?: PullRequestListQuery["state"];
+      author?: string;
+      draft?: boolean;
+      limit?: number;
+    },
+  ) {
+    const state = input.state ?? "open";
+    const limit = input.limit ?? 30;
+    if (!["open", "closed", "merged", "all"].includes(state))
+      throw new ScmError("SCM_INVALID_OPTIONS", "--state must be open, closed, merged or all.");
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new ScmError("SCM_INVALID_OPTIONS", "--limit must be a positive safe integer.");
+    if (
+      input.author !== undefined &&
+      (input.author.length > 39 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(input.author))
+    )
+      throw new ScmError("SCM_INVALID_OPTIONS", "--author must be a GitHub user login.");
+    const repository = await resolveRepository(input, this.git);
+    if (repository.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr list currently supports GitHub only; Azure DevOps listing is deferred.",
+      );
+    const provider = await this.createProvider(repository);
+    if (!("listPullRequests" in provider) || typeof provider.listPullRequests !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot list pull requests.");
+    const prs = await (provider as PullRequestProvider & PullRequestLister).listPullRequests({
+      repository,
+      state,
+      limit,
+      ...(input.author !== undefined ? { author: input.author } : {}),
+      ...(input.draft !== undefined ? { draft: input.draft } : {}),
+    });
+
+    return { repository, prs };
+  }
 
   async create(input: Omit<PullRequestCreateInput, "repository"> & { repository: RepositoryRef }) {
     validateCreate(input);

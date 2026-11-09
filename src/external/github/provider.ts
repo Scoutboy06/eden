@@ -13,12 +13,42 @@ import type {
   PullRequestReopener,
   PullRequestReview,
   RepositoryRef,
+  PullRequestLister,
+  PullRequestListQuery,
+  PullRequestListItem,
 } from "../../modules/pull-requests/provider";
 
+type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
+
 export class GitHubApiProvider
-  implements PullRequestProvider, PullRequestWriter, PullRequestReopener
+  implements PullRequestProvider, PullRequestWriter, PullRequestReopener, PullRequestLister
 {
   constructor(private readonly client: Octokit) {}
+
+  listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]> {
+    return providerRequest(async () => {
+      const repository = githubRepository(query.repository);
+      const results: PullRequestListItem[] = [];
+      for await (const { data } of this.client.paginate.iterator(this.client.pulls.list, {
+        owner: repository.owner,
+        repo: repository.repository,
+        state: query.state === "merged" ? "closed" : query.state,
+        sort: "created",
+        direction: "desc",
+        per_page: Math.min(100, query.limit),
+      })) {
+        for (const dataPr of data) {
+          const pr = normalizeListItem(dataPr);
+          assertPullRequestIdentity(pr, { ...repository, number: dataPr.number });
+          if (!matchesListQuery(pr, query)) continue;
+          results.push(pr);
+          if (results.length === query.limit) return results;
+        }
+      }
+
+      return results;
+    });
+  }
 
   createPullRequest(input: PullRequestCreateInput): Promise<PullRequest> {
     return providerRequest(async () => {
@@ -406,6 +436,30 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
   return result;
 }
 
+function normalizeListItem(data: GitHubListItem): PullRequestListItem {
+  if (
+    !Number.isSafeInteger(data.number) ||
+    data.number < 1 ||
+    !["open", "closed"].includes(data.state) ||
+    !(data.merged_at === null || typeof data.merged_at === "string") ||
+    (data.user != null && typeof data.user.login !== "string")
+  )
+    invalidResponse();
+
+  return {
+    ...normalizePullRequest({ ...data, merged: data.merged_at !== null }),
+    author: data.user ? { id: `user:${data.user.id}`, name: data.user.login } : null,
+  };
+}
+
+function matchesListQuery(pr: PullRequestListItem, query: PullRequestListQuery): boolean {
+  if (query.state !== "all" && pr.state !== query.state) return false;
+  if (query.author !== undefined && pr.author?.name.toLowerCase() !== query.author.toLowerCase())
+    return false;
+
+  return query.draft === undefined || pr.isDraft === query.draft;
+}
+
 function safeFailureDetails(error: unknown): string {
   return error instanceof ScmError
     ? `${error.code}: ${error.message}`
@@ -443,6 +497,7 @@ function assertPullRequestIdentity(
 
 function normalizePullRequest(
   data:
+    | (GitHubListItem & { merged: boolean })
     | Awaited<ReturnType<Octokit["pulls"]["get"]>>["data"]
     | Awaited<ReturnType<Octokit["pulls"]["create"]>>["data"]
     | Awaited<ReturnType<Octokit["pulls"]["update"]>>["data"],

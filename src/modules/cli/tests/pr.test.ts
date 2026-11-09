@@ -6,6 +6,57 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
+test("PR list declares filters and renders human and JSON results", async () => {
+  const help = await runCli("pr", "list", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--repo", "--remote", "--state", "--author", "--draft", "--limit"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  expect(completion.stdout).toContain("merged");
+  const args = [
+    "pr",
+    "list",
+    "--repo",
+    "https://github.com/acme/app",
+    "--state",
+    "all",
+    "--author",
+    "alice",
+    "--draft",
+    "--limit",
+    "1",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json", "--dry-run");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("#12\topen (draft)\tImprove login");
+  expect(human.stdout).toContain("https://github.com/acme/app/pull/12");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    prs: [{ ref: { number: 12 }, author: { name: "alice" } }],
+  });
+});
+
+test("PR list renders empty results and structured errors", async () => {
+  const args = ["pr", "list", "--repo", "https://github.com/acme/app"];
+  const empty = await runPrWithEnv({ PR_LIST_MODE: "empty" }, ...args);
+  const emptyJson = await runPrWithEnv({ PR_LIST_MODE: "empty" }, ...args, "--json");
+  const denied = await runPrWithEnv({ PR_LIST_MODE: "denied" }, ...args, "--json");
+  const invalid = await runPr(...args, "--limit", "0");
+
+  expect(empty.stdout.trim()).toBe("No pull requests.");
+  expect(JSON.parse(emptyJson.stdout)).toMatchObject({ ok: true, prs: [] });
+  expect(denied.exitCode).toBe(1);
+  expect(JSON.parse(denied.stdout)).toMatchObject({ error: { code: "SCM_ACCESS_DENIED" } });
+  expect(denied.stdout).not.toContain("secret-token");
+  expect(invalid.exitCode).toBe(1);
+  expect(invalid.stdout).toBe("");
+  expect(invalid.stderr).toContain("--limit must be a positive safe integer");
+});
+
 test("PR create declares options and renders human and JSON results", async () => {
   const help = await runCli("pr", "create", "--help");
   const completion = await runCli("completion", "bash");
