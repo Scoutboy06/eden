@@ -10,7 +10,7 @@ export function TaskTitle({ id, children }: { id: string; children: ReactNode })
     <button
       type="button"
       data-task-open={id}
-      className="w-full truncate rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="w-full cursor-pointer truncate rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onClick={(event) => {
         event.stopPropagation();
         open(id, event.currentTarget);
