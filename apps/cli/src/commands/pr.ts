@@ -1,6 +1,7 @@
 import { defineCommand } from "../../../../src/modules/cli";
 import { ScmError } from "../../../../src/modules/pull-requests/errors";
 import { buildPullRequestPatch } from "../../../../src/modules/pull-requests/edit-input";
+import { buildPullRequestCreate } from "../../../../src/modules/pull-requests/create-input";
 
 const args = {
   ref: {
@@ -12,6 +13,46 @@ const args = {
   remote: { type: "string", description: "Local Git remote selecting the target repository" },
   head: { type: "string", description: "Source branch to search for an open PR" },
 } as const;
+
+const create = defineCommand({
+  name: "create",
+  description: "Create a GitHub PR (never pushes branches)",
+  args: {
+    repo: args.repo,
+    remote: args.remote,
+    head: {
+      type: "string",
+      description: "Source branch (defaults to current branch; must already be pushed)",
+    },
+    base: { type: "string", required: true, description: "Target branch" },
+    title: { type: "string", required: true, parse: (value) => value, description: "PR title" },
+    body: {
+      type: "string",
+      parse: (value) => value,
+      description: "PR description (defaults to empty)",
+    },
+    "body-file": {
+      type: "string",
+      parse: (value) => value,
+      description: "Read description from a UTF-8 file; excludes --body",
+    },
+    draft: { type: "boolean", description: "Create a draft PR" },
+    reviewer: {
+      type: "string",
+      description: "Comma-separated GitHub user logins to request review from",
+    },
+    label: { type: "string", description: "Comma-separated labels to apply after creation" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const input = await buildPullRequestCreate({
+      ...ctx.values,
+      bodyFile: ctx.values["body-file"],
+    });
+    const pr = await pullRequests.createByReference({ ...ctx.values, ...input });
+
+    if (pr) output.write({ data: { pr }, human: () => `${pr.title}\n${pr.url}` });
+  },
+});
 
 const show = defineCommand({
   name: "show",
@@ -219,5 +260,5 @@ const reopen = defineCommand({
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { show, checks, reviewers, edit, status, reopen },
+  subCommands: { create, show, checks, reviewers, edit, status, reopen },
 });
