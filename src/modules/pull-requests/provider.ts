@@ -115,3 +115,7 @@ export interface PullRequestWriter {
 export interface PullRequestReopener {
   reopenPullRequest(ref: PullRequestRef): Promise<PullRequest>;
 }
+
+export interface PullRequestCloser {
+  closePullRequest(ref: PullRequestRef, options: { comment?: string }): Promise<PullRequest>;
+}

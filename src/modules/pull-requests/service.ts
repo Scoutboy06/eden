@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   PullRequestWriter,
   PullRequestReopener,
+  PullRequestCloser,
   PullRequestLister,
   PullRequestListQuery,
   RepositoryRef,
@@ -153,6 +154,35 @@ export class PullRequestService {
 
   async editByReference(input: PullRequestInput & { ref: string }, patch: PullRequestPatch) {
     return this.edit(await this.exactReference(input), patch);
+  }
+
+  async close(input: PullRequestInput & { ref: string; comment?: string }) {
+    if (input.comment !== undefined && !input.comment.trim())
+      throw new ScmError("SCM_INVALID_OPTIONS", "--comment must not be blank.");
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr close currently supports GitHub only; Azure DevOps closing is deferred.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("closePullRequest" in provider) || typeof provider.closePullRequest !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot close pull requests.");
+    const closer = provider as PullRequestProvider & PullRequestCloser;
+    let result: Awaited<ReturnType<PullRequestCloser["closePullRequest"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-close",
+        description: "Close GitHub pull request; comment only after a new closure",
+        input: { ref, ...(input.comment !== undefined ? { comment: input.comment } : {}) },
+      },
+      async () => {
+        result = await closer.closePullRequest(ref, { comment: input.comment });
+      },
+    );
+
+    return result;
   }
 
   async reopen(input: PullRequestInput & { ref: string }) {

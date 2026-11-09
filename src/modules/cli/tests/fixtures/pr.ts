@@ -20,6 +20,11 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   );
   if (url.hostname !== "api.github.com") throw new Error("Unexpected request host");
   if (process.env.PR_FORBID_REQUESTS) throw new Error("SDK requests are forbidden for this test");
+  if (init?.method === "POST" && url.pathname.endsWith("/issues/12/comments")) {
+    if (process.env.PR_COMMENT_FAIL)
+      return Response.json({ message: "secret-token" }, { status: 403 });
+    return Response.json({ id: 34 });
+  }
   if (init?.method === "POST" && url.pathname.endsWith("/pulls")) {
     const body = JSON.parse(String(init.body));
     return Response.json({
