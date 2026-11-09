@@ -81,6 +81,35 @@ const projectKeySchema = v.pipe(
   v.check((key) => key !== "." && key !== "..", "Expected a project key other than . or .."),
 );
 const projectSchema = v.strictObject({ name: nonEmptyString, path: createProjectPathSchema() });
+const hostAliasSchema = v.pipe(
+  v.string(),
+  v.regex(
+    /^[a-z0-9][a-z0-9-]*$/u,
+    "Expected lowercase letters, digits, and hyphens, starting with a letter or digit",
+  ),
+);
+const hostUrlSchema = v.pipe(
+  v.string(),
+  v.check((value) => {
+    try {
+      const match = /^(https?):\/\/([^/?#\\\s]+)(\/?)$/u.exec(value);
+      if (!match) return false;
+
+      const url = new URL(value);
+      return (
+        (url.protocol === "http:" || url.protocol === "https:") &&
+        url.hostname.length > 0 &&
+        !url.username &&
+        !url.password &&
+        !match[2]?.includes("@") &&
+        (url.pathname === "/" || url.pathname === "")
+      );
+    } catch {
+      return false;
+    }
+  }, "Expected an http(s) URL with a hostname and optional port, without credentials, query, fragment, or path"),
+);
+const hostSchema = v.strictObject({ url: hostUrlSchema });
 const kitArgumentSchema = v.union([v.string(), v.number(), v.boolean()]);
 const profileSchema = v.pipe(
   mapping,
@@ -121,6 +150,7 @@ export const ConfigSchema = v.pipe(
       ),
       worktree_root: v.optional(worktreeRootSchema, () => join(homedir(), ".worktrees")),
       projects: v.nullish(configMap(projectSchema, projectKeySchema)),
+      hosts: v.optional(configMap(hostSchema, hostAliasSchema)),
     },
     "Expected a configuration object containing only recognized settings",
   ),

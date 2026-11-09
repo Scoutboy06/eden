@@ -26,6 +26,10 @@ export interface ConfigService extends ResolvedConfigReader {
   addProject(key: string, project: { name: string; path: string }): Promise<void>;
   set(key: string, value: string): Promise<void>;
   editGlobal(): Promise<ConfigDraft>;
+  readHosts(): Promise<NonNullable<Config["hosts"]>>;
+  addHost(alias: string, url: string): Promise<void>;
+  updateHost(alias: string, changes: { url?: string; newAlias?: string }): Promise<void>;
+  removeHost(alias: string): Promise<void>;
 }
 
 export type ConfigChanges = Readonly<Record<string, string | undefined>>;
@@ -90,7 +94,12 @@ export function createFileConfigService(
       for (const layerPath of options.pathsLowToHigh) {
         const { parsed } = await readValidatedConfig(layerPath);
 
-        mergeConfigLayer(merged, parsed, provenance, layerPath);
+        mergeConfigLayer(
+          merged,
+          layerPath === path ? parsed : omitHosts(parsed),
+          provenance,
+          layerPath,
+        );
       }
 
       const config = validateConfig(merged, path);
@@ -113,6 +122,10 @@ export function createFileConfigService(
       document.deleteIn(["projects", key]);
       await saveProjectRegistry({ path, text, document, execution });
     },
+    async readHosts() {
+      const { parsed } = await readValidatedConfig(path);
+      return validateConfig(parsed, path).hosts ?? {};
+    },
     async addProject(key, project) {
       const { text, parsed } = await readValidatedConfig(path);
       const config = validateConfig(parsed, path);
@@ -121,6 +134,40 @@ export function createFileConfigService(
       if (!config.projects) document.set("projects", document.createNode({}));
       document.setIn(["projects", key], project);
       await saveProjectRegistry({ path, text, document, execution });
+    },
+    async addHost(alias, url) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (Object.hasOwn(config.hosts ?? {}, alias)) throw new Error("Host alias already exists.");
+      const document = parseDocument(text ?? "{}");
+      if (!config.hosts) document.set("hosts", document.createNode({}));
+      document.setIn(["hosts", alias], { url });
+      await saveConfigMutation({ path, text, document, execution });
+    },
+    async updateHost(alias, changes) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      const hosts = config.hosts ?? {};
+      if (!Object.hasOwn(hosts, alias)) throw new Error("Host not found.");
+      const newAlias = changes.newAlias ?? alias;
+      if (newAlias !== alias && Object.hasOwn(hosts, newAlias))
+        throw new Error("Host alias already exists.");
+      const document = parseDocument(text ?? "{}");
+      const current = hosts[alias];
+      document.deleteIn(["hosts", alias]);
+      document.setIn(["hosts", newAlias], {
+        ...current,
+        ...(changes.url === undefined ? {} : { url: changes.url }),
+      });
+      await saveConfigMutation({ path, text, document, execution });
+    },
+    async removeHost(alias) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (!Object.hasOwn(config.hosts ?? {}, alias)) throw new Error("Host not found.");
+      const document = parseDocument(text ?? "{}");
+      document.deleteIn(["hosts", alias]);
+      await saveConfigMutation({ path, text, document, execution });
     },
     async editGlobal() {
       const { text, parsed } = await readValidatedConfig(path);
@@ -272,6 +319,11 @@ function isConfigObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function omitHosts(config: Record<string, unknown>): Record<string, unknown> {
+  const { hosts: _hosts, ...localConfig } = config;
+  return localConfig;
+}
+
 function setConfigValue(target: Record<string, unknown>, key: string, value: unknown): void {
   Object.defineProperty(target, key, {
     value,
@@ -406,11 +458,32 @@ async function saveProjectRegistry({
   document: ReturnType<typeof parseDocument>;
   execution: Execution;
 }) {
+  await saveConfigMutation({ path, text, document, execution, checkDuringDryRun: true });
+}
+
+async function saveConfigMutation({
+  path,
+  text,
+  document,
+  execution,
+  checkDuringDryRun = false,
+}: {
+  path: string;
+  text: string | undefined;
+  document: ReturnType<typeof parseDocument>;
+  execution: Execution;
+  checkDuringDryRun?: boolean;
+}) {
   const edited = document.toString();
   validateConfig(parseConfigYaml(edited, path), path);
-  if ((await readConfigFile(path)) !== text) throw new Error("Configuration changed. Try again.");
+  if ((!execution.dryRun || checkDuringDryRun) && (await readConfigFile(path)) !== text)
+    throw new Error("Configuration changed. Try again.");
   await execution.mutate(
-    { type: "config.setup", description: "Update project registry", input: { path } },
+    {
+      type: "config.setup",
+      description: `Update global configuration in ${path}`,
+      input: { path },
+    },
     () => writeConfigFile(path, edited),
   );
 }
