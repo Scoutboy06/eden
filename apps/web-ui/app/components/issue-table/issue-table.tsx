@@ -3,6 +3,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useMemo, useState } from "react";
 import type * as React from "react";
+import { TaskTitle, TaskOpeningContext } from "@/components/issue/task-opening";
+import { useContext } from "react";
 
 import {
   type Issue,
@@ -77,6 +79,7 @@ export function IssueTable({
   className,
   ...props
 }: React.ComponentProps<"div"> & { groups: IssueGroup[] }) {
+  const openTask = useContext(TaskOpeningContext);
   const [sort, setSort] = useState<Sort>(null);
 
   const rows = useMemo(() => {
@@ -148,6 +151,14 @@ export function IssueTable({
           {rows.map(({ issue, status }) => (
             <tr
               key={issue.id}
+              onClick={(event) => {
+                const target = event.target as HTMLElement;
+                if (target.closest("button, a")) return;
+
+                const row = event.currentTarget;
+                const trigger = row.querySelector<HTMLElement>("[data-task-open]") ?? row;
+                openTask?.(issue.id, trigger);
+              }}
               className="cursor-pointer hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]"
             >
               <td className="px-3 py-2">
@@ -156,7 +167,9 @@ export function IssueTable({
               <td className="px-3 py-2">
                 <IssueKey issue={issue} />
               </td>
-              <td className="max-w-0 truncate px-3 py-2">{issue.title}</td>
+              <td className="max-w-0 truncate px-3 py-2">
+                <TaskTitle id={issue.id}>{issue.title}</TaskTitle>
+              </td>
               <td className="px-3 py-2">
                 <span className="rounded-sm bg-secondary px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-secondary-foreground uppercase">
                   {status.title}

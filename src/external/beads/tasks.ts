@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 import * as v from "valibot";
 
-const taskSchema = v.object({
+export const taskSchema = v.object({
   id: v.string(),
   title: v.string(),
   status: v.string(),

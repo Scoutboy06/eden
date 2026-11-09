@@ -13,6 +13,7 @@ import {
   IssueTypeIcon,
 } from "@/components/issue/issue";
 import { Card } from "@/components/ui/card";
+import { TaskTitle, useTaskClick } from "@/components/issue/task-opening";
 
 /** A single issue on the kanban board, laid out like a Jira card. */
 export function KanbanCard({
@@ -20,8 +21,10 @@ export function KanbanCard({
   className,
   ...props
 }: React.ComponentProps<typeof Card> & { item: Issue }) {
+  const openTask = useTaskClick(item.id);
   return (
     <Card
+      onClick={openTask}
       size="sm"
       className={cn(
         "cursor-pointer gap-3 bg-sidebar shadow-xs ring-foreground/20 hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-2",
@@ -29,7 +32,9 @@ export function KanbanCard({
       )}
       {...props}
     >
-      <p className="px-3 leading-snug">{item.title}</p>
+      <p className="px-3 leading-snug">
+        <TaskTitle id={item.id}>{item.title}</TaskTitle>
+      </p>
 
       {(item.labels?.length || item.dueDate) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3">

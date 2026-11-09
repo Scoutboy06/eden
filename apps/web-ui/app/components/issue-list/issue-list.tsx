@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useState } from "react";
 import type * as React from "react";
+import { TaskTitle, useTaskClick } from "@/components/issue/task-opening";
 
 import {
   type Issue,
@@ -72,13 +73,19 @@ function IssueListGroup({ group }: { group: IssueGroup }) {
 }
 
 function IssueListRow({ issue }: { issue: Issue }) {
+  const openTask = useTaskClick(issue.id);
   return (
-    <li className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]">
+    <li
+      onClick={openTask}
+      className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]"
+    >
       <IssueTypeIcon type={issue.type} />
       <span className="w-16">
         <IssueKey issue={issue} />
       </span>
-      <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+      <span className="min-w-0 flex-1 truncate">
+        <TaskTitle id={issue.id}>{issue.title}</TaskTitle>
+      </span>
       <div className="hidden items-center gap-1.5 sm:flex">
         {issue.labels?.map((label) => (
           <IssueLabel key={label} label={label} />

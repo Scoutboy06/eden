@@ -37,6 +37,7 @@ function isIntegration(file: string): boolean {
     file.startsWith("src/modules/worktree/tests/") ||
     file.startsWith("src/modules/git/tests/") ||
     file === "apps/web-ui/server/tasks.test.ts" ||
+    file === "apps/web-ui/server/task-detail.test.ts" ||
     file === "apps/web-ui/server/import-project.test.ts" ||
     file === "src/external/beads/tests/process.test.ts" ||
     file === "src/modules/pull-requests/tests/resolve.test.ts" ||
