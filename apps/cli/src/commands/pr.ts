@@ -277,6 +277,26 @@ const status = defineCommand({
   },
 });
 
+const close = defineCommand({
+  name: "close",
+  description: "Close a GitHub PR (already-closed PRs are unchanged; merged PRs are rejected)",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    comment: {
+      type: "string",
+      parse: (value) => value,
+      description: "Add a comment after newly closing; ignored if already closed",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const pr = await pullRequests.close(ctx.values);
+
+    if (pr) output.write({ data: { pr }, human: () => `${pr.title}\n${pr.state}\n${pr.url}` });
+  },
+});
+
 const reopen = defineCommand({
   name: "reopen",
   description: "Reopen a closed PR (merged PRs cannot be reopened)",
@@ -295,5 +315,5 @@ const reopen = defineCommand({
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { list, create, show, checks, reviewers, edit, status, reopen },
+  subCommands: { list, create, show, checks, reviewers, edit, status, close, reopen },
 });

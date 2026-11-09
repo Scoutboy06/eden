@@ -6,6 +6,63 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
+test("PR close declares comment, renders success and records no-HTTP dry-run", async () => {
+  const help = await runCli("pr", "close", "--help");
+  const completion = await runCli("completion", "bash");
+  expect(help.stdout).toContain("--comment");
+  expect(completion.stdout).toContain("--comment");
+  const args = [
+    "pr",
+    "close",
+    "https://github.com/acme/app/pull/12",
+    "--comment",
+    "Closing this PR",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json");
+  const dry = await runPrWithEnv({ PR_FORBID_REQUESTS: "1" }, ...args, "--dry-run", "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("closed\nhttps://github.com/acme/app/pull/12");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    pr: { state: "closed", ref: { number: 12 } },
+  });
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-close", input: { comment: "Closing this PR" } }],
+  });
+});
+
+test("PR close reports metadata partial failure and remains idempotent for closed PRs", async () => {
+  const args = [
+    "pr",
+    "close",
+    "https://github.com/acme/app/pull/12",
+    "--comment",
+    "Closing",
+    "--json",
+  ];
+  const partial = await runPrWithEnv({ PR_COMMENT_FAIL: "1" }, ...args);
+  const closed = await runPrWithEnv({ PR_COMMENT_FAIL: "1", PR_STATE: "closed" }, ...args);
+  const merged = await runPrWithEnv({ PR_STATE: "merged" }, ...args);
+
+  expect(partial.exitCode).toBe(1);
+  expect(JSON.parse(partial.stdout)).toMatchObject({
+    error: {
+      code: "SCM_PARTIAL_FAILURE",
+      message: expect.stringContaining("PR closed: https://github.com/acme/app/pull/12"),
+    },
+  });
+  expect(partial.stdout).not.toContain("secret-token");
+  expect(closed.exitCode).toBe(0);
+  expect(JSON.parse(closed.stdout)).toMatchObject({ ok: true, pr: { state: "closed" } });
+  expect(merged.exitCode).toBe(1);
+  expect(JSON.parse(merged.stdout)).toMatchObject({ error: { code: "SCM_INVALID_STATE" } });
+});
+
 test("PR list declares filters and renders human and JSON results", async () => {
   const help = await runCli("pr", "list", "--help");
   const completion = await runCli("completion", "bash");

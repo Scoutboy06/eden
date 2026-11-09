@@ -11,6 +11,7 @@ import type {
   PullRequestRef,
   PullRequestWriter,
   PullRequestReopener,
+  PullRequestCloser,
   PullRequestReview,
   RepositoryRef,
   PullRequestLister,
@@ -21,7 +22,12 @@ import type {
 type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
 
 export class GitHubApiProvider
-  implements PullRequestProvider, PullRequestWriter, PullRequestReopener, PullRequestLister
+  implements
+    PullRequestProvider,
+    PullRequestWriter,
+    PullRequestReopener,
+    PullRequestLister,
+    PullRequestCloser
 {
   constructor(private readonly client: Octokit) {}
 
@@ -107,6 +113,41 @@ export class GitHubApiProvider
 
   editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest> {
     return providerRequest(() => editPullRequest(this.client, ref, patch));
+  }
+
+  closePullRequest(ref: PullRequestRef, options: { comment?: string } = {}): Promise<PullRequest> {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      if (options.comment !== undefined && !options.comment.trim())
+        throw new ScmError("SCM_INVALID_OPTIONS", "--comment must not be blank.");
+      const input = parameters(ref);
+      const { data } = await this.client.pulls.get(input);
+      const current = normalizePullRequest(data);
+      assertPullRequestIdentity(current, ref);
+      if (current.state === "merged")
+        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be closed.");
+      if (current.state === "closed") return current;
+      const result = await closeGitHubPullRequest(this.client, ref);
+      if (options.comment !== undefined) {
+        try {
+          const { data: comment } = await this.client.issues.createComment({
+            owner: ref.owner,
+            repo: ref.repository,
+            issue_number: ref.number,
+            body: options.comment,
+          });
+          if (!Number.isSafeInteger(comment.id) || comment.id < 1) invalidResponse();
+        } catch (error) {
+          throw new ScmError(
+            "SCM_PARTIAL_FAILURE",
+            `PR closed: ${result.url}; the closing comment could not be confirmed. Do not retry automatically; inspect the PR before adding a comment. ${safeFailureDetails(error)}`,
+          );
+        }
+      }
+
+      return result;
+    });
   }
 
   reopenPullRequest(ref: PullRequestRef): Promise<PullRequest> {
@@ -434,6 +475,36 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
   assertPullRequestIdentity(result, ref);
 
   return result;
+}
+
+async function closeGitHubPullRequest(
+  client: Octokit,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+): Promise<PullRequest> {
+  let updated;
+  try {
+    updated = (
+      await providerRequest(() => client.pulls.update({ ...parameters(ref), state: "closed" }))
+    ).data;
+  } catch (error) {
+    if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `The PR may have closed: https://github.com/${ref.owner}/${ref.repository}/pull/${ref.number}. Inspect it before retrying. ${safeFailureDetails(error)}`,
+    );
+  }
+  try {
+    const result = normalizePullRequest(updated);
+    assertPullRequestIdentity(result, ref);
+    if (result.state !== "closed") invalidResponse();
+
+    return result;
+  } catch (error) {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `The PR may have closed: https://github.com/${ref.owner}/${ref.repository}/pull/${ref.number}, but its response could not be verified. ${safeFailureDetails(error)}`,
+    );
+  }
 }
 
 function normalizeListItem(data: GitHubListItem): PullRequestListItem {
