@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
 import type { Credential } from "../../modules/pull-requests/credentials";
+import { validatePullRequestComment } from "../../modules/pull-requests/comment-input";
 import type {
   PullRequest,
   PullRequestCheck,
@@ -12,6 +13,8 @@ import type {
   PullRequestWriter,
   PullRequestReopener,
   PullRequestCloser,
+  PullRequestCommenter,
+  PullRequestCommentInput,
   PullRequestReview,
   RepositoryRef,
   PullRequestLister,
@@ -27,7 +30,8 @@ export class GitHubApiProvider
     PullRequestWriter,
     PullRequestReopener,
     PullRequestLister,
-    PullRequestCloser
+    PullRequestCloser,
+    PullRequestCommenter
 {
   constructor(private readonly client: Octokit) {}
 
@@ -115,6 +119,55 @@ export class GitHubApiProvider
     return providerRequest(() => editPullRequest(this.client, ref, patch));
   }
 
+  addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment> {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      const replyId = validatePullRequestComment(input);
+      const { data: pr } = await this.client.pulls.get(parameters(ref));
+      assertPullRequestIdentity(normalizePullRequest(pr), ref);
+      if (replyId !== undefined) {
+        const { data: target } = await this.client.pulls.getReviewComment({
+          owner: ref.owner,
+          repo: ref.repository,
+          comment_id: replyId,
+        });
+        if (target.id !== replyId || !samePrApiUrl(target.pull_request_url, ref))
+          throw new ScmError(
+            "SCM_INVALID_REFERENCE",
+            "The reply target does not belong to the selected pull request.",
+          );
+        if (target.in_reply_to_id != null)
+          throw new ScmError(
+            "SCM_UNSUPPORTED_OPERATION",
+            "GitHub replies must target a root review comment, not another reply. Use review:<root comment ID>.",
+          );
+      }
+      let data;
+      try {
+        data = await providerRequest(async () =>
+          replyId === undefined
+            ? (await postDiscussionComment(this.client, ref, input.body)).data
+            : (
+                await this.client.pulls.createReplyForReviewComment({
+                  ...parameters(ref),
+                  comment_id: replyId,
+                  body: input.body,
+                })
+              ).data,
+        );
+      } catch (error) {
+        if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+        throw commentConfirmationFailure(ref, error);
+      }
+      try {
+        return normalizeCreatedComment(data, ref, replyId);
+      } catch (error) {
+        throw commentConfirmationFailure(ref, error);
+      }
+    });
+  }
+
   closePullRequest(ref: PullRequestRef, options: { comment?: string } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       if (ref.provider !== "github")
@@ -131,12 +184,7 @@ export class GitHubApiProvider
       const result = await closeGitHubPullRequest(this.client, ref);
       if (options.comment !== undefined) {
         try {
-          const { data: comment } = await this.client.issues.createComment({
-            owner: ref.owner,
-            repo: ref.repository,
-            issue_number: ref.number,
-            body: options.comment,
-          });
+          const { data: comment } = await postDiscussionComment(this.client, ref, options.comment);
           if (!Number.isSafeInteger(comment.id) || comment.id < 1) invalidResponse();
         } catch (error) {
           throw new ScmError(
@@ -475,6 +523,76 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
   assertPullRequestIdentity(result, ref);
 
   return result;
+}
+
+function postDiscussionComment(
+  client: Octokit,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  body: string,
+) {
+  return client.issues.createComment({
+    owner: ref.owner,
+    repo: ref.repository,
+    issue_number: ref.number,
+    body,
+  });
+}
+
+function samePrApiUrl(url: string, ref: Extract<PullRequestRef, { provider: "github" }>): boolean {
+  return (
+    url?.toLowerCase() ===
+    `https://api.github.com/repos/${ref.owner}/${ref.repository}/pulls/${ref.number}`.toLowerCase()
+  );
+}
+
+function commentConfirmationFailure(
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  error: unknown,
+): ScmError {
+  return new ScmError(
+    "SCM_PARTIAL_FAILURE",
+    `The comment may have been posted on https://github.com/${ref.owner}/${ref.repository}/pull/${ref.number}, but could not be confirmed. Inspect the PR before retrying to avoid duplicate comments. ${safeFailureDetails(error)}`,
+  );
+}
+
+function normalizeCreatedComment(
+  data:
+    | Awaited<ReturnType<Octokit["issues"]["createComment"]>>["data"]
+    | Awaited<ReturnType<Octokit["pulls"]["createReplyForReviewComment"]>>["data"],
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  replyId: number | undefined,
+): PullRequestComment {
+  if (!Number.isSafeInteger(data.id) || data.id < 1 || typeof data.body !== "string")
+    invalidResponse();
+  const url = new URL(data.html_url);
+  const path = `/${ref.owner}/${ref.repository}/pull/${ref.number}`.toLowerCase();
+  if (
+    url.origin !== "https://github.com" ||
+    !(url.pathname.toLowerCase() === path || url.pathname.toLowerCase().startsWith(`${path}/`))
+  )
+    invalidResponse();
+  if (replyId === undefined) {
+    if (
+      !("issue_url" in data) ||
+      data.issue_url.toLowerCase() !==
+        `https://api.github.com/repos/${ref.owner}/${ref.repository}/issues/${ref.number}`.toLowerCase()
+    )
+      invalidResponse();
+  } else if (
+    !("pull_request_url" in data) ||
+    !samePrApiUrl(data.pull_request_url, ref) ||
+    data.in_reply_to_id !== replyId
+  )
+    invalidResponse();
+
+  return {
+    id: `${replyId === undefined ? "issue" : "review"}:${data.id}`,
+    body: data.body,
+    author: data.user ? { id: `user:${data.user.id}`, name: data.user.login } : null,
+    url: data.html_url,
+    createdAt: data.created_at,
+    ...(replyId !== undefined ? { threadId: String(replyId) } : {}),
+  };
 }
 
 async function closeGitHubPullRequest(

@@ -20,12 +20,28 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   );
   if (url.hostname !== "api.github.com") throw new Error("Unexpected request host");
   if (process.env.PR_FORBID_REQUESTS) throw new Error("SDK requests are forbidden for this test");
-  if (init?.method === "POST" && url.pathname.endsWith("/issues/12/comments")) {
+  if (init?.method === "POST") {
+    const response = postResponse(url, init);
+    if (response) return response;
+  }
+  if (init?.method === "PATCH") applyPatch(init);
+  const response = respond(url);
+  Object.defineProperty(response, "url", { value: url.href });
+
+  return response;
+}) as typeof fetch;
+
+await import("../../../../../apps/cli/src/main");
+
+function postResponse(url: URL, init: RequestInit): Response | undefined {
+  if (url.pathname.endsWith("/issues/12/comments")) {
     if (process.env.PR_COMMENT_FAIL)
       return Response.json({ message: "secret-token" }, { status: 403 });
-    return Response.json({ id: 34 });
+    return Response.json(commentResponse(init));
   }
-  if (init?.method === "POST" && url.pathname.endsWith("/pulls")) {
+  if (url.pathname.endsWith("/pulls/12/comments/56/replies"))
+    return Response.json(commentResponse(init, true));
+  if (url.pathname.endsWith("/pulls")) {
     const body = JSON.parse(String(init.body));
     return Response.json({
       ...pr,
@@ -36,7 +52,6 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       base: { ...pr.base, ref: body.base },
     });
   }
-  if (init?.method === "PATCH") applyPatch(init);
   if (url.pathname === "/graphql") {
     const body = JSON.parse(String(init?.body));
     pr.draft = body.query.includes("convertPullRequestToDraft");
@@ -46,13 +61,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       data: { [operation]: { pullRequest: { id: pr.node_id, isDraft: pr.draft } } },
     });
   }
-  const response = respond(url);
-  Object.defineProperty(response, "url", { value: url.href });
-
-  return response;
-}) as typeof fetch;
-
-await import("../../../../../apps/cli/src/main");
+}
 
 function applyPatch(request: RequestInit) {
   const patch = JSON.parse(String(request.body));
@@ -66,6 +75,11 @@ function respond(url: URL): Response {
   if (/\/(pulls|issues)\/404(?:\/|$)/.test(url.pathname))
     return Response.json({ message: "secret-token" }, { status: 404 });
   if (url.pathname.endsWith("/pulls/12")) return Response.json(pr);
+  if (url.pathname.endsWith("/pulls/comments/56"))
+    return Response.json({
+      id: 56,
+      pull_request_url: "https://api.github.com/repos/acme/app/pulls/12",
+    });
   if (url.pathname.endsWith("/pulls")) return listResponse();
   if (url.pathname.endsWith("/issues/12/comments"))
     return Response.json([
@@ -86,6 +100,19 @@ function respond(url: URL): Response {
     );
 
   throw new Error("Unexpected SDK request");
+}
+
+function commentResponse(request: RequestInit, reply = false) {
+  return {
+    id: 34,
+    body: JSON.parse(String(request.body)).body,
+    user: { id: 7, login: "alice" },
+    created_at: "2026-11-10T00:00:00Z",
+    html_url: `https://github.com/acme/app/pull/12#${reply ? "discussion_r" : "issuecomment-"}34`,
+    ...(reply
+      ? { pull_request_url: "https://api.github.com/repos/acme/app/pulls/12", in_reply_to_id: 56 }
+      : { issue_url: "https://api.github.com/repos/acme/app/issues/12" }),
+  };
 }
 
 function listResponse() {

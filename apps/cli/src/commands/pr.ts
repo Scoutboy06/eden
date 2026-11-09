@@ -2,6 +2,7 @@ import { defineCommand } from "../../../../src/modules/cli";
 import { ScmError } from "../../../../src/modules/pull-requests/errors";
 import { buildPullRequestPatch } from "../../../../src/modules/pull-requests/edit-input";
 import { buildPullRequestCreate } from "../../../../src/modules/pull-requests/create-input";
+import { buildPullRequestComment } from "../../../../src/modules/pull-requests/comment-input";
 
 const args = {
   ref: {
@@ -277,6 +278,41 @@ const status = defineCommand({
   },
 });
 
+const comment = defineCommand({
+  name: "comment",
+  description: "Post a GitHub PR comment or reply to an inline review thread",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    body: {
+      type: "string",
+      parse: (value) => value,
+      description: "Comment body; excludes --body-file",
+    },
+    "body-file": {
+      type: "string",
+      parse: (value) => value,
+      description: "Read comment body from a UTF-8 file; excludes --body",
+    },
+    "reply-to": {
+      type: "string",
+      description:
+        "Root inline review comment ID (review:<id> from pr show --comments); discussion replies unsupported",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const input = await buildPullRequestComment({
+      ...ctx.values,
+      bodyFile: ctx.values["body-file"],
+      replyTo: ctx.values["reply-to"],
+    });
+    const comment = await pullRequests.comment({ ...ctx.values, ...input });
+
+    if (comment) output.write({ data: { comment }, human: () => `${comment.id}\n${comment.url}` });
+  },
+});
+
 const close = defineCommand({
   name: "close",
   description: "Close a GitHub PR (already-closed PRs are unchanged; merged PRs are rejected)",
@@ -315,5 +351,5 @@ const reopen = defineCommand({
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { list, create, show, checks, reviewers, edit, status, close, reopen },
+  subCommands: { list, create, show, checks, reviewers, edit, status, comment, close, reopen },
 });

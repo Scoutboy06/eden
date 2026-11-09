@@ -6,6 +6,58 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
+test("PR comment declares inputs and renders discussion and reply identities", async () => {
+  const help = await runCli("pr", "comment", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--body", "--body-file", "--reply-to"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  const args = ["pr", "comment", "https://github.com/acme/app/pull/12", "--body", "Hello"];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--reply-to", "review:56", "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("issue:34\nhttps://github.com/acme/app/pull/12#issuecomment-34");
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    comment: { id: "review:34", body: "Hello", threadId: "56" },
+  });
+});
+
+test("PR comment dry-run sends no HTTP and input/provider failures are structured", async () => {
+  const args = ["pr", "comment", "https://github.com/acme/app/pull/12", "--body", "Hello"];
+  const dry = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    ...args,
+    "--reply-to",
+    "review:56",
+    "--dry-run",
+    "--json",
+  );
+  const invalid = await runPr(...args, "--body-file", "missing");
+  const unsupported = await runPr(...args, "--reply-to", "issue:56", "--json");
+  const denied = await runPrWithEnv({ PR_COMMENT_FAIL: "1" }, ...args, "--json");
+
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-comment", input: { body: "Hello", replyTo: "review:56" } }],
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(invalid.stdout).toBe("");
+  expect(invalid.stderr).toContain("mutually exclusive");
+  expect(unsupported.exitCode).toBe(1);
+  expect(JSON.parse(unsupported.stdout)).toMatchObject({
+    error: { code: "SCM_UNSUPPORTED_OPERATION" },
+  });
+  expect(denied.exitCode).toBe(1);
+  expect(JSON.parse(denied.stdout)).toMatchObject({ error: { code: "SCM_ACCESS_DENIED" } });
+  expect(denied.stdout).not.toContain("secret-token");
+});
+
 test("PR close declares comment, renders success and records no-HTTP dry-run", async () => {
   const help = await runCli("pr", "close", "--help");
   const completion = await runCli("completion", "bash");

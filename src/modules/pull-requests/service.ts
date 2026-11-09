@@ -1,4 +1,5 @@
 import { ScmError } from "./errors";
+import { validatePullRequestComment } from "./comment-input";
 import type {
   PullRequestCreateInput,
   PullRequestPatch,
@@ -7,6 +8,8 @@ import type {
   PullRequestWriter,
   PullRequestReopener,
   PullRequestCloser,
+  PullRequestCommenter,
+  PullRequestCommentInput,
   PullRequestLister,
   PullRequestListQuery,
   RepositoryRef,
@@ -154,6 +157,38 @@ export class PullRequestService {
 
   async editByReference(input: PullRequestInput & { ref: string }, patch: PullRequestPatch) {
     return this.edit(await this.exactReference(input), patch);
+  }
+
+  async comment(input: PullRequestInput & { ref: string } & PullRequestCommentInput) {
+    validatePullRequestComment(input);
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr comment currently supports GitHub only; Azure DevOps commenting is deferred.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("addComment" in provider) || typeof provider.addComment !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot post PR comments.");
+    const commenter = provider as PullRequestProvider & PullRequestCommenter;
+    const comment = {
+      body: input.body,
+      ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+    };
+    let result: Awaited<ReturnType<PullRequestCommenter["addComment"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-comment",
+        description: input.replyTo ? "Reply to GitHub review comment" : "Post GitHub PR comment",
+        input: { ref, ...comment },
+      },
+      async () => {
+        result = await commenter.addComment(ref, comment);
+      },
+    );
+
+    return result;
   }
 
   async close(input: PullRequestInput & { ref: string; comment?: string }) {

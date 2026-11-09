@@ -119,3 +119,9 @@ export interface PullRequestReopener {
 export interface PullRequestCloser {
   closePullRequest(ref: PullRequestRef, options: { comment?: string }): Promise<PullRequest>;
 }
+
+export type PullRequestCommentInput = { body: string; replyTo?: string };
+
+export interface PullRequestCommenter {
+  addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment>;
+}
