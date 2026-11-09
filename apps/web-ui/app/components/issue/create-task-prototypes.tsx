@@ -33,6 +33,14 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+const priorityOptions = [
+  { value: "0", label: "0 · Critical" },
+  { value: "1", label: "1 · High" },
+  { value: "2", label: "2 · Medium" },
+  { value: "3", label: "3 · Low" },
+  { value: "4", label: "4 · Backlog" },
+];
+
 export function CreateTaskPrototypes({ groups }: { groups: IssueGroup[] }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -97,14 +105,14 @@ export function CreateTaskPrototypes({ groups }: { groups: IssueGroup[] }) {
               </Label>
               <Select value={priority} onValueChange={setPriority}>
                 <SelectTrigger aria-labelledby={`${id}-priority`} className="w-full bg-muted/40">
-                  P{priority}
+                  {priorityOptions.find((option) => option.value === priority)?.label}
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
                     <SelectLabel>Priority</SelectLabel>
-                    {[0, 1, 2, 3, 4].map((value) => (
-                      <SelectItem key={value} value={String(value)}>
-                        P{value}
+                    {priorityOptions.map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
                       </SelectItem>
                     ))}
                   </SelectGroup>
