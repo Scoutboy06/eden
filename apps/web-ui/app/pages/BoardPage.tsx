@@ -13,6 +13,7 @@ import { IssueList } from "@/components/issue-list/issue-list";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import { useBeadsTasks } from "@/pages/use-beads-tasks";
 import { TaskDetails } from "@/components/issue/task-detail-panel";
+import { CreateTaskPrototypes } from "@/components/issue/create-task-prototypes";
 import { issueTypeLabel } from "@/components/issue/issue";
 import type { IssueGroup } from "@/components/issue/issue";
 import { Button } from "@/components/ui/button";
@@ -121,9 +122,7 @@ export function BoardPage() {
             onMultiFilterChange={updateMultiFilter}
           />
           <SortToolbar sort={sort} onSortChange={updateSort} />
-          <Button type="button" variant="outline" size="lg" disabled={loading} onClick={refresh}>
-            {loading ? "Loading…" : "Refresh"}
-          </Button>
+          <CreateTaskPrototypes key={project} groups={groups} />
         </header>
         <Separator />
         <p className="py-3 text-xs text-muted-foreground">
@@ -224,7 +223,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-48"
           footer={
             filters.statuses.length > 0 && (
@@ -256,7 +254,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-40"
           footer={
             filters.types.length > 0 && (
@@ -288,7 +285,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-40"
           footer={
             filters.priorities.length > 0 && (
@@ -324,7 +320,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-48"
           footer={
             filters.assignees.length > 0 && (
@@ -374,7 +369,7 @@ function SortToolbar({
     <>
       <Select<string> value={sort} onValueChange={onSortChange}>
         <SelectTrigger aria-label="Sort issues">{sortLabel(sort)}</SelectTrigger>
-        <SelectContent align="end" alignItemWithTrigger={false} className="w-48">
+        <SelectContent align="end" className="w-48">
           <SelectGroup>
             <SelectLabel>Sort by</SelectLabel>
             <SelectItem value="manual">Provider order</SelectItem>

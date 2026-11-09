@@ -9,6 +9,7 @@ import type {
 import type { IssueGroup } from "@/components/issue/issue";
 import { TaskOpeningContext } from "@/components/issue/task-opening";
 import { Button } from "@/components/ui/button";
+import { HeaderIconButton } from "@/components/ui/header-icon-button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -210,16 +211,13 @@ export function TaskDetails({
                 buttonRef={editRef}
                 onEdit={() => setEditing(true)}
               />
-              <Button
-                variant="outline"
-                size="icon-sm"
+              <HeaderIconButton
+                label="Close task"
                 disabled={saving}
                 onClick={() => requestSelection(null)}
-                aria-label="Close task"
-                title="Close task"
               >
                 <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} aria-hidden />
-              </Button>
+              </HeaderIconButton>
             </div>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-5">
@@ -302,17 +300,9 @@ function TaskEditButton({
   if (!loaded || editing) return null;
 
   return (
-    <Button
-      ref={buttonRef}
-      variant="outline"
-      size="icon-sm"
-      disabled={disabled}
-      onClick={onEdit}
-      aria-label="Edit task"
-      title="Edit task"
-    >
+    <HeaderIconButton label="Edit task" ref={buttonRef} disabled={disabled} onClick={onEdit}>
       <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} aria-hidden />
-    </Button>
+    </HeaderIconButton>
   );
 }
 
@@ -786,7 +776,7 @@ function AssigneeInput({
   );
 }
 
-function LabelsInput({
+export function LabelsInput({
   value,
   suggestions,
   onChange,
