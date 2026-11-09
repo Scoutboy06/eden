@@ -77,6 +77,8 @@ export type PullRequestCreateInput = {
   sourceBranch: string;
   targetBranch: string;
   draft: boolean;
+  reviewers?: string[];
+  labels?: string[];
 } & (
   | { repository: Extract<RepositoryRef, { provider: "github" }> }
   | { repository: Extract<RepositoryRef, { provider: "azure-devops" }> }

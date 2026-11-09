@@ -18,6 +18,17 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   );
   if (url.hostname !== "api.github.com") throw new Error("Unexpected request host");
   if (process.env.PR_FORBID_REQUESTS) throw new Error("SDK requests are forbidden for this test");
+  if (init?.method === "POST" && url.pathname.endsWith("/pulls")) {
+    const body = JSON.parse(String(init.body));
+    return Response.json({
+      ...pr,
+      title: body.title,
+      body: body.body,
+      draft: body.draft,
+      head: { ...pr.head, ref: body.head },
+      base: { ...pr.base, ref: body.base },
+    });
+  }
   if (init?.method === "PATCH") applyPatch(init);
   if (url.pathname === "/graphql") {
     const body = JSON.parse(String(init?.body));

@@ -33,10 +33,45 @@ export class GitHubApiProvider
         base: input.targetBranch,
         draft: input.draft,
       });
-      return normalizePullRequest(data, {
-        ...input.repository,
-        number: data.number,
-      });
+      let pr: PullRequest;
+      try {
+        pr = normalizePullRequest(data);
+        if (!Number.isSafeInteger(data.number) || data.number < 1) invalidResponse();
+        assertPullRequestIdentity(pr, { ...input.repository, number: data.number });
+        const url = new URL(pr.url);
+        if (
+          url.origin !== "https://github.com" ||
+          url.pathname.toLowerCase() !==
+            `/${input.repository.owner}/${input.repository.repository}/pull/${data.number}`.toLowerCase()
+        )
+          invalidResponse();
+      } catch {
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          "The pull request may have been created, but its response could not be verified. Inspect the repository before retrying.",
+        );
+      }
+      try {
+        if (input.reviewers?.length)
+          await this.client.pulls.requestReviewers({
+            ...parameters(pr.ref),
+            reviewers: input.reviewers,
+          });
+        if (input.labels?.length)
+          await this.client.issues.addLabels({
+            owner: input.repository.owner,
+            repo: input.repository.repository,
+            issue_number: data.number,
+            labels: input.labels,
+          });
+      } catch (error) {
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          `PR created: ${pr.url}; reviewers or labels could not be fully applied. Do not retry creation. ${safeFailureDetails(error)}`,
+        );
+      }
+
+      return pr;
     });
   }
 

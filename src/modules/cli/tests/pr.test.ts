@@ -6,6 +6,87 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
+test("PR create declares options and renders human and JSON results", async () => {
+  const help = await runCli("pr", "create", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--title", "--base", "--body-file", "--reviewer", "--label"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  const args = [
+    "pr",
+    "create",
+    "--repo",
+    "https://github.com/acme/app",
+    "--head",
+    "topic",
+    "--base",
+    "main",
+    "--title",
+    "New PR",
+    "--draft",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("New PR\nhttps://github.com/acme/app/pull/12");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    pr: { title: "New PR", isDraft: true, ref: { number: 12 } },
+  });
+});
+
+test("PR create dry-run sends no HTTP requests and errors follow existing output conventions", async () => {
+  const args = [
+    "pr",
+    "create",
+    "--repo",
+    "https://github.com/acme/app",
+    "--head",
+    "topic",
+    "--base",
+    "main",
+    "--title",
+    "Title",
+  ];
+  const dry = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    ...args,
+    "--reviewer",
+    "alice",
+    "--label",
+    "bug",
+    "--dry-run",
+    "--json",
+  );
+  const invalid = await runPr(...args, "--body", "", "--body-file", "missing", "--json");
+  const azure = await runPr(
+    "pr",
+    "create",
+    "--repo",
+    "https://dev.azure.com/acme/project/_git/app",
+    "--head",
+    "topic",
+    "--base",
+    "main",
+    "--title",
+    "Title",
+    "--json",
+  );
+
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-create" }],
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
+  expect(azure.exitCode).toBe(1);
+  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_UNSUPPORTED_OPERATION" } });
+});
+
 test("PR help and completion expose the read commands and show enrichments", async () => {
   const help = await runCli("pr", "--help");
   const completion = await runCli("completion", "bash");

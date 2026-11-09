@@ -34,6 +34,11 @@ export class PullRequestService {
 
   async create(input: Omit<PullRequestCreateInput, "repository"> & { repository: RepositoryRef }) {
     validateCreate(input);
+    if (input.repository.provider !== "github" && (input.reviewers?.length || input.labels?.length))
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "Reviewer and label creation is only supported for GitHub.",
+      );
     const provider = await this.createProvider(input.repository);
     const writer = pullRequestWriter(provider);
     let result: Awaited<ReturnType<PullRequestWriter["createPullRequest"]>> | undefined;
@@ -49,6 +54,40 @@ export class PullRequestService {
     );
 
     return result;
+  }
+
+  async createByReference(
+    input: PullRequestInput & {
+      title: string;
+      body: string;
+      base: string;
+      draft?: boolean;
+      reviewers?: string[];
+      labels?: string[];
+    },
+  ) {
+    const lookup = await resolvePullRequestLookup(input, this.git);
+    if (lookup.repository.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr create currently supports GitHub only; Azure DevOps creation is deferred.",
+      );
+    if (lookup.kind !== "branch")
+      throw new ScmError(
+        "SCM_INVALID_OPTIONS",
+        "PR creation requires a source branch, not an existing PR reference.",
+      );
+
+    return this.create({
+      repository: lookup.repository,
+      sourceBranch: lookup.sourceBranch,
+      targetBranch: input.base,
+      title: input.title,
+      body: input.body,
+      draft: input.draft ?? false,
+      reviewers: input.reviewers,
+      labels: input.labels,
+    });
   }
 
   async edit(ref: PullRequestRef, patch: PullRequestPatch) {
@@ -225,6 +264,14 @@ function validateCreate(
   )
     invalidInput("An Azure DevOps organization, project, and repository target are required.");
   if (!input.title.trim()) invalidInput("A pull request title must not be blank.");
+  if (
+    input.reviewers?.some(
+      (name) => name.length > 39 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(name),
+    )
+  )
+    invalidInput("Reviewers must be GitHub user logins, not teams or URLs.");
+  if (input.labels?.some((name) => !name.trim() || /[\r\n\0]/.test(name)))
+    invalidInput("Labels must be nonempty names without null bytes or line breaks.");
   validateBranch(input.sourceBranch);
   validateBranch(input.targetBranch);
 }
