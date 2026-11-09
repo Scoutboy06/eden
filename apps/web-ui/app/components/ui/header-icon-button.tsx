@@ -12,10 +12,7 @@ export function HeaderIconButton({ label, className, ...props }: HeaderIconButto
     <Button
       variant="ghost"
       size="icon-sm"
-      className={cn(
-        "cursor-pointer border-border/50 bg-transparent text-muted-foreground",
-        className,
-      )}
+      className={cn("border-border/50 bg-transparent text-muted-foreground", className)}
       aria-label={label}
       title={label}
       {...props}

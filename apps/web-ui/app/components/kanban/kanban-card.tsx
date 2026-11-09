@@ -27,7 +27,7 @@ export function KanbanCard({
       onClick={openTask}
       size="sm"
       className={cn(
-        "cursor-pointer gap-3 bg-sidebar shadow-xs ring-foreground/20 hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-2",
+        "shrink-0 cursor-pointer gap-3 bg-sidebar shadow-xs ring-foreground/20 hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-2",
         className,
       )}
       {...props}

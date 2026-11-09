@@ -130,17 +130,19 @@ export function KanbanBoard({
 
   if (readOnly) {
     return (
-      <div className={cn("flex flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
+      <div className={cn("flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
         {committedColumns.map((column) => (
           <section
             key={column.id}
             aria-label={column.title}
-            className="flex w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
+            className="flex min-h-0 w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
           >
             <ColumnHeader column={column} />
-            {column.items.map((item) => (
-              <KanbanCard key={item.id} item={item} />
-            ))}
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1">
+              {column.items.map((item) => (
+                <KanbanCard key={item.id} item={item} />
+              ))}
+            </div>
           </section>
         ))}
       </div>
@@ -156,7 +158,7 @@ export function KanbanBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className={cn("flex flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
+      <div className={cn("flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
         {columns.map((column) => (
           <KanbanColumn key={column.id} column={column} />
         ))}
@@ -175,13 +177,16 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
   return (
-    <section aria-label={column.title} className="flex w-72 shrink-0 flex-col gap-2 rounded-xl p-2">
+    <section
+      aria-label={column.title}
+      className="flex min-h-0 w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
+    >
       <ColumnHeader column={column} />
       <SortableContext items={column.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div
           ref={setNodeRef}
           className={cn(
-            "flex min-h-20 flex-1 flex-col gap-2 rounded-lg transition-colors",
+            "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1 transition-colors",
             isOver && column.items.length === 0 && "bg-accent/50",
           )}
         >
@@ -196,7 +201,7 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
 
 function ColumnHeader({ column }: { column: IssueGroup }) {
   return (
-    <header className="flex min-h-7 items-center gap-2 px-1 pb-1">
+    <header className="flex min-h-7 shrink-0 items-center gap-2 px-1 pb-1">
       <span
         aria-hidden
         className={cn("size-2 shrink-0 rounded-full", column.color ?? "bg-muted-foreground")}

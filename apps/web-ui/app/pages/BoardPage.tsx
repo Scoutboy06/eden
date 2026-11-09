@@ -111,7 +111,7 @@ export function BoardPage() {
             else params.set("view", String(next));
           })
         }
-        className="flex flex-1 flex-col gap-0"
+        className="flex min-h-0 flex-1 flex-col gap-0"
       >
         <header className="flex flex-wrap items-center gap-2 pb-3">
           <ViewSwitcher />
@@ -145,8 +145,8 @@ export function BoardPage() {
         )}
         {groups.length > 0 && (
           <>
-            <TabsContent value="board" className="flex pt-4">
-              <div className="flex w-full flex-col gap-3">
+            <TabsContent value="board" className="flex min-h-0 pt-4">
+              <div className="flex min-h-0 w-full flex-col gap-3">
                 {!hasResults && hasActiveFilters(filters) && <NoResults onClear={clearFilters} />}
                 <KanbanBoard columns={filteredGroups} readOnly />
               </div>
