@@ -7,6 +7,45 @@ import { findRepositoryPath } from "../repository";
 
 const layers = ["global", "repository", "local"] as const;
 
+test.each([
+  [
+    "null to mapping",
+    null,
+    { eden: { name: "Eden", path: "/work/eden" } },
+    { eden: { name: "Eden", path: "/work/eden" } },
+  ],
+  ["mapping to null", { eden: { name: "Eden", path: "/work/eden" } }, null, null],
+] as const)(
+  "merges project registry layers from %s",
+  async (_direction, globalProjects, repositoryProjects, expectedProjects) => {
+    await withTemporaryDirectory(async (directory) => {
+      const global = join(directory, "config.yaml");
+      const repository = join(directory, "repo", ".eden", "config.yaml");
+      await mkdir(dirname(repository), { recursive: true });
+      await writeFile(global, Bun.YAML.stringify({ projects: globalProjects }));
+      await writeFile(repository, Bun.YAML.stringify({ projects: repositoryProjects }));
+      const result = await createFileConfigService({
+        pathsLowToHigh: [global, repository],
+      }).readWithProvenance();
+      const projectProvenance = Object.fromEntries(
+        Object.entries(result.provenance).filter(
+          ([key]) => key === "projects" || key.startsWith("projects."),
+        ),
+      );
+
+      expect(result.config.projects).toEqual(expectedProjects);
+      if (expectedProjects === null) {
+        expect(projectProvenance).toEqual({ projects: { type: "file", path: repository } });
+      } else {
+        expect(projectProvenance).toEqual({
+          "projects.eden.name": { type: "file", path: repository },
+          "projects.eden.path": { type: "file", path: repository },
+        });
+      }
+    });
+  },
+);
+
 for (const nested of [false, true]) {
   test.each([...layers])(
     `resolves %s configuration leaves with nested=${nested}`,

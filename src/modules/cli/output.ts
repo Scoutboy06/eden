@@ -4,7 +4,7 @@ import { HookFailure, type HookExecution } from "../hook/hook.service";
 import { describeError } from "./error-description";
 import { formatMessage } from "./format";
 
-type Presentation = { data: Record<string, unknown>; human: () => string | Promise<string> };
+export type Presentation = { data: Record<string, unknown>; human: () => string | Promise<string> };
 
 export class CommandOutput {
   private rawWritten = false;

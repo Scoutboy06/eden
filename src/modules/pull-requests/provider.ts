@@ -71,12 +71,30 @@ export interface PullRequestProvider {
   getReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
 }
 
+export type PullRequestListQuery = {
+  repository: RepositoryRef;
+  state: "open" | "closed" | "merged" | "all";
+  author?: string;
+  draft?: boolean;
+  limit: number;
+};
+
+export type PullRequestListItem = PullRequest & {
+  author: { id: string; name: string } | null;
+};
+
+export interface PullRequestLister {
+  listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]>;
+}
+
 export type PullRequestCreateInput = {
   title: string;
   body: string;
   sourceBranch: string;
   targetBranch: string;
   draft: boolean;
+  reviewers?: string[];
+  labels?: string[];
 } & (
   | { repository: Extract<RepositoryRef, { provider: "github" }> }
   | { repository: Extract<RepositoryRef, { provider: "azure-devops" }> }
@@ -96,4 +114,14 @@ export interface PullRequestWriter {
 
 export interface PullRequestReopener {
   reopenPullRequest(ref: PullRequestRef): Promise<PullRequest>;
+}
+
+export interface PullRequestCloser {
+  closePullRequest(ref: PullRequestRef, options: { comment?: string }): Promise<PullRequest>;
+}
+
+export type PullRequestCommentInput = { body: string; replyTo?: string };
+
+export interface PullRequestCommenter {
+  addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment>;
 }

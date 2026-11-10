@@ -16,8 +16,8 @@ import {
 } from "./template-update";
 import { registryDigest, templateCommand } from "../../external/docker-sbx/template-commands";
 
-type FreshnessState = "current" | "outdated" | "missing" | "unknown";
-type Freshness = { state: FreshnessState; reason: string; image?: string };
+export type FreshnessState = "current" | "outdated" | "missing" | "unknown";
+export type Freshness = { state: FreshnessState; reason: string; image?: string };
 type ImageMetadata = { image: string; imageId: string };
 
 export async function checkSandboxFreshness(

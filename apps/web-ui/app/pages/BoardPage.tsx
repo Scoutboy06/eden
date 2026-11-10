@@ -12,6 +12,8 @@ import { IssueTable } from "@/components/issue-table/issue-table";
 import { IssueList } from "@/components/issue-list/issue-list";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import { useBeadsTasks } from "@/pages/use-beads-tasks";
+import { TaskDetails } from "@/components/issue/task-detail-panel";
+import { CreateTaskPrototypes } from "@/components/issue/create-task-prototypes";
 import { issueTypeLabel } from "@/components/issue/issue";
 import type { IssueGroup } from "@/components/issue/issue";
 import { Button } from "@/components/ui/button";
@@ -48,7 +50,7 @@ function isView(value: string | null): value is View {
 }
 
 export function BoardPage() {
-  const { groups, loading, error, refresh } = useBeadsTasks();
+  const { project, groups, loading, error, refresh } = useBeadsTasks();
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("view");
   const view: View = isView(requested) ? requested : "board";
@@ -100,74 +102,73 @@ export function BoardPage() {
   }
 
   return (
-    <Tabs
-      value={view}
-      onValueChange={(next) =>
-        updateParams((params) => {
-          if (next === "board") params.delete("view");
-          else params.set("view", String(next));
-        })
-      }
-      className="flex flex-1 flex-col gap-0"
-    >
-      <header className="flex flex-wrap items-center gap-2 pb-3">
-        <ViewSwitcher />
-        <FiltersToolbar
-          groups={groups}
-          filters={filters}
-          onQueryChange={updateQuery}
-          onMultiFilterChange={updateMultiFilter}
-        />
-        <SortToolbar sort={sort} onSortChange={updateSort} />
-        <Button type="button" variant="outline" size="lg" disabled={loading} onClick={refresh}>
-          {loading ? "Loading…" : "Refresh"}
-        </Button>
-      </header>
-      <Separator />
-      <p className="py-3 text-xs text-muted-foreground">
-        Beads · Read only · {groups.reduce((count, group) => count + group.items.length, 0)} tasks
-      </p>
-      {loading && (
-        <p role="status" className="py-4 text-sm text-muted-foreground">
-          Loading Beads tasks…
+    <TaskDetails key={project} project={project} groups={groups} onSaved={refresh}>
+      <Tabs
+        value={view}
+        onValueChange={(next) =>
+          updateParams((params) => {
+            if (next === "board") params.delete("view");
+            else params.set("view", String(next));
+          })
+        }
+        className="flex min-h-0 flex-1 flex-col gap-0"
+      >
+        <header className="flex flex-wrap items-center gap-2 pb-3">
+          <ViewSwitcher />
+          <FiltersToolbar
+            groups={groups}
+            filters={filters}
+            onQueryChange={updateQuery}
+            onMultiFilterChange={updateMultiFilter}
+          />
+          <SortToolbar sort={sort} onSortChange={updateSort} />
+          <CreateTaskPrototypes key={project} groups={groups} />
+        </header>
+        <Separator />
+        <p className="py-3 text-xs text-muted-foreground">
+          Beads · {groups.reduce((count, group) => count + group.items.length, 0)} tasks
         </p>
-      )}
-      {error && (
-        <p role="alert" className="py-4 text-sm text-destructive">
-          {error}
-          {groups.length > 0 ? " Showing previously loaded tasks." : ""}
-        </p>
-      )}
-      {!loading && !error && groups.length === 0 && (
-        <p role="status" className="py-4 text-sm text-muted-foreground">
-          No Beads tasks in this checkout.
-        </p>
-      )}
-      {groups.length > 0 && (
-        <>
-          <TabsContent value="board" className="flex pt-4">
-            <div className="flex w-full flex-col gap-3">
-              {!hasResults && hasActiveFilters(filters) && <NoResults onClear={clearFilters} />}
-              <KanbanBoard columns={filteredGroups} readOnly />
-            </div>
-          </TabsContent>
-          <TabsContent value="list" className="pt-4">
-            {hasResults ? (
-              <IssueList groups={filteredGroups} />
-            ) : (
-              <NoResults onClear={clearFilters} />
-            )}
-          </TabsContent>
-          <TabsContent value="table" className="pt-4">
-            {hasResults ? (
-              <IssueTable groups={filteredGroups} />
-            ) : (
-              <NoResults onClear={clearFilters} />
-            )}
-          </TabsContent>
-        </>
-      )}
-    </Tabs>
+        {loading && (
+          <p role="status" className="py-4 text-sm text-muted-foreground">
+            Loading Beads tasks…
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="py-4 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {!loading && !error && groups.length === 0 && (
+          <p role="status" className="py-4 text-sm text-muted-foreground">
+            No Beads tasks in this checkout.
+          </p>
+        )}
+        {groups.length > 0 && (
+          <>
+            <TabsContent value="board" className="flex min-h-0 pt-4">
+              <div className="flex min-h-0 w-full flex-col gap-3">
+                {!hasResults && hasActiveFilters(filters) && <NoResults onClear={clearFilters} />}
+                <KanbanBoard columns={filteredGroups} readOnly />
+              </div>
+            </TabsContent>
+            <TabsContent value="list" className="pt-4">
+              {hasResults ? (
+                <IssueList groups={filteredGroups} />
+              ) : (
+                <NoResults onClear={clearFilters} />
+              )}
+            </TabsContent>
+            <TabsContent value="table" className="pt-4">
+              {hasResults ? (
+                <IssueTable groups={filteredGroups} />
+              ) : (
+                <NoResults onClear={clearFilters} />
+              )}
+            </TabsContent>
+          </>
+        )}
+      </Tabs>
+    </TaskDetails>
   );
 }
 
@@ -222,7 +223,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-48"
           footer={
             filters.statuses.length > 0 && (
@@ -254,7 +254,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-40"
           footer={
             filters.types.length > 0 && (
@@ -286,7 +285,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-40"
           footer={
             filters.priorities.length > 0 && (
@@ -322,7 +320,6 @@ function FiltersToolbar({
         </SelectTrigger>
         <SelectContent
           align="start"
-          alignItemWithTrigger={false}
           className="w-48"
           footer={
             filters.assignees.length > 0 && (
@@ -372,7 +369,7 @@ function SortToolbar({
     <>
       <Select<string> value={sort} onValueChange={onSortChange}>
         <SelectTrigger aria-label="Sort issues">{sortLabel(sort)}</SelectTrigger>
-        <SelectContent align="end" alignItemWithTrigger={false} className="w-48">
+        <SelectContent align="end" className="w-48">
           <SelectGroup>
             <SelectLabel>Sort by</SelectLabel>
             <SelectItem value="manual">Provider order</SelectItem>

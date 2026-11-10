@@ -27,11 +27,35 @@ export function createWorktreeRootSchema(
   platform: NodeJS.Platform = process.platform,
   home: () => string = homedir,
 ) {
+  return createAbsolutePathSchema(
+    platform,
+    home,
+    platform === "win32"
+      ? "Expected worktree_root to be a path starting with a drive letter (C:\\ or C:/), a UNC share (\\\\server\\share), or ~/ or ~\\"
+      : "Expected an absolute path or a path starting with ~/",
+  );
+}
+
+function createProjectPathSchema(
+  platform: NodeJS.Platform = process.platform,
+  home: () => string = homedir,
+) {
+  return createAbsolutePathSchema(
+    platform,
+    home,
+    platform === "win32"
+      ? "Expected a repository path starting with a drive letter, a UNC share, or ~/ or ~\\"
+      : "Expected an absolute repository path or a path starting with ~/",
+  );
+}
+
+function createAbsolutePathSchema(
+  platform: NodeJS.Platform,
+  home: () => string,
+  expectation: string,
+) {
   const windows = platform === "win32";
   const path = windows ? win32 : posix;
-  const expectation = windows
-    ? "Expected worktree_root to be a path starting with a drive letter (C:\\ or C:/), a UNC share (\\\\server\\share), or ~/ or ~\\"
-    : "Expected an absolute path or a path starting with ~/";
 
   return v.pipe(
     v.string(),
@@ -52,6 +76,40 @@ export function createWorktreeRootSchema(
 const worktreeRootSchema = createWorktreeRootSchema();
 
 const nonEmptyString = v.pipe(v.string(), v.nonEmpty());
+const projectKeySchema = v.pipe(
+  nonEmptyString,
+  v.check((key) => key !== "." && key !== "..", "Expected a project key other than . or .."),
+);
+const projectSchema = v.strictObject({ name: nonEmptyString, path: createProjectPathSchema() });
+const hostAliasSchema = v.pipe(
+  v.string(),
+  v.regex(
+    /^[a-z0-9][a-z0-9-]*$/u,
+    "Expected lowercase letters, digits, and hyphens, starting with a letter or digit",
+  ),
+);
+const hostUrlSchema = v.pipe(
+  v.string(),
+  v.check((value) => {
+    try {
+      const match = /^(https?):\/\/([^/?#\\\s]+)(\/?)$/u.exec(value);
+      if (!match) return false;
+
+      const url = new URL(value);
+      return (
+        (url.protocol === "http:" || url.protocol === "https:") &&
+        url.hostname.length > 0 &&
+        !url.username &&
+        !url.password &&
+        !match[2]?.includes("@") &&
+        (url.pathname === "/" || url.pathname === "")
+      );
+    } catch {
+      return false;
+    }
+  }, "Expected an http(s) URL with a hostname and optional port, without credentials, query, fragment, or path"),
+);
+const hostSchema = v.strictObject({ url: hostUrlSchema });
 const kitArgumentSchema = v.union([v.string(), v.number(), v.boolean()]);
 const profileSchema = v.pipe(
   mapping,
@@ -91,6 +149,8 @@ export const ConfigSchema = v.pipe(
         }),
       ),
       worktree_root: v.optional(worktreeRootSchema, () => join(homedir(), ".worktrees")),
+      projects: v.nullish(configMap(projectSchema, projectKeySchema)),
+      hosts: v.optional(configMap(hostSchema, hostAliasSchema)),
     },
     "Expected a configuration object containing only recognized settings",
   ),
@@ -99,9 +159,12 @@ export const ConfigSchema = v.pipe(
 export type Config = v.InferOutput<typeof ConfigSchema>;
 export type SandboxProfile = v.InferOutput<typeof profileSchema>;
 
-function configMap<T extends v.GenericSchema>(value: T) {
+function configMap<T extends v.GenericSchema>(
+  value: T,
+  keySchema: v.GenericSchema = nonEmptyString,
+) {
   const schema = v.pipe(
-    v.custom<Record<string, v.InferOutput<T>>>(
+    v.custom<Record<string, unknown>>(
       (input) => typeof input === "object" && input !== null && !Array.isArray(input),
       "Expected a configuration mapping",
     ),
@@ -113,7 +176,11 @@ function configMap<T extends v.GenericSchema>(value: T) {
           { type: "object", origin: "value", input: dataset.value, key, value: input },
         ] as const;
 
-        if (key.length === 0) addIssue({ message: "Expected a non-empty key", path: [...path] });
+        const keyResult = v.safeParse(keySchema, key);
+        if (!keyResult.success) {
+          for (const issue of keyResult.issues)
+            addIssue({ message: issue.message, path: [...path] });
+        }
 
         const result = v.safeParse(value, input);
 
@@ -124,7 +191,10 @@ function configMap<T extends v.GenericSchema>(value: T) {
         }
       }
     }),
+    v.transform((input) =>
+      Object.fromEntries(Object.entries(input).map(([key, entry]) => [key, v.parse(value, entry)])),
+    ),
   );
 
-  return Object.assign(schema, { key: nonEmptyString, value });
+  return Object.assign(schema, { key: keySchema, value });
 }

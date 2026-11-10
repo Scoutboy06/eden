@@ -60,6 +60,18 @@ test("defaults a missing file without creating it", async () => {
   });
 });
 
+test("reads a null project registry as an absent registry", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const path = join(directory, "config.yaml");
+    await writeFile(path, "projects: null\n");
+
+    expect(await createFileConfigService({ pathsLowToHigh: [path] }).read()).toEqual({
+      ...defaults,
+      projects: null,
+    });
+  });
+});
+
 test.each(["", " \n\t", "# Configure Eden\n  # No settings yet\n"])(
   "rejects an empty or comments-only configuration: %j",
   async (text) => {

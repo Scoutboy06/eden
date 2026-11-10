@@ -22,8 +22,14 @@ export type ConfigSource = { type: "file"; path: string } | { type: "default" };
 export type ResolvedConfig = { config: Config; provenance: Record<string, ConfigSource> };
 
 export interface ConfigService extends ResolvedConfigReader {
+  removeProject(key: string): Promise<void>;
+  addProject(key: string, project: { name: string; path: string }): Promise<void>;
   set(key: string, value: string): Promise<void>;
   editGlobal(): Promise<ConfigDraft>;
+  readHosts(): Promise<NonNullable<Config["hosts"]>>;
+  addHost(alias: string, url: string): Promise<void>;
+  updateHost(alias: string, changes: { url?: string; newAlias?: string }): Promise<void>;
+  removeHost(alias: string): Promise<void>;
 }
 
 export type ConfigChanges = Readonly<Record<string, string | undefined>>;
@@ -88,7 +94,12 @@ export function createFileConfigService(
       for (const layerPath of options.pathsLowToHigh) {
         const { parsed } = await readValidatedConfig(layerPath);
 
-        mergeConfigLayer(merged, parsed, provenance, layerPath);
+        mergeConfigLayer(
+          merged,
+          layerPath === path ? parsed : omitHosts(parsed),
+          provenance,
+          layerPath,
+        );
       }
 
       const config = validateConfig(merged, path);
@@ -103,6 +114,61 @@ export function createFileConfigService(
 
   const service: ConfigService = {
     ...reader,
+    async removeProject(key) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (!Object.hasOwn(config.projects ?? {}, key)) throw new Error("Project not found.");
+      const document = parseDocument(text ?? "{}");
+      document.deleteIn(["projects", key]);
+      await saveProjectRegistry({ path, text, document, execution });
+    },
+    async readHosts() {
+      const { parsed } = await readValidatedConfig(path);
+      return validateConfig(parsed, path).hosts ?? {};
+    },
+    async addProject(key, project) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (Object.hasOwn(config.projects ?? {}, key)) throw new Error("Project key already exists.");
+      const document = parseDocument(text ?? "{}");
+      if (!config.projects) document.set("projects", document.createNode({}));
+      document.setIn(["projects", key], project);
+      await saveProjectRegistry({ path, text, document, execution });
+    },
+    async addHost(alias, url) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (Object.hasOwn(config.hosts ?? {}, alias)) throw new Error("Host alias already exists.");
+      const document = parseDocument(text ?? "{}");
+      if (!config.hosts) document.set("hosts", document.createNode({}));
+      document.setIn(["hosts", alias], { url });
+      await saveConfigMutation({ path, text, document, execution });
+    },
+    async updateHost(alias, changes) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      const hosts = config.hosts ?? {};
+      if (!Object.hasOwn(hosts, alias)) throw new Error("Host not found.");
+      const newAlias = changes.newAlias ?? alias;
+      if (newAlias !== alias && Object.hasOwn(hosts, newAlias))
+        throw new Error("Host alias already exists.");
+      const document = parseDocument(text ?? "{}");
+      const current = hosts[alias];
+      document.deleteIn(["hosts", alias]);
+      document.setIn(["hosts", newAlias], {
+        ...current,
+        ...(changes.url === undefined ? {} : { url: changes.url }),
+      });
+      await saveConfigMutation({ path, text, document, execution });
+    },
+    async removeHost(alias) {
+      const { text, parsed } = await readValidatedConfig(path);
+      const config = validateConfig(parsed, path);
+      if (!Object.hasOwn(config.hosts ?? {}, alias)) throw new Error("Host not found.");
+      const document = parseDocument(text ?? "{}");
+      document.deleteIn(["hosts", alias]);
+      await saveConfigMutation({ path, text, document, execution });
+    },
     async editGlobal() {
       const { text, parsed } = await readValidatedConfig(path);
 
@@ -198,43 +264,81 @@ function mergeConfigLayer(
   for (const [key, value] of Object.entries(layer)) {
     const keys = [...prefix, key];
 
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const isNewProfile =
-        prefix.length === 2 &&
-        prefix[0] === "sandbox" &&
-        prefix[1] === "profiles" &&
-        !Object.hasOwn(target, key);
-      if (isNewProfile && Object.keys(value).length === 0) {
-        provenance[formatConfigPath(keys)] = { type: "file", path };
-      } else if (
-        prefix.length === 2 &&
-        prefix[0] === "sandbox" &&
-        prefix[1] === "profiles" &&
-        Object.keys(value).length > 0
-      ) {
-        delete provenance[formatConfigPath(keys)];
-      }
+    if (isConfigObject(value)) {
+      mergeConfigObject(target, key, value, provenance, path, keys, prefix);
+      continue;
+    }
 
-      if (!Object.hasOwn(target, key)) {
-        Object.defineProperty(target, key, {
-          value: {},
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      }
+    setConfigValue(target, key, value);
+    clearConfigProvenance(provenance, keys);
+    provenance[formatConfigPath(keys)] = { type: "file", path };
+  }
+}
 
-      const nested = target[key] as Record<string, unknown>;
+function mergeConfigObject(
+  target: Record<string, unknown>,
+  key: string,
+  value: Record<string, unknown>,
+  provenance: Record<string, ConfigSource>,
+  path: string,
+  keys: string[],
+  prefix: string[],
+): void {
+  const wasPresent = Object.hasOwn(target, key);
+  const current = wasPresent ? target[key] : undefined;
+  if (!isConfigObject(current)) {
+    clearConfigProvenance(provenance, keys);
+    setConfigValue(target, key, {});
+  }
 
-      mergeConfigLayer(nested, value as Record<string, unknown>, provenance, path, keys);
-    } else {
-      Object.defineProperty(target, key, {
-        value,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-      provenance[formatConfigPath(keys)] = { type: "file", path };
+  applyProfileProvenance(target, key, value, provenance, path, keys, prefix, wasPresent);
+  mergeConfigLayer(target[key] as Record<string, unknown>, value, provenance, path, keys);
+}
+
+function applyProfileProvenance(
+  target: Record<string, unknown>,
+  key: string,
+  value: Record<string, unknown>,
+  provenance: Record<string, ConfigSource>,
+  path: string,
+  keys: string[],
+  prefix: string[],
+  wasPresent: boolean,
+): void {
+  if (prefix[0] !== "sandbox" || prefix[1] !== "profiles" || prefix.length !== 2) return;
+
+  const profilePath = formatConfigPath(keys);
+  if (Object.keys(value).length === 0 && !wasPresent) {
+    provenance[profilePath] = { type: "file", path };
+  } else if (Object.keys(value).length > 0) {
+    delete provenance[profilePath];
+  }
+}
+
+function isConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function omitHosts(config: Record<string, unknown>): Record<string, unknown> {
+  const { hosts: _hosts, ...localConfig } = config;
+  return localConfig;
+}
+
+function setConfigValue(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function clearConfigProvenance(provenance: Record<string, ConfigSource>, keys: string[]): void {
+  const prefix = formatConfigPath(keys);
+
+  for (const key of Object.keys(provenance)) {
+    if (key === prefix || key.startsWith(`${prefix}.`) || key.startsWith(`${prefix}[`)) {
+      delete provenance[key];
     }
   }
 }
@@ -341,4 +445,45 @@ function validateConfig(parsed: unknown, path: string): Config {
   }
 
   return result.output;
+}
+
+async function saveProjectRegistry({
+  path,
+  text,
+  document,
+  execution,
+}: {
+  path: string;
+  text: string | undefined;
+  document: ReturnType<typeof parseDocument>;
+  execution: Execution;
+}) {
+  await saveConfigMutation({ path, text, document, execution, checkDuringDryRun: true });
+}
+
+async function saveConfigMutation({
+  path,
+  text,
+  document,
+  execution,
+  checkDuringDryRun = false,
+}: {
+  path: string;
+  text: string | undefined;
+  document: ReturnType<typeof parseDocument>;
+  execution: Execution;
+  checkDuringDryRun?: boolean;
+}) {
+  const edited = document.toString();
+  validateConfig(parseConfigYaml(edited, path), path);
+  if ((!execution.dryRun || checkDuringDryRun) && (await readConfigFile(path)) !== text)
+    throw new Error("Configuration changed. Try again.");
+  await execution.mutate(
+    {
+      type: "config.setup",
+      description: `Update global configuration in ${path}`,
+      input: { path },
+    },
+    () => writeConfigFile(path, edited),
+  );
 }

@@ -65,6 +65,18 @@ export async function resolvePullRequestLookup(
   return { kind: "branch", repository, sourceBranch };
 }
 
+export async function resolveRepository(
+  input: Pick<PullRequestInput, "repo" | "remote">,
+  git: GitContext,
+): Promise<RepositoryRef> {
+  if (input.repo !== undefined && input.remote !== undefined)
+    throw new ScmError("SCM_CONFLICTING_INPUT", "Choose either --repo or --remote, not both.");
+  if (input.repo === "" || input.remote === "")
+    throw new ScmError("SCM_INVALID_OPTIONS", "Repository selectors must not be empty.");
+
+  return (await explicitRepository(input, git)) ?? (await inferredRepository(git));
+}
+
 function validateInput(input: PullRequestInput): void {
   if (input.repo && input.remote)
     throw new ScmError("SCM_CONFLICTING_INPUT", "Choose either --repo or --remote, not both.");

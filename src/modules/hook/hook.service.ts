@@ -25,7 +25,7 @@ export type HookInput = WorktreeHookInput | SandboxHookInput;
 
 export type HookError = { code: string; message: string; exitCode?: number; signal?: string };
 
-type HookDetails = { name: string; input: HookInput; stderr: string };
+export type HookDetails = { name: string; input: HookInput; stderr: string };
 
 export type HookExecution = HookDetails &
   (

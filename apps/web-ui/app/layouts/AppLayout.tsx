@@ -9,7 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 const DRAG_THRESHOLD = 24;
 
 export function AppLayout() {
-  const isDoingPage = useMatch("/doing") !== null;
+  const isDoingPage = useMatch("/p/:project/doing") !== null;
   const [selectedTaskKey, setSelectedTaskKey] = useState(tasks[0]!.key);
   const [tasksOpen, setTasksOpen] = useState(
     () => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches,

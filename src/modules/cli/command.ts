@@ -4,7 +4,7 @@ import type { EdenExtensions } from "./options";
 import { createCommandServices } from "./services";
 import type { CommandServices } from "./services";
 
-type EdenParams<A extends Args> = {
+export type EdenParams<A extends Args> = {
   args: A;
   extensions: { eden: EdenExtensions };
 };

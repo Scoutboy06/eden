@@ -27,7 +27,7 @@ import type { Issue, IssueGroup } from "@/components/issue/issue";
 
 import { KanbanCard } from "./kanban-card";
 
-type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
+export type KanbanBoardProps = Omit<React.ComponentProps<"div">, "onChange"> & {
   columns: IssueGroup[];
   allowReorder?: boolean;
   readOnly?: boolean;
@@ -130,22 +130,19 @@ export function KanbanBoard({
 
   if (readOnly) {
     return (
-      <div className={cn("flex flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
+      <div className={cn("flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
         {committedColumns.map((column) => (
           <section
             key={column.id}
             aria-label={column.title}
-            className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/50 p-2"
+            className="flex min-h-0 w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
           >
-            <header className="flex items-center justify-between px-1 py-0.5">
-              <h2 className="text-sm font-medium">{column.title}</h2>
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {column.items.length}
-              </span>
-            </header>
-            {column.items.map((item) => (
-              <KanbanCard key={item.id} item={item} className="cursor-default" />
-            ))}
+            <ColumnHeader column={column} />
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1">
+              {column.items.map((item) => (
+                <KanbanCard key={item.id} item={item} />
+              ))}
+            </div>
           </section>
         ))}
       </div>
@@ -161,7 +158,7 @@ export function KanbanBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className={cn("flex flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
+      <div className={cn("flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
         {columns.map((column) => (
           <KanbanColumn key={column.id} column={column} />
         ))}
@@ -182,17 +179,14 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
   return (
     <section
       aria-label={column.title}
-      className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/50 p-2"
+      className="flex min-h-0 w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
     >
-      <header className="flex items-center justify-between px-1 py-0.5">
-        <h2 className="text-sm font-medium">{column.title}</h2>
-        <span className="text-xs text-muted-foreground tabular-nums">{column.items.length}</span>
-      </header>
+      <ColumnHeader column={column} />
       <SortableContext items={column.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div
           ref={setNodeRef}
           className={cn(
-            "flex min-h-20 flex-1 flex-col gap-2 rounded-lg transition-colors",
+            "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1 transition-colors",
             isOver && column.items.length === 0 && "bg-accent/50",
           )}
         >
@@ -202,6 +196,29 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
         </div>
       </SortableContext>
     </section>
+  );
+}
+
+function ColumnHeader({ column }: { column: IssueGroup }) {
+  return (
+    <header className="flex min-h-7 shrink-0 items-center gap-2 px-1 pb-1">
+      <span
+        aria-hidden
+        className={cn("size-2 shrink-0 rounded-full", column.color ?? "bg-muted-foreground")}
+      />
+      <h2 className="shrink-0 text-xs font-semibold tracking-tight">{column.title}</h2>
+      <span className="rounded-full bg-foreground/5 px-2 py-0.5 font-mono text-[10px] leading-none text-muted-foreground ring-1 ring-foreground/10 tabular-nums">
+        {column.items.length}
+      </span>
+      {column.source && (
+        <span
+          title={column.source.detail}
+          className="ml-auto truncate font-mono text-[9px] text-muted-foreground"
+        >
+          {column.source.label}
+        </span>
+      )}
+    </header>
   );
 }
 

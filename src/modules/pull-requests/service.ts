@@ -1,4 +1,5 @@
 import { ScmError } from "./errors";
+import { validatePullRequestComment } from "./comment-input";
 import type {
   PullRequestCreateInput,
   PullRequestPatch,
@@ -6,6 +7,11 @@ import type {
   PullRequestRef,
   PullRequestWriter,
   PullRequestReopener,
+  PullRequestCloser,
+  PullRequestCommenter,
+  PullRequestCommentInput,
+  PullRequestLister,
+  PullRequestListQuery,
   RepositoryRef,
 } from "./provider";
 import { createExecution } from "../execution/execution";
@@ -13,6 +19,7 @@ import type { Execution } from "../execution/types";
 import {
   createGitContext,
   resolvePullRequestLookup,
+  resolveRepository,
   type GitContext,
   type PullRequestInput,
 } from "./resolve";
@@ -32,8 +39,52 @@ export class PullRequestService {
     private readonly execution: Execution = createExecution({ dryRun: false }),
   ) {}
 
+  async list(
+    input: Pick<PullRequestInput, "repo" | "remote"> & {
+      state?: PullRequestListQuery["state"];
+      author?: string;
+      draft?: boolean;
+      limit?: number;
+    },
+  ) {
+    const state = input.state ?? "open";
+    const limit = input.limit ?? 30;
+    if (!["open", "closed", "merged", "all"].includes(state))
+      throw new ScmError("SCM_INVALID_OPTIONS", "--state must be open, closed, merged or all.");
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new ScmError("SCM_INVALID_OPTIONS", "--limit must be a positive safe integer.");
+    if (
+      input.author !== undefined &&
+      (input.author.length > 39 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(input.author))
+    )
+      throw new ScmError("SCM_INVALID_OPTIONS", "--author must be a GitHub user login.");
+    const repository = await resolveRepository(input, this.git);
+    if (repository.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr list currently supports GitHub only; Azure DevOps listing is deferred.",
+      );
+    const provider = await this.createProvider(repository);
+    if (!("listPullRequests" in provider) || typeof provider.listPullRequests !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot list pull requests.");
+    const prs = await (provider as PullRequestProvider & PullRequestLister).listPullRequests({
+      repository,
+      state,
+      limit,
+      ...(input.author !== undefined ? { author: input.author } : {}),
+      ...(input.draft !== undefined ? { draft: input.draft } : {}),
+    });
+
+    return { repository, prs };
+  }
+
   async create(input: Omit<PullRequestCreateInput, "repository"> & { repository: RepositoryRef }) {
     validateCreate(input);
+    if (input.repository.provider !== "github" && (input.reviewers?.length || input.labels?.length))
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "Reviewer and label creation is only supported for GitHub.",
+      );
     const provider = await this.createProvider(input.repository);
     const writer = pullRequestWriter(provider);
     let result: Awaited<ReturnType<PullRequestWriter["createPullRequest"]>> | undefined;
@@ -49,6 +100,40 @@ export class PullRequestService {
     );
 
     return result;
+  }
+
+  async createByReference(
+    input: PullRequestInput & {
+      title: string;
+      body: string;
+      base: string;
+      draft?: boolean;
+      reviewers?: string[];
+      labels?: string[];
+    },
+  ) {
+    const lookup = await resolvePullRequestLookup(input, this.git);
+    if (lookup.repository.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr create currently supports GitHub only; Azure DevOps creation is deferred.",
+      );
+    if (lookup.kind !== "branch")
+      throw new ScmError(
+        "SCM_INVALID_OPTIONS",
+        "PR creation requires a source branch, not an existing PR reference.",
+      );
+
+    return this.create({
+      repository: lookup.repository,
+      sourceBranch: lookup.sourceBranch,
+      targetBranch: input.base,
+      title: input.title,
+      body: input.body,
+      draft: input.draft ?? false,
+      reviewers: input.reviewers,
+      labels: input.labels,
+    });
   }
 
   async edit(ref: PullRequestRef, patch: PullRequestPatch) {
@@ -72,6 +157,67 @@ export class PullRequestService {
 
   async editByReference(input: PullRequestInput & { ref: string }, patch: PullRequestPatch) {
     return this.edit(await this.exactReference(input), patch);
+  }
+
+  async comment(input: PullRequestInput & { ref: string } & PullRequestCommentInput) {
+    validatePullRequestComment(input);
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr comment currently supports GitHub only; Azure DevOps commenting is deferred.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("addComment" in provider) || typeof provider.addComment !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot post PR comments.");
+    const commenter = provider as PullRequestProvider & PullRequestCommenter;
+    const comment = {
+      body: input.body,
+      ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+    };
+    let result: Awaited<ReturnType<PullRequestCommenter["addComment"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-comment",
+        description: input.replyTo ? "Reply to GitHub review comment" : "Post GitHub PR comment",
+        input: { ref, ...comment },
+      },
+      async () => {
+        result = await commenter.addComment(ref, comment);
+      },
+    );
+
+    return result;
+  }
+
+  async close(input: PullRequestInput & { ref: string; comment?: string }) {
+    if (input.comment !== undefined && !input.comment.trim())
+      throw new ScmError("SCM_INVALID_OPTIONS", "--comment must not be blank.");
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr close currently supports GitHub only; Azure DevOps closing is deferred.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("closePullRequest" in provider) || typeof provider.closePullRequest !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot close pull requests.");
+    const closer = provider as PullRequestProvider & PullRequestCloser;
+    let result: Awaited<ReturnType<PullRequestCloser["closePullRequest"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-close",
+        description: "Close GitHub pull request; comment only after a new closure",
+        input: { ref, ...(input.comment !== undefined ? { comment: input.comment } : {}) },
+      },
+      async () => {
+        result = await closer.closePullRequest(ref, { comment: input.comment });
+      },
+    );
+
+    return result;
   }
 
   async reopen(input: PullRequestInput & { ref: string }) {
@@ -225,6 +371,14 @@ function validateCreate(
   )
     invalidInput("An Azure DevOps organization, project, and repository target are required.");
   if (!input.title.trim()) invalidInput("A pull request title must not be blank.");
+  if (
+    input.reviewers?.some(
+      (name) => name.length > 39 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(name),
+    )
+  )
+    invalidInput("Reviewers must be GitHub user logins, not teams or URLs.");
+  if (input.labels?.some((name) => !name.trim() || /[\r\n\0]/.test(name)))
+    invalidInput("Labels must be nonempty names without null bytes or line breaks.");
   validateBranch(input.sourceBranch);
   validateBranch(input.targetBranch);
 }

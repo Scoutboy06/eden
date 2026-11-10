@@ -1,6 +1,8 @@
 import { defineCommand } from "../../../../src/modules/cli";
 import { ScmError } from "../../../../src/modules/pull-requests/errors";
 import { buildPullRequestPatch } from "../../../../src/modules/pull-requests/edit-input";
+import { buildPullRequestCreate } from "../../../../src/modules/pull-requests/create-input";
+import { buildPullRequestComment } from "../../../../src/modules/pull-requests/comment-input";
 
 const args = {
   ref: {
@@ -12,6 +14,81 @@ const args = {
   remote: { type: "string", description: "Local Git remote selecting the target repository" },
   head: { type: "string", description: "Source branch to search for an open PR" },
 } as const;
+
+const list = defineCommand({
+  name: "list",
+  description: "List GitHub PRs, newest created first",
+  args: {
+    repo: args.repo,
+    remote: args.remote,
+    state: {
+      type: "string",
+      choices: ["open", "closed", "merged", "all"],
+      description: "PR state (default: open; closed excludes merged)",
+    },
+    author: { type: "string", description: "Filter by GitHub user login" },
+    draft: { type: "boolean", description: "Show draft PRs only" },
+    limit: { type: "number", description: "Maximum matching PRs (positive integer; default: 30)" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.list({
+      ...ctx.values,
+      state: ctx.values.state as "open" | "closed" | "merged" | "all" | undefined,
+      draft: ctx.values.draft ? true : undefined,
+    });
+
+    output.write({
+      data: result,
+      human: () =>
+        result.prs
+          .map(
+            (pr) =>
+              `${pr.ref.provider === "github" ? `#${pr.ref.number}` : pr.ref.id}\t${pr.state}${pr.isDraft ? " (draft)" : ""}\t${pr.title}\n${pr.url}`,
+          )
+          .join("\n") || "No pull requests.",
+    });
+  },
+});
+
+const create = defineCommand({
+  name: "create",
+  description: "Create a GitHub PR (never pushes branches)",
+  args: {
+    repo: args.repo,
+    remote: args.remote,
+    head: {
+      type: "string",
+      description: "Source branch (defaults to current branch; must already be pushed)",
+    },
+    base: { type: "string", required: true, description: "Target branch" },
+    title: { type: "string", required: true, parse: (value) => value, description: "PR title" },
+    body: {
+      type: "string",
+      parse: (value) => value,
+      description: "PR description (defaults to empty)",
+    },
+    "body-file": {
+      type: "string",
+      parse: (value) => value,
+      description: "Read description from a UTF-8 file; excludes --body",
+    },
+    draft: { type: "boolean", description: "Create a draft PR" },
+    reviewer: {
+      type: "string",
+      description: "Comma-separated GitHub user logins to request review from",
+    },
+    label: { type: "string", description: "Comma-separated labels to apply after creation" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const input = await buildPullRequestCreate({
+      ...ctx.values,
+      bodyFile: ctx.values["body-file"],
+    });
+    const pr = await pullRequests.createByReference({ ...ctx.values, ...input });
+
+    if (pr) output.write({ data: { pr }, human: () => `${pr.title}\n${pr.url}` });
+  },
+});
 
 const show = defineCommand({
   name: "show",
@@ -201,6 +278,61 @@ const status = defineCommand({
   },
 });
 
+const comment = defineCommand({
+  name: "comment",
+  description: "Post a GitHub PR comment or reply to an inline review thread",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    body: {
+      type: "string",
+      parse: (value) => value,
+      description: "Comment body; excludes --body-file",
+    },
+    "body-file": {
+      type: "string",
+      parse: (value) => value,
+      description: "Read comment body from a UTF-8 file; excludes --body",
+    },
+    "reply-to": {
+      type: "string",
+      description:
+        "Root inline review comment ID (review:<id> from pr show --comments); discussion replies unsupported",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const input = await buildPullRequestComment({
+      ...ctx.values,
+      bodyFile: ctx.values["body-file"],
+      replyTo: ctx.values["reply-to"],
+    });
+    const comment = await pullRequests.comment({ ...ctx.values, ...input });
+
+    if (comment) output.write({ data: { comment }, human: () => `${comment.id}\n${comment.url}` });
+  },
+});
+
+const close = defineCommand({
+  name: "close",
+  description: "Close a GitHub PR (already-closed PRs are unchanged; merged PRs are rejected)",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    comment: {
+      type: "string",
+      parse: (value) => value,
+      description: "Add a comment after newly closing; ignored if already closed",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const pr = await pullRequests.close(ctx.values);
+
+    if (pr) output.write({ data: { pr }, human: () => `${pr.title}\n${pr.state}\n${pr.url}` });
+  },
+});
+
 const reopen = defineCommand({
   name: "reopen",
   description: "Reopen a closed PR (merged PRs cannot be reopened)",
@@ -219,5 +351,5 @@ const reopen = defineCommand({
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { show, checks, reviewers, edit, status, reopen },
+  subCommands: { list, create, show, checks, reviewers, edit, status, comment, close, reopen },
 });

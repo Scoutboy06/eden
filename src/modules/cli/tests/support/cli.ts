@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 
 const application = fileURLToPath(new URL("../../../../../apps/cli/src/main.ts", import.meta.url));
 
-type CliOptions = { cwd: string; env?: Record<string, string | undefined> };
+export type CliOptions = { cwd: string; env?: Record<string, string | undefined> };
 
 export async function withRunningCli<T>(
   options: CliOptions,

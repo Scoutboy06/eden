@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
 import type { Credential } from "../../modules/pull-requests/credentials";
+import { validatePullRequestComment } from "../../modules/pull-requests/comment-input";
 import type {
   PullRequest,
   PullRequestCheck,
@@ -11,14 +12,53 @@ import type {
   PullRequestRef,
   PullRequestWriter,
   PullRequestReopener,
+  PullRequestCloser,
+  PullRequestCommenter,
+  PullRequestCommentInput,
   PullRequestReview,
   RepositoryRef,
+  PullRequestLister,
+  PullRequestListQuery,
+  PullRequestListItem,
 } from "../../modules/pull-requests/provider";
 
+type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
+
 export class GitHubApiProvider
-  implements PullRequestProvider, PullRequestWriter, PullRequestReopener
+  implements
+    PullRequestProvider,
+    PullRequestWriter,
+    PullRequestReopener,
+    PullRequestLister,
+    PullRequestCloser,
+    PullRequestCommenter
 {
   constructor(private readonly client: Octokit) {}
+
+  listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]> {
+    return providerRequest(async () => {
+      const repository = githubRepository(query.repository);
+      const results: PullRequestListItem[] = [];
+      for await (const { data } of this.client.paginate.iterator(this.client.pulls.list, {
+        owner: repository.owner,
+        repo: repository.repository,
+        state: query.state === "merged" ? "closed" : query.state,
+        sort: "created",
+        direction: "desc",
+        per_page: Math.min(100, query.limit),
+      })) {
+        for (const dataPr of data) {
+          const pr = normalizeListItem(dataPr);
+          assertPullRequestIdentity(pr, { ...repository, number: dataPr.number });
+          if (!matchesListQuery(pr, query)) continue;
+          results.push(pr);
+          if (results.length === query.limit) return results;
+        }
+      }
+
+      return results;
+    });
+  }
 
   createPullRequest(input: PullRequestCreateInput): Promise<PullRequest> {
     return providerRequest(async () => {
@@ -33,15 +73,129 @@ export class GitHubApiProvider
         base: input.targetBranch,
         draft: input.draft,
       });
-      return normalizePullRequest(data, {
-        ...input.repository,
-        number: data.number,
-      });
+      let pr: PullRequest;
+      try {
+        pr = normalizePullRequest(data);
+        if (!Number.isSafeInteger(data.number) || data.number < 1) invalidResponse();
+        assertPullRequestIdentity(pr, { ...input.repository, number: data.number });
+        const url = new URL(pr.url);
+        if (
+          url.origin !== "https://github.com" ||
+          url.pathname.toLowerCase() !==
+            `/${input.repository.owner}/${input.repository.repository}/pull/${data.number}`.toLowerCase()
+        )
+          invalidResponse();
+      } catch {
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          "The pull request may have been created, but its response could not be verified. Inspect the repository before retrying.",
+        );
+      }
+      try {
+        if (input.reviewers?.length)
+          await this.client.pulls.requestReviewers({
+            ...parameters(pr.ref),
+            reviewers: input.reviewers,
+          });
+        if (input.labels?.length)
+          await this.client.issues.addLabels({
+            owner: input.repository.owner,
+            repo: input.repository.repository,
+            issue_number: data.number,
+            labels: input.labels,
+          });
+      } catch (error) {
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          `PR created: ${pr.url}; reviewers or labels could not be fully applied. Do not retry creation. ${safeFailureDetails(error)}`,
+        );
+      }
+
+      return pr;
     });
   }
 
   editPullRequest(ref: PullRequestRef, patch: PullRequestPatch): Promise<PullRequest> {
     return providerRequest(() => editPullRequest(this.client, ref, patch));
+  }
+
+  addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment> {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      const replyId = validatePullRequestComment(input);
+      const { data: pr } = await this.client.pulls.get(parameters(ref));
+      assertPullRequestIdentity(normalizePullRequest(pr), ref);
+      if (replyId !== undefined) {
+        const { data: target } = await this.client.pulls.getReviewComment({
+          owner: ref.owner,
+          repo: ref.repository,
+          comment_id: replyId,
+        });
+        if (target.id !== replyId || !samePrApiUrl(target.pull_request_url, ref))
+          throw new ScmError(
+            "SCM_INVALID_REFERENCE",
+            "The reply target does not belong to the selected pull request.",
+          );
+        if (target.in_reply_to_id != null)
+          throw new ScmError(
+            "SCM_UNSUPPORTED_OPERATION",
+            "GitHub replies must target a root review comment, not another reply. Use review:<root comment ID>.",
+          );
+      }
+      let data;
+      try {
+        data = await providerRequest(async () =>
+          replyId === undefined
+            ? (await postDiscussionComment(this.client, ref, input.body)).data
+            : (
+                await this.client.pulls.createReplyForReviewComment({
+                  ...parameters(ref),
+                  comment_id: replyId,
+                  body: input.body,
+                })
+              ).data,
+        );
+      } catch (error) {
+        if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+        throw commentConfirmationFailure(ref, error);
+      }
+      try {
+        return normalizeCreatedComment(data, ref, replyId);
+      } catch (error) {
+        throw commentConfirmationFailure(ref, error);
+      }
+    });
+  }
+
+  closePullRequest(ref: PullRequestRef, options: { comment?: string } = {}): Promise<PullRequest> {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      if (options.comment !== undefined && !options.comment.trim())
+        throw new ScmError("SCM_INVALID_OPTIONS", "--comment must not be blank.");
+      const input = parameters(ref);
+      const { data } = await this.client.pulls.get(input);
+      const current = normalizePullRequest(data);
+      assertPullRequestIdentity(current, ref);
+      if (current.state === "merged")
+        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be closed.");
+      if (current.state === "closed") return current;
+      const result = await closeGitHubPullRequest(this.client, ref);
+      if (options.comment !== undefined) {
+        try {
+          const { data: comment } = await postDiscussionComment(this.client, ref, options.comment);
+          if (!Number.isSafeInteger(comment.id) || comment.id < 1) invalidResponse();
+        } catch (error) {
+          throw new ScmError(
+            "SCM_PARTIAL_FAILURE",
+            `PR closed: ${result.url}; the closing comment could not be confirmed. Do not retry automatically; inspect the PR before adding a comment. ${safeFailureDetails(error)}`,
+          );
+        }
+      }
+
+      return result;
+    });
   }
 
   reopenPullRequest(ref: PullRequestRef): Promise<PullRequest> {
@@ -371,6 +525,130 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
   return result;
 }
 
+function postDiscussionComment(
+  client: Octokit,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  body: string,
+) {
+  return client.issues.createComment({
+    owner: ref.owner,
+    repo: ref.repository,
+    issue_number: ref.number,
+    body,
+  });
+}
+
+function samePrApiUrl(url: string, ref: Extract<PullRequestRef, { provider: "github" }>): boolean {
+  return (
+    url?.toLowerCase() ===
+    `https://api.github.com/repos/${ref.owner}/${ref.repository}/pulls/${ref.number}`.toLowerCase()
+  );
+}
+
+function commentConfirmationFailure(
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  error: unknown,
+): ScmError {
+  return new ScmError(
+    "SCM_PARTIAL_FAILURE",
+    `The comment may have been posted on https://github.com/${ref.owner}/${ref.repository}/pull/${ref.number}, but could not be confirmed. Inspect the PR before retrying to avoid duplicate comments. ${safeFailureDetails(error)}`,
+  );
+}
+
+function normalizeCreatedComment(
+  data:
+    | Awaited<ReturnType<Octokit["issues"]["createComment"]>>["data"]
+    | Awaited<ReturnType<Octokit["pulls"]["createReplyForReviewComment"]>>["data"],
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  replyId: number | undefined,
+): PullRequestComment {
+  if (!Number.isSafeInteger(data.id) || data.id < 1 || typeof data.body !== "string")
+    invalidResponse();
+  const url = new URL(data.html_url);
+  const path = `/${ref.owner}/${ref.repository}/pull/${ref.number}`.toLowerCase();
+  if (
+    url.origin !== "https://github.com" ||
+    !(url.pathname.toLowerCase() === path || url.pathname.toLowerCase().startsWith(`${path}/`))
+  )
+    invalidResponse();
+  if (replyId === undefined) {
+    if (
+      !("issue_url" in data) ||
+      data.issue_url.toLowerCase() !==
+        `https://api.github.com/repos/${ref.owner}/${ref.repository}/issues/${ref.number}`.toLowerCase()
+    )
+      invalidResponse();
+  } else if (
+    !("pull_request_url" in data) ||
+    !samePrApiUrl(data.pull_request_url, ref) ||
+    data.in_reply_to_id !== replyId
+  )
+    invalidResponse();
+
+  return {
+    id: `${replyId === undefined ? "issue" : "review"}:${data.id}`,
+    body: data.body,
+    author: data.user ? { id: `user:${data.user.id}`, name: data.user.login } : null,
+    url: data.html_url,
+    createdAt: data.created_at,
+    ...(replyId !== undefined ? { threadId: String(replyId) } : {}),
+  };
+}
+
+async function closeGitHubPullRequest(
+  client: Octokit,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+): Promise<PullRequest> {
+  let updated;
+  try {
+    updated = (
+      await providerRequest(() => client.pulls.update({ ...parameters(ref), state: "closed" }))
+    ).data;
+  } catch (error) {
+    if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `The PR may have closed: https://github.com/${ref.owner}/${ref.repository}/pull/${ref.number}. Inspect it before retrying. ${safeFailureDetails(error)}`,
+    );
+  }
+  try {
+    const result = normalizePullRequest(updated);
+    assertPullRequestIdentity(result, ref);
+    if (result.state !== "closed") invalidResponse();
+
+    return result;
+  } catch (error) {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `The PR may have closed: https://github.com/${ref.owner}/${ref.repository}/pull/${ref.number}, but its response could not be verified. ${safeFailureDetails(error)}`,
+    );
+  }
+}
+
+function normalizeListItem(data: GitHubListItem): PullRequestListItem {
+  if (
+    !Number.isSafeInteger(data.number) ||
+    data.number < 1 ||
+    !["open", "closed"].includes(data.state) ||
+    !(data.merged_at === null || typeof data.merged_at === "string") ||
+    (data.user != null && typeof data.user.login !== "string")
+  )
+    invalidResponse();
+
+  return {
+    ...normalizePullRequest({ ...data, merged: data.merged_at !== null }),
+    author: data.user ? { id: `user:${data.user.id}`, name: data.user.login } : null,
+  };
+}
+
+function matchesListQuery(pr: PullRequestListItem, query: PullRequestListQuery): boolean {
+  if (query.state !== "all" && pr.state !== query.state) return false;
+  if (query.author !== undefined && pr.author?.name.toLowerCase() !== query.author.toLowerCase())
+    return false;
+
+  return query.draft === undefined || pr.isDraft === query.draft;
+}
+
 function safeFailureDetails(error: unknown): string {
   return error instanceof ScmError
     ? `${error.code}: ${error.message}`
@@ -408,6 +686,7 @@ function assertPullRequestIdentity(
 
 function normalizePullRequest(
   data:
+    | (GitHubListItem & { merged: boolean })
     | Awaited<ReturnType<Octokit["pulls"]["get"]>>["data"]
     | Awaited<ReturnType<Octokit["pulls"]["create"]>>["data"]
     | Awaited<ReturnType<Octokit["pulls"]["update"]>>["data"],

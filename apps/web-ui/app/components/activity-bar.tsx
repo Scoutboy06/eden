@@ -2,7 +2,7 @@ import { Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useState, type ReactElement } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 
 import { ProjectSelect } from "@/components/project-select";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -34,18 +34,20 @@ export function ActivityBar() {
 
 function ActivityBarGroup({ items }: { items: readonly NavigationItem[] }) {
   const { pathname } = useLocation();
+  const { project } = useParams();
 
   return (
     <ul className="flex flex-col">
       {items.map((item) => {
-        const active = pathname === item.href;
+        const href = `/p/${encodeURIComponent(project ?? "")}${item.href ? `/${item.href}` : ""}`;
+        const active = pathname === href;
         return (
           <li key={item.href}>
             <ActivityBarItem
               title={item.title}
               icon={item.icon}
               active={active}
-              render={<Link to={item.href} aria-current={active ? "page" : undefined} />}
+              render={<Link to={href} aria-current={active ? "page" : undefined} />}
             />
           </li>
         );

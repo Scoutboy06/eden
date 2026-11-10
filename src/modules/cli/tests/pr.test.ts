@@ -6,6 +6,247 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
+test("PR comment declares inputs and renders discussion and reply identities", async () => {
+  const help = await runCli("pr", "comment", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--body", "--body-file", "--reply-to"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  const args = ["pr", "comment", "https://github.com/acme/app/pull/12", "--body", "Hello"];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--reply-to", "review:56", "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("issue:34\nhttps://github.com/acme/app/pull/12#issuecomment-34");
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    comment: { id: "review:34", body: "Hello", threadId: "56" },
+  });
+});
+
+test("PR comment dry-run sends no HTTP and input/provider failures are structured", async () => {
+  const args = ["pr", "comment", "https://github.com/acme/app/pull/12", "--body", "Hello"];
+  const dry = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    ...args,
+    "--reply-to",
+    "review:56",
+    "--dry-run",
+    "--json",
+  );
+  const invalid = await runPr(...args, "--body-file", "missing");
+  const unsupported = await runPr(...args, "--reply-to", "issue:56", "--json");
+  const denied = await runPrWithEnv({ PR_COMMENT_FAIL: "1" }, ...args, "--json");
+
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-comment", input: { body: "Hello", replyTo: "review:56" } }],
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(invalid.stdout).toBe("");
+  expect(invalid.stderr).toContain("mutually exclusive");
+  expect(unsupported.exitCode).toBe(1);
+  expect(JSON.parse(unsupported.stdout)).toMatchObject({
+    error: { code: "SCM_UNSUPPORTED_OPERATION" },
+  });
+  expect(denied.exitCode).toBe(1);
+  expect(JSON.parse(denied.stdout)).toMatchObject({ error: { code: "SCM_ACCESS_DENIED" } });
+  expect(denied.stdout).not.toContain("secret-token");
+});
+
+test("PR close declares comment, renders success and records no-HTTP dry-run", async () => {
+  const help = await runCli("pr", "close", "--help");
+  const completion = await runCli("completion", "bash");
+  expect(help.stdout).toContain("--comment");
+  expect(completion.stdout).toContain("--comment");
+  const args = [
+    "pr",
+    "close",
+    "https://github.com/acme/app/pull/12",
+    "--comment",
+    "Closing this PR",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json");
+  const dry = await runPrWithEnv({ PR_FORBID_REQUESTS: "1" }, ...args, "--dry-run", "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("closed\nhttps://github.com/acme/app/pull/12");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    pr: { state: "closed", ref: { number: 12 } },
+  });
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-close", input: { comment: "Closing this PR" } }],
+  });
+});
+
+test("PR close reports metadata partial failure and remains idempotent for closed PRs", async () => {
+  const args = [
+    "pr",
+    "close",
+    "https://github.com/acme/app/pull/12",
+    "--comment",
+    "Closing",
+    "--json",
+  ];
+  const partial = await runPrWithEnv({ PR_COMMENT_FAIL: "1" }, ...args);
+  const closed = await runPrWithEnv({ PR_COMMENT_FAIL: "1", PR_STATE: "closed" }, ...args);
+  const merged = await runPrWithEnv({ PR_STATE: "merged" }, ...args);
+
+  expect(partial.exitCode).toBe(1);
+  expect(JSON.parse(partial.stdout)).toMatchObject({
+    error: {
+      code: "SCM_PARTIAL_FAILURE",
+      message: expect.stringContaining("PR closed: https://github.com/acme/app/pull/12"),
+    },
+  });
+  expect(partial.stdout).not.toContain("secret-token");
+  expect(closed.exitCode).toBe(0);
+  expect(JSON.parse(closed.stdout)).toMatchObject({ ok: true, pr: { state: "closed" } });
+  expect(merged.exitCode).toBe(1);
+  expect(JSON.parse(merged.stdout)).toMatchObject({ error: { code: "SCM_INVALID_STATE" } });
+});
+
+test("PR list declares filters and renders human and JSON results", async () => {
+  const help = await runCli("pr", "list", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--repo", "--remote", "--state", "--author", "--draft", "--limit"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  expect(completion.stdout).toContain("merged");
+  const args = [
+    "pr",
+    "list",
+    "--repo",
+    "https://github.com/acme/app",
+    "--state",
+    "all",
+    "--author",
+    "alice",
+    "--draft",
+    "--limit",
+    "1",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json", "--dry-run");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("#12\topen (draft)\tImprove login");
+  expect(human.stdout).toContain("https://github.com/acme/app/pull/12");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    prs: [{ ref: { number: 12 }, author: { name: "alice" } }],
+  });
+});
+
+test("PR list renders empty results and structured errors", async () => {
+  const args = ["pr", "list", "--repo", "https://github.com/acme/app"];
+  const empty = await runPrWithEnv({ PR_LIST_MODE: "empty" }, ...args);
+  const emptyJson = await runPrWithEnv({ PR_LIST_MODE: "empty" }, ...args, "--json");
+  const denied = await runPrWithEnv({ PR_LIST_MODE: "denied" }, ...args, "--json");
+  const invalid = await runPr(...args, "--limit", "0");
+
+  expect(empty.stdout.trim()).toBe("No pull requests.");
+  expect(JSON.parse(emptyJson.stdout)).toMatchObject({ ok: true, prs: [] });
+  expect(denied.exitCode).toBe(1);
+  expect(JSON.parse(denied.stdout)).toMatchObject({ error: { code: "SCM_ACCESS_DENIED" } });
+  expect(denied.stdout).not.toContain("secret-token");
+  expect(invalid.exitCode).toBe(1);
+  expect(invalid.stdout).toBe("");
+  expect(invalid.stderr).toContain("--limit must be a positive safe integer");
+});
+
+test("PR create declares options and renders human and JSON results", async () => {
+  const help = await runCli("pr", "create", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--title", "--base", "--body-file", "--reviewer", "--label"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  const args = [
+    "pr",
+    "create",
+    "--repo",
+    "https://github.com/acme/app",
+    "--head",
+    "topic",
+    "--base",
+    "main",
+    "--title",
+    "New PR",
+    "--draft",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("New PR\nhttps://github.com/acme/app/pull/12");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    pr: { title: "New PR", isDraft: true, ref: { number: 12 } },
+  });
+});
+
+test("PR create dry-run sends no HTTP requests and errors follow existing output conventions", async () => {
+  const args = [
+    "pr",
+    "create",
+    "--repo",
+    "https://github.com/acme/app",
+    "--head",
+    "topic",
+    "--base",
+    "main",
+    "--title",
+    "Title",
+  ];
+  const dry = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    ...args,
+    "--reviewer",
+    "alice",
+    "--label",
+    "bug",
+    "--dry-run",
+    "--json",
+  );
+  const invalid = await runPr(...args, "--body", "", "--body-file", "missing", "--json");
+  const azure = await runPr(
+    "pr",
+    "create",
+    "--repo",
+    "https://dev.azure.com/acme/project/_git/app",
+    "--head",
+    "topic",
+    "--base",
+    "main",
+    "--title",
+    "Title",
+    "--json",
+  );
+
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-create" }],
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
+  expect(azure.exitCode).toBe(1);
+  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_UNSUPPORTED_OPERATION" } });
+});
+
 test("PR help and completion expose the read commands and show enrichments", async () => {
   const help = await runCli("pr", "--help");
   const completion = await runCli("completion", "bash");

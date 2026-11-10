@@ -21,10 +21,8 @@ export interface NavigationItem {
 }
 
 export const navigation: readonly NavigationItem[] = [
-  { title: "Board", href: "/", icon: KanbanIcon, Page: BoardPage },
-  { title: "Doing", href: "/doing", icon: GitBranchIcon, Page: DoingPage },
-  { title: "PRs", href: "/prs", icon: GitPullRequestIcon, Page: PRsPage },
-  { title: "Health", href: "/health", icon: PulseIcon, Page: HealthPage, bottom: true },
+  { title: "Board", href: "", icon: KanbanIcon, Page: BoardPage },
+  { title: "Doing", href: "doing", icon: GitBranchIcon, Page: DoingPage },
+  { title: "PRs", href: "prs", icon: GitPullRequestIcon, Page: PRsPage },
+  { title: "Health", href: "health", icon: PulseIcon, Page: HealthPage, bottom: true },
 ];
-
-export const projects = ["Inet.Server", "Webshop", "Tooling"] as const;

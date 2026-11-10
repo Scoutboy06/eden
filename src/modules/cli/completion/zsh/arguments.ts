@@ -49,7 +49,7 @@ function optionSpecs(key: string, arg: ArgSchema, action: string): string[] {
   });
 }
 
-interface ArgumentSyntax {
+export interface ArgumentSyntax {
   specs: string[];
   valueCase?: string;
 }
