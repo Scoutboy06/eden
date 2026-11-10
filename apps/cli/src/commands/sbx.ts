@@ -25,7 +25,9 @@ const create = defineCommand({
   },
 
   async run(ctx, { sandbox, output }) {
-    const service = await sandbox(ctx.values.provider, ctx.values.profile, {
+    const service = await sandbox({
+      provider: ctx.values.provider,
+      profile: ctx.values.profile,
       useDefaultProfile: true,
     });
     const { warnings } = await service.create(
@@ -70,7 +72,7 @@ const run = defineCommand({
       );
     }
 
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox({ provider: ctx.values.provider });
     const exitCode = await service.run({ name: ctx.values.name });
 
     if (!dryRun) {
@@ -93,7 +95,7 @@ const exec = defineCommand({
   },
   async run(ctx, { sandbox, output }) {
     const { json } = ctx.extensions.eden;
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox({ provider: ctx.values.provider });
     const result = await service.exec({
       name: ctx.values.name,
       argv: ctx.rest,
@@ -120,7 +122,7 @@ const stop = defineCommand({
   },
 
   async run(ctx, { sandbox, output }) {
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox({ provider: ctx.values.provider });
     await service.stop(ctx.values.name);
 
     output.write({
@@ -162,7 +164,7 @@ const remove = defineCommand({
         "Noninteractive sandbox removal requires --force; without it, run in a terminal to confirm removal.",
       );
     }
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox({ provider: ctx.values.provider });
     await service.remove(ctx.values.name, ctx.values.force ?? false);
     output.write({
       data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
@@ -184,7 +186,7 @@ const list = defineCommand({
   },
 
   async run(ctx, { sandbox, output, readResolvedConfig, checkSandboxFreshness }) {
-    const service = await sandbox(ctx.values.provider);
+    const service = await sandbox({ provider: ctx.values.provider });
     const sandboxes = await service.list();
     if (ctx.values["check-updates"]) {
       const config = await readResolvedConfig();

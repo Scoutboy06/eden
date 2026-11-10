@@ -242,50 +242,54 @@ export class SandboxService {
   }
 }
 
-export async function createSandboxService(
+export type SandboxSelection = {
+  provider?: SandboxProviderName;
+  profile?: string;
+  useDefaultProfile?: boolean;
+};
+
+export type SandboxServicePresentation = {
+  onCreateOutput?: (text: string) => void;
+  onWarning?: (warning: string) => void;
+  onHook?: () => void;
+  interactiveCreate?: boolean;
+};
+
+export function createSandboxServiceFactory(
   execution: Execution,
-  providerName: SandboxProviderName | undefined,
   config: ConfigReader,
-  onCreateOutput?: (text: string) => void,
-  profileName?: string,
-  options: {
-    useDefaultProfile?: boolean;
-    onWarning?: (warning: string) => void;
-    hooks?: HookService;
-    onHook?: () => void;
-    interactiveCreate?: boolean;
-    providerFactory?: typeof createSandboxProvider;
-  } = {},
-): Promise<SandboxService> {
-  const settings =
-    providerName === undefined || profileName !== undefined || options.useDefaultProfile
-      ? (await config.read()).sandbox
-      : undefined;
-  const selectedProfile =
-    profileName ?? (options.useDefaultProfile ? settings?.default_profile : undefined);
-  const profile =
-    selectedProfile === undefined ? undefined : resolveProfile(settings, selectedProfile);
-  const name = providerName ?? profile?.provider ?? settings?.default_provider;
+  presentation: SandboxServicePresentation = {},
+  hooks: HookService = new HookService(execution),
+  providerFactory: typeof createSandboxProvider = createSandboxProvider,
+): (selection?: SandboxSelection) => Promise<SandboxService> {
+  return async (selection = {}) => {
+    const { provider: providerName, profile: profileName, useDefaultProfile } = selection;
+    const settings =
+      providerName === undefined || profileName !== undefined || useDefaultProfile
+        ? (await config.read()).sandbox
+        : undefined;
+    const selectedProfile =
+      profileName ?? (useDefaultProfile ? settings?.default_profile : undefined);
+    const profile =
+      selectedProfile === undefined ? undefined : resolveProfile(settings, selectedProfile);
+    const name = providerName ?? profile?.provider ?? settings?.default_provider;
 
-  if (name === undefined) {
-    throw new SandboxError(
-      "SANDBOX_INVALID_INPUT",
-      "Choose a sandbox provider with --provider, or set a default with eden setup.",
+    if (name === undefined) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "Choose a sandbox provider with --provider, or set a default with eden setup.",
+      );
+    }
+
+    return new SandboxService(
+      execution,
+      providerFactory(name, presentation.onCreateOutput, presentation.interactiveCreate),
+      selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
+      presentation.onWarning,
+      hooks,
+      presentation.onHook,
     );
-  }
-
-  return new SandboxService(
-    execution,
-    (options.providerFactory ?? createSandboxProvider)(
-      name,
-      onCreateOutput,
-      options.interactiveCreate,
-    ),
-    selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
-    options.onWarning,
-    options.hooks,
-    options.onHook,
-  );
+  };
 }
 
 function resolveProfile(settings: Config["sandbox"], name: string) {

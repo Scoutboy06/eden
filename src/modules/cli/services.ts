@@ -5,8 +5,11 @@ import { WorktreeService } from "../worktree/worktree.service";
 import { HookService } from "../hook/hook.service";
 import type { EdenExtensions } from "./options";
 import { CommandOutput } from "./output";
-import { createSandboxService, type SandboxService } from "../sandbox/sandbox.service";
-import type { SandboxProviderName } from "../sandbox/provider";
+import {
+  createSandboxServiceFactory,
+  type SandboxSelection,
+  type SandboxService,
+} from "../sandbox/sandbox.service";
 import { findRepositoryPath } from "../config/repository";
 import { checkSandboxFreshness } from "../sandbox/template-freshness";
 import { TemplateUpdateService } from "../sandbox/template-update";
@@ -28,6 +31,18 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
   };
 
   const readConfig = async () => (await readResolvedConfig()).config;
+  const createSandbox = createSandboxServiceFactory(
+    execution,
+    { read: readConfig },
+    {
+      onCreateOutput: options.json ? undefined : streamStdout,
+      interactiveCreate:
+        !options.json && !!process.stdin.isTTY && !!process.stdout.isTTY && !!process.stderr.isTTY,
+      onHook: () => output.includeHooks(hooks.records),
+      onWarning: options.json ? undefined : (warning) => streamStderr(`Warning: ${warning}\n`),
+    },
+    hooks,
+  );
 
   return {
     output,
@@ -38,29 +53,8 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
     readConfig,
     templateUpdate: new TemplateUpdateService(execution),
     checkSandboxFreshness,
-    async sandbox(
-      providerName?: SandboxProviderName,
-      profileName?: string,
-      profileOptions: { useDefaultProfile?: boolean } = {},
-    ): Promise<SandboxService> {
-      return createSandboxService(
-        execution,
-        providerName,
-        { read: readConfig },
-        options.json ? undefined : streamStdout,
-        profileName,
-        {
-          ...profileOptions,
-          interactiveCreate:
-            !options.json &&
-            !!process.stdin.isTTY &&
-            !!process.stdout.isTTY &&
-            !!process.stderr.isTTY,
-          hooks,
-          onHook: () => output.includeHooks(hooks.records),
-          onWarning: options.json ? undefined : (warning) => streamStderr(`Warning: ${warning}\n`),
-        },
-      );
+    sandbox(selection?: SandboxSelection): Promise<SandboxService> {
+      return createSandbox(selection);
     },
     get setup() {
       return new SetupService((config ??= createConfigService(execution)));
