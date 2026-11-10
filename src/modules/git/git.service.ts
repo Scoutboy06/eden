@@ -4,14 +4,6 @@ import { GitModule } from "./git.module";
 export class GitService {
   constructor(private readonly execution: Execution) {}
 
-  showBranch(name: string, cwd = process.cwd()) {
-    return GitModule.showBranch(cwd, name);
-  }
-
-  commitHistory(input: { ref?: string; limit?: number } = {}, cwd = process.cwd()) {
-    return GitModule.commitHistory(cwd, input);
-  }
-
   async createBranch(
     input: { name: string; startPoint?: string },
     cwd = process.cwd(),

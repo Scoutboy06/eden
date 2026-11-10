@@ -112,12 +112,12 @@ describe("GitService", () => {
     await GitModule.execute(directory, ["tag", "topic"]);
     const service = new GitService(createExecution({ dryRun: false }));
     await service.createBranch({ name: "topic" }, directory);
-    expect((await service.showBranch("topic", directory)).name).toBe("topic");
+    expect((await GitModule.showBranch(directory, "topic")).name).toBe("topic");
     await service.renameBranch({ name: "refs/heads/topic", newName: "renamed" }, directory);
     expect((await GitModule.localBranches(directory)).map((branch) => branch.name)).toContain(
       "renamed",
     );
-    const history = await service.commitHistory({ ref: "main", limit: 1 }, directory);
+    const history = await GitModule.commitHistory(directory, { ref: "main", limit: 1 });
     expect(history).toEqual([
       expect.objectContaining({ subject: "initial", body: "body\n", parents: [] }),
     ]);
@@ -145,7 +145,7 @@ describe("GitService", () => {
     }
 
     const service = new GitService(createExecution({ dryRun: false }));
-    const history = await service.commitHistory({ ref: "main", limit: 3 }, directory);
+    const history = await GitModule.commitHistory(directory, { ref: "main", limit: 3 });
     expect(history.map((commit) => commit.hash)).toEqual([...ids].reverse());
     expect(history.map(({ subject, body }) => ({ subject, body }))).toEqual([
       { subject: "second", body: "line one\nline two\n" },
@@ -154,8 +154,8 @@ describe("GitService", () => {
     ]);
 
     await service.createBranch({ name: "from-id", startPoint: ids[1]! }, directory);
-    expect((await service.showBranch("from-id", directory)).commit).toBe(ids[1]!);
-    expect((await service.commitHistory({ ref: ids[1], limit: 1 }, directory))[0]?.hash).toBe(
+    expect((await GitModule.showBranch(directory, "from-id")).commit).toBe(ids[1]!);
+    expect((await GitModule.commitHistory(directory, { ref: ids[1], limit: 1 }))[0]?.hash).toBe(
       ids[1]!,
     );
   });
@@ -164,7 +164,7 @@ describe("GitService", () => {
     const service = new GitService(createExecution({ dryRun: false }));
     await expect(service.createBranch({ name: "--delete" }, directory)).rejects.toThrow();
     await GitModule.execute(directory, ["tag", "tag-only"]);
-    await expect(service.showBranch("tag-only", directory)).rejects.toThrow(
+    await expect(GitModule.showBranch(directory, "tag-only")).rejects.toThrow(
       "Local branch not found",
     );
   });
