@@ -7,7 +7,7 @@ import {
 import { ConfigSchema } from "../../../config/schema";
 import { createExecution } from "../../../execution";
 import { HookService } from "../../../hook/hook.service";
-import { createSandboxService } from "../../sandbox.service";
+import { createSandboxServiceFactory } from "../../sandbox.service";
 import type { SandboxProviderName } from "../../provider";
 
 export async function createSandboxHarness(options: {
@@ -34,19 +34,19 @@ export async function createSandboxHarness(options: {
         : { exitCode: 0, stdout: args[0] === "ls" ? "[]" : "", stderr: "" };
     },
   });
-  const service = await createSandboxService(
+  const service = await createSandboxServiceFactory(
     execution,
-    options.provider,
     { read: async () => config },
-    undefined,
-    options.profile,
     {
-      useDefaultProfile: options.useDefaultProfile,
-      hooks: new HookService(execution, { directory: join(options.directory, "hooks") }),
       onWarning: (warning) => warnings.push(warning),
-      providerFactory: () => provider,
     },
-  );
+    new HookService(execution, { directory: join(options.directory, "hooks") }),
+    () => provider,
+  )({
+    provider: options.provider,
+    profile: options.profile,
+    useDefaultProfile: options.useDefaultProfile,
+  });
 
   return { service, execution, provider, commands, warnings };
 }

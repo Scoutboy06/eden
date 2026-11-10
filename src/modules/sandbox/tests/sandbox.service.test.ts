@@ -7,7 +7,11 @@ import { findRepositoryPath } from "../../config/repository";
 import { rootPrefix } from "../../config/tests/support/root";
 import { createExecution } from "../../execution";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { createSandboxProvider, createSandboxService, SandboxService } from "../sandbox.service";
+import {
+  createSandboxProvider,
+  createSandboxServiceFactory,
+  SandboxService,
+} from "../sandbox.service";
 import type { SandboxProvider } from "../provider";
 
 test("sandbox construction passes resolved selection and IO options to its provider factory", async () => {
@@ -16,25 +20,25 @@ test("sandbox construction passes resolved selection and IO options to its provi
   const calls: Parameters<typeof createSandboxProvider>[] = [];
   const onOutput = () => {};
 
-  const service = await createSandboxService(
+  const createService = createSandboxServiceFactory(
     execution,
-    undefined,
     {
       read: async () => ({
         worktree_root: rootPrefix,
         sandbox: { profiles: { work: { provider: "docker-sbx" } } },
       }),
     },
-    onOutput,
-    "work",
-    {
-      interactiveCreate: true,
-      providerFactory: (...args) => {
-        calls.push(args);
-        return provider;
-      },
+    { onCreateOutput: onOutput, interactiveCreate: true },
+    undefined,
+    (...args) => {
+      calls.push(args);
+      return provider;
     },
   );
+  const service = await createService({
+    profile: "work",
+    useDefaultProfile: false,
+  });
 
   expect(service.providerName).toBe("docker-sbx");
   expect(calls).toEqual([["docker-sbx", onOutput, true]]);
@@ -173,11 +177,11 @@ test("dry-run checks prerequisites but never calls creation", async () => {
 });
 
 test("an explicit provider skips reading default configuration", async () => {
-  const service = await createSandboxService(createExecution({ dryRun: true }), "docker-sbx", {
+  const service = await createSandboxServiceFactory(createExecution({ dryRun: true }), {
     read: async () => {
       throw new Error("Must not read");
     },
-  });
+  })({ provider: "docker-sbx" });
 
   expect(service.providerName).toBe("docker-sbx");
 });
@@ -230,13 +234,10 @@ test("an explicit provider still reads and validates a selected profile once", a
     },
   };
 
-  const service = await createSandboxService(
+  const service = await createSandboxServiceFactory(
     createExecution({ dryRun: true }),
-    "docker-sbx",
     config,
-    undefined,
-    "work",
-  );
+  )({ provider: "docker-sbx", profile: "work" });
 
   expect(service.providerName).toBe("docker-sbx");
   expect(reads).toBe(1);
@@ -285,18 +286,19 @@ test.each([false, true])(
 
 test("an omitted provider uses the configured default or reports an actionable error", async () => {
   const execution = createExecution({ dryRun: true });
-  const service = await createSandboxService(execution, undefined, {
+  const createService = createSandboxServiceFactory(execution, {
     read: async () => ({
       worktree_root: "/worktrees",
       sandbox: { default_provider: "docker-sbx" },
     }),
   });
+  const service = await createService();
 
   expect(service.providerName).toBe("docker-sbx");
   await expect(
-    createSandboxService(execution, undefined, {
+    createSandboxServiceFactory(execution, {
       read: async () => ({ worktree_root: "/worktrees" }),
-    }),
+    })(),
   ).rejects.toThrow("eden setup");
 });
 
@@ -318,11 +320,7 @@ test("repository default provider is resolved from a nested directory without in
     const config = createFileConfigService({
       pathsLowToHigh: [global, join(root!, ".eden", "config.yaml")],
     });
-    const service = await createSandboxService(
-      createExecution({ dryRun: true }),
-      undefined,
-      config,
-    );
+    const service = await createSandboxServiceFactory(createExecution({ dryRun: true }), config)();
 
     expect(root).toBe(repository);
     expect(service.providerName).toBe("docker-sbx");
