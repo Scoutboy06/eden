@@ -20,6 +20,7 @@ import type {
   PullRequestLister,
   PullRequestListQuery,
   PullRequestListItem,
+  PullRequestReviewRequester,
 } from "../../modules/pull-requests/provider";
 
 type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
@@ -31,7 +32,8 @@ export class GitHubApiProvider
     PullRequestReopener,
     PullRequestLister,
     PullRequestCloser,
-    PullRequestCommenter
+    PullRequestCommenter,
+    PullRequestReviewRequester
 {
   constructor(private readonly client: Octokit) {}
 
@@ -165,6 +167,76 @@ export class GitHubApiProvider
       } catch (error) {
         throw commentConfirmationFailure(ref, error);
       }
+    });
+  }
+
+  requestReview(ref: PullRequestRef, input: { reviewers: string[]; teams: string[] }) {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      const { data } = await this.client.pulls.get(parameters(ref));
+      const current = normalizePullRequest(data);
+      assertPullRequestIdentity(current, ref);
+      if (current.state !== "open")
+        throw new ScmError(
+          "SCM_INVALID_STATE",
+          "Reviews can only be requested on an open pull request.",
+        );
+      const requested = await this.requestedReviewers(ref);
+      const pendingUsers = new Set(
+        requested.filter(({ id }) => id.startsWith("user:")).map(({ name }) => name.toLowerCase()),
+      );
+      const pendingTeams = new Set(
+        requested.filter(({ id }) => id.startsWith("team:")).map(({ name }) => name.toLowerCase()),
+      );
+      const alreadyPending = [
+        ...input.reviewers.filter((name) => pendingUsers.has(name.toLowerCase())),
+        ...input.teams.filter((name) => pendingTeams.has(name.toLowerCase())),
+      ];
+      const reviewers = input.reviewers.filter((name) => !pendingUsers.has(name.toLowerCase()));
+      const teams = input.teams.filter((name) => !pendingTeams.has(name.toLowerCase()));
+      if (reviewers.length || teams.length) {
+        try {
+          await providerRequest(() =>
+            this.client.pulls.requestReviewers({
+              ...parameters(ref),
+              reviewers,
+              team_reviewers: teams,
+            }),
+          );
+        } catch (error) {
+          if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+          throw new ScmError(
+            "SCM_PARTIAL_FAILURE",
+            `Review requests may have been applied for ${[...reviewers, ...teams].join(", ")}; inspect pending reviewers before retrying. ${safeFailureDetails(error)}`,
+          );
+        }
+        try {
+          const confirmed = await this.requestedReviewers(ref);
+          const confirmedUsers = new Set(
+            confirmed
+              .filter(({ id }) => id.startsWith("user:"))
+              .map(({ name }) => name.toLowerCase()),
+          );
+          const confirmedTeams = new Set(
+            confirmed
+              .filter(({ id }) => id.startsWith("team:"))
+              .map(({ name }) => name.toLowerCase()),
+          );
+          const missing = [
+            ...reviewers.filter((name) => !confirmedUsers.has(name.toLowerCase())),
+            ...teams.filter((name) => !confirmedTeams.has(name.toLowerCase())),
+          ];
+          if (missing.length) throw new Error("Review requests were not confirmed.");
+        } catch (error) {
+          throw new ScmError(
+            "SCM_PARTIAL_FAILURE",
+            `Review requests may have been applied for ${[...reviewers, ...teams].join(", ")}; inspect pending reviewers before retrying. ${safeFailureDetails(error)}`,
+          );
+        }
+      }
+
+      return { requested: [...reviewers, ...teams], alreadyPending };
     });
   }
 

@@ -10,6 +10,7 @@ import type {
   PullRequestCloser,
   PullRequestCommenter,
   PullRequestCommentInput,
+  PullRequestReviewRequester,
   PullRequestLister,
   PullRequestListQuery,
   RepositoryRef,
@@ -185,6 +186,41 @@ export class PullRequestService {
       },
       async () => {
         result = await commenter.addComment(ref, comment);
+      },
+    );
+
+    return result;
+  }
+
+  async requestReview(
+    input: PullRequestInput & { ref: string; reviewers?: string[]; teams?: string[] },
+  ) {
+    const reviewers = uniqueReviewTargets(input.reviewers ?? [], "reviewer");
+    const teams = uniqueReviewTargets(input.teams ?? [], "team");
+    if (reviewers.length + teams.length === 0)
+      throw new ScmError("SCM_INVALID_OPTIONS", "Supply at least one --reviewer or --team.");
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr request-review currently supports GitHub only; Azure DevOps reviewer requests are deferred.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("requestReview" in provider) || typeof provider.requestReview !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot request PR reviews.");
+    let result: Awaited<ReturnType<PullRequestReviewRequester["requestReview"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-request-review",
+        description: "Request GitHub pull request review",
+        input: { ref, reviewers, teams },
+      },
+      async () => {
+        result = await (provider as PullRequestProvider & PullRequestReviewRequester).requestReview(
+          ref,
+          { reviewers, teams },
+        );
       },
     );
 
@@ -405,6 +441,18 @@ function validateReference(ref: PullRequestRef) {
       invalidInput("A valid exact GitHub pull request target is required.");
   } else if (!ref.organizationUrl.trim() || !Number.isSafeInteger(ref.id) || ref.id < 1)
     invalidInput("A valid exact Azure DevOps pull request target is required.");
+}
+
+function uniqueReviewTargets(values: string[], kind: "reviewer" | "team"): string[] {
+  const pattern = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$/;
+  const targets = values.flatMap((value) => value.split(",")).map((value) => value.trim());
+  if (targets.some((value) => !value || value.length > 100 || !pattern.test(value)))
+    throw new ScmError(
+      "SCM_INVALID_OPTIONS",
+      `Invalid ${kind} target; supply GitHub ${kind === "reviewer" ? "user logins" : "team slugs"}.`,
+    );
+
+  return [...new Map(targets.map((value) => [value.toLowerCase(), value])).values()];
 }
 
 function validateBranch(branch: string) {

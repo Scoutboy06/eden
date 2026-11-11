@@ -125,3 +125,13 @@ export type PullRequestCommentInput = { body: string; replyTo?: string };
 export interface PullRequestCommenter {
   addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment>;
 }
+
+export interface PullRequestReviewRequester {
+  requestReview(
+    ref: PullRequestRef,
+    input: { reviewers: string[]; teams: string[] },
+  ): Promise<{
+    requested: string[];
+    alreadyPending: string[];
+  }>;
+}

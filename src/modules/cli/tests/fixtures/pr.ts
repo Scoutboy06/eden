@@ -13,6 +13,10 @@ const pr = {
   base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
 };
 let checkReads = 0;
+let reviewRequests: {
+  users: { id: number; login: string }[];
+  teams: { id: number; slug: string }[];
+} = { users: [], teams: [] };
 
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(
@@ -23,6 +27,23 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   if (init?.method === "POST") {
     const response = postResponse(url, init);
     if (response) return response;
+  }
+  if (init?.method !== "GET" && url.pathname.endsWith("/requested_reviewers")) {
+    if (process.env.PR_REVIEW_REQUEST_FAIL)
+      return Response.json(
+        { message: "denied" },
+        { status: Number(process.env.PR_REVIEW_REQUEST_FAIL) },
+      );
+    const body = JSON.parse(String(init?.body));
+    reviewRequests = {
+      users: body.reviewers.map((login: string, id: number) => ({ id: id + 20, login })),
+      teams: body.team_reviewers.map((slug: string, id: number) => ({ id: id + 30, slug })),
+    };
+    return Response.json({
+      ...pr,
+      requested_reviewers: reviewRequests.users,
+      teams: reviewRequests.teams,
+    });
   }
   if (init?.method === "PATCH") applyPatch(init);
   const response = respond(url);
@@ -92,14 +113,23 @@ function respond(url: URL): Response {
   if (url.pathname.endsWith("/check-runs")) return checkResponse();
   if (url.pathname.endsWith("/statuses")) return Response.json([]);
   if (url.pathname.endsWith("/reviews")) return Response.json(reviewResponse());
-  if (url.pathname.endsWith("/requested_reviewers"))
-    return Response.json(
-      process.env.PR_REVIEW_MODE === "mixed"
-        ? { users: [{ id: 8, login: "bob" }], teams: [{ id: 1, slug: "security" }] }
-        : { users: [], teams: [] },
-    );
+  if (url.pathname.endsWith("/requested_reviewers")) return requestedReviewerResponse();
 
   throw new Error("Unexpected SDK request");
+}
+
+function requestedReviewerResponse(): Response {
+  if (process.env.PR_REVIEW_MODE === "confirm-missing")
+    return Response.json({ users: [], teams: [] });
+  if (reviewRequests.users.length || reviewRequests.teams.length)
+    return Response.json(reviewRequests);
+  if (process.env.PR_REVIEW_MODE === "mixed")
+    return Response.json({
+      users: [{ id: 8, login: "bob" }],
+      teams: [{ id: 1, slug: "security" }],
+    });
+
+  return Response.json({ users: [], teams: [] });
 }
 
 function commentResponse(request: RequestInit, reply = false) {

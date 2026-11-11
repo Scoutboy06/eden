@@ -88,6 +88,51 @@ test("dry-run records create and edit without invoking provider writes", async (
   expect(execution.operations).toHaveLength(2);
 });
 
+test("request review validates and deduplicates targets and dry-run never calls provider", async () => {
+  const execution = createExecution({ dryRun: true });
+  const requested = mock(async () => ({ requested: [], alreadyPending: [] }));
+  const provider = { ...({} as PullRequestProvider), requestReview: requested };
+  const service = new PullRequestService(undefined, async () => provider, execution);
+  const input = {
+    ref: "12",
+    repo: "https://github.com/acme/app",
+    reviewers: ["Alice,alice"],
+    teams: ["security,security"],
+  };
+
+  expect(await service.requestReview(input)).toBeUndefined();
+  expect(requested).not.toHaveBeenCalled();
+  expect(execution.operations[0]).toMatchObject({
+    type: "github-pr-request-review",
+    input: { reviewers: ["alice"], teams: ["security"] },
+  });
+  await expect(service.requestReview({ ...input, teams: ["org/security"] })).rejects.toMatchObject({
+    code: "SCM_INVALID_OPTIONS",
+  });
+  await expect(
+    service.requestReview({
+      ref: "12",
+      repo: "https://dev.azure.com/acme/project/_git/app",
+      reviewers: ["alice"],
+    }),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  expect(execution.operations).toHaveLength(1);
+});
+
+test("request review requires provider capability before recording a mutation", async () => {
+  const execution = createExecution({ dryRun: false });
+  const service = new PullRequestService(
+    undefined,
+    async () => ({}) as PullRequestProvider,
+    execution,
+  );
+
+  await expect(
+    service.requestReview({ ref: "12", repo: "https://github.com/acme/app", reviewers: ["alice"] }),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  expect(execution.operations).toEqual([]);
+});
+
 test("dry-run with the real GitHub adapter sends no HTTP requests", async () => {
   const requests: URL[] = [];
   const { provider } = githubProvider((url) => {

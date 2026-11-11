@@ -13,6 +13,74 @@ test("raw PR fields are opt-in and preserve provider-specific data", async () =>
   });
 });
 
+test("review requests send bare team slugs and confirm distinct user/team identities", async () => {
+  let requested = false;
+  const { provider, calls } = githubProvider((url, request) => {
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/requested_reviewers") && request.method === "GET")
+      return Response.json(
+        requested
+          ? { users: [{ id: 1, login: "security" }], teams: [{ id: 2, slug: "security" }] }
+          : { users: [], teams: [] },
+      );
+    if (url.pathname.endsWith("/requested_reviewers") && request.method !== "GET") {
+      expect(JSON.parse(String(request.body))).toMatchObject({
+        reviewers: ["security"],
+        team_reviewers: ["security"],
+      });
+      requested = true;
+      return Response.json({ users: [], teams: [] });
+    }
+    throw new Error(`Unexpected ${url}`);
+  });
+
+  expect(
+    await provider.requestReview(ref, { reviewers: ["security"], teams: ["security"] }),
+  ).toEqual({ requested: ["security", "security"], alreadyPending: [] });
+  expect(calls.map(({ pathname }) => pathname)).toEqual([
+    "/repos/acme/app/pulls/12",
+    "/repos/acme/app/pulls/12/requested_reviewers",
+    "/repos/acme/app/pulls/12/requested_reviewers",
+    "/repos/acme/app/pulls/12/requested_reviewers",
+  ]);
+});
+
+test("review request rejects closed PRs and preserves definite access-denied errors", async () => {
+  const closed = githubProvider(() => Response.json(githubPr({ state: "closed" })));
+  await expect(
+    closed.provider.requestReview(ref, { reviewers: ["alice"], teams: [] }),
+  ).rejects.toMatchObject({ code: "SCM_INVALID_STATE" });
+  expect(closed.calls).toHaveLength(1);
+
+  const denied = githubProvider((url, request) =>
+    url.pathname.endsWith("/pulls/12")
+      ? Response.json(githubPr())
+      : url.pathname.endsWith("/requested_reviewers") && request.method === "GET"
+        ? Response.json({ users: [], teams: [] })
+        : Response.json({ message: "denied" }, { status: 403 }),
+  );
+  await expect(
+    denied.provider.requestReview(ref, { reviewers: ["alice"], teams: [] }),
+  ).rejects.toMatchObject({ code: "SCM_ACCESS_DENIED" });
+});
+
+test("review request confirmation failure is reported as possibly applied", async () => {
+  const { provider } = githubProvider((url, request) => {
+    if (url.pathname.endsWith("/pulls/12")) return Response.json(githubPr());
+    if (url.pathname.endsWith("/requested_reviewers") && request.method === "GET")
+      return Response.json({ users: [], teams: [] });
+    if (url.pathname.endsWith("/requested_reviewers")) return Response.json({});
+    throw new Error(`Unexpected ${url}`);
+  });
+
+  await expect(
+    provider.requestReview(ref, { reviewers: ["alice"], teams: [] }),
+  ).rejects.toMatchObject({
+    code: "SCM_PARTIAL_FAILURE",
+    message: expect.stringContaining("may have been applied"),
+  });
+});
+
 test.each([
   [true, "convertPullRequestToDraft"],
   [false, "markPullRequestReadyForReview"],

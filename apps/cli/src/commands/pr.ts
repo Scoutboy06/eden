@@ -348,8 +348,49 @@ const reopen = defineCommand({
   },
 });
 
+const requestReview = defineCommand({
+  name: "request-review",
+  description: "Request review from GitHub users or teams",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    reviewer: { type: "string", description: "Comma-separated GitHub user logins" },
+    team: { type: "string", description: "Comma-separated GitHub org/team slugs" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.requestReview({
+      ...ctx.values,
+      reviewers: ctx.values.reviewer?.split(","),
+      teams: ctx.values.team?.split(","),
+    });
+
+    if (result)
+      output.write({
+        data: result,
+        human: () =>
+          [
+            `Requested: ${result.requested.join(", ") || "none"}`,
+            `Already pending: ${result.alreadyPending.join(", ") || "none"}`,
+          ].join("\n"),
+      });
+  },
+});
+
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
-  subCommands: { list, create, show, checks, reviewers, edit, status, comment, close, reopen },
+  subCommands: {
+    list,
+    create,
+    show,
+    checks,
+    reviewers,
+    edit,
+    status,
+    comment,
+    close,
+    reopen,
+    "request-review": requestReview,
+  },
 });

@@ -6,6 +6,54 @@ import { runCli } from "./support/cli";
 
 const fixture = fileURLToPath(new URL("./fixtures/pr.ts", import.meta.url));
 
+test("PR request-review declares hyphenated command, renders results and structures failures", async () => {
+  const help = await runCli("pr", "request-review", "--help");
+  const completion = await runCli("completion", "bash");
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout).toContain("--reviewer");
+  expect(help.stdout).toContain("--team");
+  expect(completion.stdout).toContain("request-review");
+  const args = [
+    "pr",
+    "request-review",
+    "https://github.com/acme/app/pull/12",
+    "--reviewer",
+    "bob,bob",
+    "--team",
+    "security",
+  ];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json");
+  const dry = await runPrWithEnv({ PR_FORBID_REQUESTS: "1" }, ...args, "--dry-run", "--json");
+  const invalid = await runPr(
+    "pr",
+    "request-review",
+    "12",
+    "--repo",
+    "https://github.com/acme/app",
+    "--team",
+    "org/security",
+    "--json",
+  );
+  const denied = await runPrWithEnv({ PR_REVIEW_REQUEST_FAIL: "403" }, ...args, "--json");
+  const uncertain = await runPrWithEnv({ PR_REVIEW_REQUEST_FAIL: "500" }, ...args, "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("Requested: bob, security");
+  expect(JSON.parse(json.stdout)).toMatchObject({ ok: true, requested: ["bob", "security"] });
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [
+      { type: "github-pr-request-review", input: { reviewers: ["bob"], teams: ["security"] } },
+    ],
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
+  expect(JSON.parse(denied.stdout)).toMatchObject({ error: { code: "SCM_ACCESS_DENIED" } });
+  expect(JSON.parse(uncertain.stdout)).toMatchObject({ error: { code: "SCM_PARTIAL_FAILURE" } });
+});
+
 test("PR comment declares inputs and renders discussion and reply identities", async () => {
   const help = await runCli("pr", "comment", "--help");
   const completion = await runCli("completion", "bash");
