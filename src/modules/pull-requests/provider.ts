@@ -34,6 +34,7 @@ export interface PullRequestComment {
   path?: string;
   line?: number;
   threadId?: string;
+  replyTo?: string;
   isResolved?: boolean;
 }
 
@@ -95,6 +96,52 @@ export type PullRequestDiff = {
 
 export interface PullRequestDiffer {
   getDiff(ref: PullRequestRef): Promise<PullRequestDiff>;
+}
+
+export type PullRequestCommentThreadsQuery = {
+  unresolved?: boolean;
+  since?: string;
+  limit: number;
+};
+
+export type PullRequestCommentThreads = {
+  threads: PullRequestComment[][];
+  hasMore: boolean;
+};
+
+export interface PullRequestCommentThreadLister {
+  listCommentThreads(
+    ref: PullRequestRef,
+    query: PullRequestCommentThreadsQuery,
+  ): Promise<PullRequestCommentThreads>;
+}
+
+export type PullRequestReviewInput = {
+  event: "approve" | "request-changes" | "comment";
+  body?: string;
+  expectedHead?: string;
+};
+
+export interface PullRequestReviewer {
+  submitReview(ref: PullRequestRef, input: PullRequestReviewInput): Promise<PullRequestReview>;
+}
+
+export type PullRequestMergeInput = {
+  method: "merge" | "squash" | "rebase";
+  expectedHead?: string;
+  deleteBranch?: boolean;
+};
+
+export type PullRequestMergeResult = {
+  pr: PullRequest;
+  deletedBranch: boolean;
+};
+
+export interface PullRequestMerger {
+  mergePullRequest(
+    ref: PullRequestRef,
+    input: PullRequestMergeInput,
+  ): Promise<PullRequestMergeResult>;
 }
 
 export type PullRequestListQuery = {

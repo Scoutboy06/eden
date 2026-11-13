@@ -314,6 +314,117 @@ const comment = defineCommand({
   },
 });
 
+const comments = defineCommand({
+  name: "comments",
+  description: "List filtered GitHub inline review threads",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    unresolved: { type: "boolean", description: "Show unresolved threads only" },
+    since: {
+      type: "string",
+      description: "Include threads with comments since this date or timestamp",
+    },
+    limit: {
+      type: "number",
+      description: "Maximum matching threads (positive integer; default: 30)",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.comments(ctx.values);
+    output.write({
+      data: result,
+      human: () =>
+        `${result.threads.map((thread) => thread.map((comment) => `${comment.id}${comment.isResolved ? " (resolved)" : " (unresolved)"}\n${comment.author?.name ?? "Deleted user"}${comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ""}` : ""}\n${comment.body}`).join("\n\n")).join("\n\n") || "No review threads."}${result.hasMore ? "\nMore matching threads available; increase --limit." : ""}`,
+    });
+  },
+});
+
+const review = defineCommand({
+  name: "review",
+  description: "Submit an approve, request-changes or comment review",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    event: {
+      type: "string",
+      required: true,
+      choices: ["approve", "request-changes", "comment"],
+      description: "Review decision",
+    },
+    body: {
+      type: "string",
+      parse: (value) => value,
+      description: "Review body; excludes --body-file",
+    },
+    "body-file": {
+      type: "string",
+      parse: (value) => value,
+      description: "Read review body from a UTF-8 file",
+    },
+    "expected-head": { type: "string", description: "Full head commit SHA to bind this review to" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    if (ctx.values.body !== undefined && ctx.values["body-file"] !== undefined)
+      throw new ScmError("SCM_INVALID_OPTIONS", "--body and --body-file are mutually exclusive.");
+    const body =
+      ctx.values["body-file"] === undefined
+        ? ctx.values.body
+        : await Bun.file(ctx.values["body-file"]).text();
+    const result = await pullRequests.review({
+      ...ctx.values,
+      event: ctx.values.event as "approve" | "request-changes" | "comment",
+      body,
+      expectedHead: ctx.values["expected-head"],
+    });
+    if (result)
+      output.write({
+        data: { review: result },
+        human: () => `${result.state}\t${result.reviewer.name}`,
+      });
+  },
+});
+
+const merge = defineCommand({
+  name: "merge",
+  description: "Merge a GitHub PR using an explicit strategy",
+  args: {
+    ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    method: {
+      type: "string",
+      required: true,
+      choices: ["merge", "squash", "rebase"],
+      description: "Merge strategy",
+    },
+    "expected-head": {
+      type: "string",
+      description: "Full expected head SHA; stale heads are rejected",
+    },
+    "delete-branch": {
+      type: "boolean",
+      description: "Delete the PR source branch after confirmed merge",
+    },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.merge({
+      ...ctx.values,
+      method: ctx.values.method as "merge" | "squash" | "rebase",
+      expectedHead: ctx.values["expected-head"],
+      deleteBranch: ctx.values["delete-branch"],
+    });
+    if (result)
+      output.write({
+        data: result,
+        human: () =>
+          `${result.pr.title}\n${result.pr.state}\n${result.pr.url}${result.deletedBranch ? "\nSource branch deleted." : ""}`,
+      });
+  },
+});
+
 const close = defineCommand({
   name: "close",
   description: "Close a GitHub PR (already-closed PRs are unchanged; merged PRs are rejected)",
@@ -476,6 +587,9 @@ export default defineCommand({
     edit,
     status,
     comment,
+    comments,
+    review,
+    merge,
     close,
     reopen,
     "request-review": requestReview,

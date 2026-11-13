@@ -16,6 +16,11 @@ import type {
   RepositoryRef,
   PullRequestDiffer,
   PullRequestDiff,
+  PullRequestCommentThreadLister,
+  PullRequestReviewInput,
+  PullRequestReviewer,
+  PullRequestMerger,
+  PullRequestMergeInput,
 } from "./provider";
 import { createExecution } from "../execution/execution";
 import type { Execution } from "../execution/types";
@@ -188,6 +193,129 @@ export class PullRequestService {
       },
       async () => {
         result = await commenter.addComment(ref, comment);
+      },
+    );
+
+    return result;
+  }
+
+  async comments(
+    input: PullRequestInput & {
+      ref: string;
+      unresolved?: boolean;
+      since?: string;
+      limit?: number;
+    },
+  ) {
+    const limit = input.limit ?? 30;
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new ScmError("SCM_INVALID_OPTIONS", "--limit must be a positive safe integer.");
+    if (input.since !== undefined && Number.isNaN(Date.parse(input.since)))
+      throw new ScmError("SCM_INVALID_OPTIONS", "--since must be a valid date or timestamp.");
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr comments currently supports GitHub only; Azure DevOps thread listing is deferred.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("listCommentThreads" in provider) || typeof provider.listCommentThreads !== "function")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "This provider cannot list PR review threads.",
+      );
+
+    return (provider as PullRequestProvider & PullRequestCommentThreadLister).listCommentThreads(
+      ref,
+      { limit, unresolved: input.unresolved, since: input.since },
+    );
+  }
+
+  async review(input: PullRequestInput & { ref: string } & PullRequestReviewInput) {
+    if (!["approve", "request-changes", "comment"].includes(input.event))
+      throw new ScmError(
+        "SCM_INVALID_OPTIONS",
+        "Review event must be approve, request-changes or comment.",
+      );
+    if (input.event !== "approve" && !input.body?.trim())
+      throw new ScmError(
+        "SCM_INVALID_OPTIONS",
+        "A nonblank --body is required for this review event.",
+      );
+    if (input.expectedHead !== undefined && !/^[0-9a-f]{40}$/i.test(input.expectedHead))
+      throw new ScmError(
+        "SCM_INVALID_OPTIONS",
+        "--expected-head must be a full 40-character commit SHA.",
+      );
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr review currently supports GitHub only.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("submitReview" in provider) || typeof provider.submitReview !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot submit PR reviews.");
+    const review: PullRequestReviewInput = {
+      event: input.event,
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(input.expectedHead !== undefined ? { expectedHead: input.expectedHead } : {}),
+    };
+    let result: Awaited<ReturnType<PullRequestReviewer["submitReview"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-review",
+        description: "Submit GitHub pull request review",
+        input: { ref, ...review },
+      },
+      async () => {
+        result = await (provider as PullRequestProvider & PullRequestReviewer).submitReview(
+          ref,
+          review,
+        );
+      },
+    );
+
+    return result;
+  }
+
+  async merge(input: PullRequestInput & { ref: string } & PullRequestMergeInput) {
+    if (!["merge", "squash", "rebase"].includes(input.method))
+      throw new ScmError("SCM_INVALID_OPTIONS", "--method must be merge, squash or rebase.");
+    if (input.expectedHead !== undefined && !/^[0-9a-f]{40}$/i.test(input.expectedHead))
+      throw new ScmError(
+        "SCM_INVALID_OPTIONS",
+        "--expected-head must be a full 40-character commit SHA.",
+      );
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr merge currently supports GitHub only.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (!("mergePullRequest" in provider) || typeof provider.mergePullRequest !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot merge pull requests.");
+    const merge: PullRequestMergeInput = {
+      method: input.method,
+      ...(input.expectedHead !== undefined ? { expectedHead: input.expectedHead } : {}),
+      ...(input.deleteBranch ? { deleteBranch: true } : {}),
+    };
+    let result: Awaited<ReturnType<PullRequestMerger["mergePullRequest"]>> | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-merge",
+        description: "Merge GitHub pull request",
+        input: { ref, ...merge },
+      },
+      async () => {
+        result = await (provider as PullRequestProvider & PullRequestMerger).mergePullRequest(
+          ref,
+          merge,
+        );
       },
     );
 
