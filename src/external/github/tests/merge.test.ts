@@ -91,7 +91,7 @@ test("stale expected head and unsafe delete targets are rejected before mutation
   expect(calls).toHaveLength(2);
 });
 
-test("reports a stale atomic merge rejection instead of claiming an uncertain merge", async () => {
+test("reports an atomic merge rejection without confusing conflict and stale-head cases", async () => {
   const { provider } = githubProvider((url, request) => {
     if (request.method === "PUT")
       return Response.json({ message: "Head branch was modified" }, { status: 409 });
@@ -108,7 +108,7 @@ test("reports a stale atomic merge rejection instead of claiming an uncertain me
       method: "merge",
       expectedHead: head,
     }),
-  ).rejects.toMatchObject({ code: "SCM_STALE_HEAD" });
+  ).rejects.toMatchObject({ code: "SCM_MERGE_REJECTED" });
 });
 
 test.each([

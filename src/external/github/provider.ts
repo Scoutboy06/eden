@@ -751,8 +751,8 @@ function mergeFailure(error: unknown): ScmError {
   const status = responseStatus(error);
   if (status === 409)
     return new ScmError(
-      "SCM_STALE_HEAD",
-      "GitHub rejected the merge because the head changed or is no longer mergeable; inspect the PR before retrying.",
+      "SCM_MERGE_REJECTED",
+      "GitHub rejected the merge because the head changed or a merge conflict prevents it; inspect the PR before retrying.",
     );
   if (status === 405)
     return new ScmError(
