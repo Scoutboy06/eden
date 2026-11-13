@@ -36,7 +36,6 @@ export function listReviewThreads(
       }
       if (hasMore) break;
       cursor = page.endCursor;
-      hasMore = page.hasNextPage;
     } while (cursor);
 
     return { threads, hasMore, incomplete };
@@ -111,6 +110,7 @@ function readPageInfo(value: unknown): { hasNextPage: boolean; endCursor: string
   )
     invalidResponse();
   if (value.endCursor !== null && typeof value.endCursor !== "string") invalidResponse();
+  if (value.hasNextPage && value.endCursor === null) invalidResponse();
 
   return { hasNextPage: value.hasNextPage, endCursor: value.endCursor };
 }
@@ -132,13 +132,7 @@ function hasMoreThreadComments(thread: any) {
 }
 
 function normalizeComment(comment: any, thread: any): PullRequestComment {
-  if (
-    !Number.isSafeInteger(comment.databaseId) ||
-    comment.databaseId < 1 ||
-    typeof comment.body !== "string" ||
-    typeof comment.createdAt !== "string"
-  )
-    invalidResponse();
+  if (!isValidComment(comment)) invalidResponse();
   const rootId = comment.replyTo?.databaseId ?? comment.databaseId;
 
   return {
@@ -156,4 +150,32 @@ function normalizeComment(comment: any, thread: any): PullRequestComment {
     isResolved: thread.isResolved,
     ...(Number.isSafeInteger(rootId) && rootId > 0 ? { replyTo: `review:${rootId}` } : {}),
   };
+}
+
+function isValidComment(comment: any) {
+  return (
+    Number.isSafeInteger(comment.databaseId) &&
+    comment.databaseId > 0 &&
+    typeof comment.body === "string" &&
+    typeof comment.createdAt === "string" &&
+    !Number.isNaN(Date.parse(comment.createdAt)) &&
+    isValidAuthor(comment.user) &&
+    isValidReplyTarget(comment.replyTo)
+  );
+}
+
+function isValidAuthor(user: any) {
+  return (
+    user === null ||
+    user === undefined ||
+    (Number.isSafeInteger(user.databaseId) && typeof user.login === "string")
+  );
+}
+
+function isValidReplyTarget(replyTo: any) {
+  return (
+    replyTo === null ||
+    replyTo === undefined ||
+    (Number.isSafeInteger(replyTo.databaseId) && replyTo.databaseId > 0)
+  );
 }

@@ -111,6 +111,28 @@ test("reports a stale atomic merge rejection instead of claiming an uncertain me
   ).rejects.toMatchObject({ code: "SCM_STALE_HEAD" });
 });
 
+test.each([
+  [405, "SCM_INVALID_STATE"],
+  [403, "SCM_ACCESS_DENIED"],
+])(
+  "reports definite merge rejection %s without claiming a possible merge",
+  async (status, code) => {
+    const { provider } = githubProvider((url, request) => {
+      if (request.method === "PUT") return Response.json({ message: "rejected" }, { status });
+
+      return Response.json(
+        githubPr({
+          head: { ref: "topic", sha: head, repo: { owner: { login: "acme" }, name: "app" } },
+        }),
+      );
+    });
+
+    await expect(provider.mergePullRequest(ref, { method: "merge" })).rejects.toMatchObject({
+      code,
+    });
+  },
+);
+
 test("reports a confirmed merge when optional source deletion fails", async () => {
   let merged = false;
   const { provider } = githubProvider((url) => {

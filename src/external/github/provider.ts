@@ -737,16 +737,7 @@ async function mergeExpectedHead(
         `GitHub did not merge the PR: ${result.data.message}`,
       );
   } catch (error) {
-    if (responseStatus(error) === 409)
-      throw new ScmError(
-        "SCM_STALE_HEAD",
-        "GitHub rejected the merge because the head changed or is no longer mergeable; inspect the PR before retrying.",
-      );
-    if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
-    throw new ScmError(
-      "SCM_PARTIAL_FAILURE",
-      "The merge may have been applied; inspect the PR before retrying.",
-    );
+    throw mergeFailure(error);
   }
 }
 
@@ -754,6 +745,42 @@ function responseStatus(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null || !("status" in error)) return;
 
   return typeof error.status === "number" ? error.status : undefined;
+}
+
+function mergeFailure(error: unknown): ScmError {
+  const status = responseStatus(error);
+  if (status === 409)
+    return new ScmError(
+      "SCM_STALE_HEAD",
+      "GitHub rejected the merge because the head changed or is no longer mergeable; inspect the PR before retrying.",
+    );
+  if (status === 405)
+    return new ScmError(
+      "SCM_INVALID_STATE",
+      "GitHub rejected the merge because the PR is not currently mergeable or repository policy prevents this method.",
+    );
+  if (status === 401)
+    return new ScmError(
+      "SCM_AUTHENTICATION_FAILED",
+      "Provider authentication is required or was rejected.",
+    );
+  if (status === 403)
+    return new ScmError("SCM_ACCESS_DENIED", "The provider denied access to this operation.");
+  if (status === 404)
+    return new ScmError("SCM_NOT_FOUND", "The pull request was not found or is not accessible.");
+  if (status === 429)
+    return new ScmError(
+      "SCM_RATE_LIMITED",
+      "The provider rate limit was exceeded. Try again later.",
+    );
+  if (status === 400 || status === 422)
+    return new ScmError("SCM_INVALID_REQUEST", "The provider rejected the merge parameters.");
+  if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") return error;
+
+  return new ScmError(
+    "SCM_PARTIAL_FAILURE",
+    "The merge may have been applied; inspect the PR before retrying.",
+  );
 }
 
 async function confirmMergedPullRequest(
@@ -786,7 +813,8 @@ async function deleteMergedSourceBranch(client: Octokit, target: MergeTarget, pr
     if (source.data.object.sha !== target.head)
       throw new Error("The PR source branch advanced after inspection.");
     await client.git.deleteRef(input);
-  } catch {
+  } catch (error) {
+    if (responseStatus(error) === 404) return;
     throw new ScmError(
       "SCM_PARTIAL_FAILURE",
       `PR merged: ${pr.url}; source branch ${target.branch} could not be safely deleted. The merge succeeded.`,
