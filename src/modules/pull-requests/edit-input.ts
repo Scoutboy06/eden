@@ -8,6 +8,8 @@ export interface PullRequestEditOptions {
   targetBranch?: string;
   draft?: boolean;
   ready?: boolean;
+  addLabels?: string[];
+  removeLabels?: string[];
 }
 
 export async function buildPullRequestPatch(
@@ -31,5 +33,7 @@ export async function buildPullRequestPatch(
     ...(body !== undefined ? { body } : {}),
     ...(options.targetBranch !== undefined ? { targetBranch: options.targetBranch } : {}),
     ...(options.draft || options.ready ? { isDraft: !!options.draft } : {}),
+    ...(options.addLabels !== undefined ? { addLabels: options.addLabels } : {}),
+    ...(options.removeLabels !== undefined ? { removeLabels: options.removeLabels } : {}),
   };
 }

@@ -874,6 +874,59 @@ test("PR edit updates only supplied fields and renders human and JSON success", 
   expect(human.stdout).toBe(`New title\n${ref}\n`);
 });
 
+test("PR edit adds and removes labels and documents additive semantics", async () => {
+  const help = await runCli("pr", "edit", "--help");
+  const completion = await runCli("completion", "bash");
+  expect(help.stdout).toContain("--add-label");
+  expect(help.stdout).toContain("--remove-label");
+  expect(completion.stdout).toContain("--add-label");
+  expect(completion.stdout).toContain("--remove-label");
+
+  const json = await runPr(
+    "pr",
+    "edit",
+    "https://github.com/acme/app/pull/12",
+    "--add-label",
+    "feature,ready",
+    "--json",
+  );
+  const dry = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    "pr",
+    "edit",
+    "12",
+    "--repo",
+    "https://github.com/acme/app",
+    "--add-label",
+    "feature",
+    "--json",
+    "--dry-run",
+  );
+  const conflict = await runPr(
+    "pr",
+    "edit",
+    "https://github.com/acme/app/pull/12",
+    "--add-label",
+    "same",
+    "--remove-label",
+    "SAME",
+    "--json",
+  );
+
+  expect(json.exitCode).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({ ok: true, pr: { title: "Improve login" } });
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-edit", input: { patch: { addLabels: ["feature"] } } }],
+  });
+  expect(conflict.exitCode).toBe(1);
+  expect(JSON.parse(conflict.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "SCM_INVALID_REFERENCE" },
+  });
+});
+
 test("PR edit dry-run records the exact patch without sending SDK requests", async () => {
   const result = await runPrWithEnv(
     { PR_FORBID_REQUESTS: "1" },

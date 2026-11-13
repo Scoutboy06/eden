@@ -81,6 +81,7 @@ function postResponse(url: URL, init: RequestInit): Response | undefined {
   }
   if (url.pathname.endsWith("/pulls/12/comments/56/replies"))
     return Response.json(commentResponse(init, true));
+  if (url.pathname.endsWith("/issues/12/labels")) return Response.json([{ name: "feature" }]);
   if (url.pathname.endsWith("/pulls")) {
     const body = JSON.parse(String(init.body));
     return Response.json({

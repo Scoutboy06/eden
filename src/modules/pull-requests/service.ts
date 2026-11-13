@@ -147,6 +147,14 @@ export class PullRequestService {
 
   async edit(ref: PullRequestRef, patch: PullRequestPatch) {
     validateEdit(ref, patch);
+    if (
+      (patch.addLabels !== undefined || patch.removeLabels !== undefined) &&
+      ref.provider !== "github"
+    )
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "Label editing currently supports GitHub only; Azure DevOps label editing is unsupported.",
+      );
     const provider = await this.createProvider(repositoryForRef(ref));
     const writer = pullRequestWriter(provider);
     let result: Awaited<ReturnType<PullRequestWriter["editPullRequest"]>> | undefined;
@@ -616,12 +624,39 @@ function validateCreate(
 function validateEdit(ref: PullRequestRef, patch: PullRequestPatch) {
   validateReference(ref);
   const keys = Object.keys(patch);
-  if (keys.some((key) => !["title", "body", "targetBranch", "isDraft"].includes(key)))
-    invalidInput("Only title, body, targetBranch, and isDraft may be edited.");
+  if (
+    keys.some(
+      (key) =>
+        !["title", "body", "targetBranch", "isDraft", "addLabels", "removeLabels"].includes(key),
+    )
+  )
+    invalidInput("Only title, body, targetBranch, draft state, and labels may be edited.");
   if (keys.length === 0) invalidInput("At least one pull request field must be changed.");
   if (patch.title !== undefined && !patch.title.trim())
     invalidInput("A pull request title must not be blank.");
   if (patch.targetBranch !== undefined) validateBranch(patch.targetBranch);
+  validateLabelEdits(patch.addLabels ?? [], patch.removeLabels ?? []);
+}
+
+function validateLabelEdits(addLabels: string[], removeLabels: string[]) {
+  const validate = (labels: string[]) =>
+    labels.every(
+      (label) =>
+        label.trim() === label &&
+        label.length > 0 &&
+        label.length <= 100 &&
+        !/[\r\n\0]/.test(label),
+    );
+  if (!validate(addLabels) || !validate(removeLabels))
+    invalidInput("Labels must be nonempty names of at most 100 characters without line breaks.");
+  if (
+    new Set(addLabels.map((label) => label.toLowerCase())).size !== addLabels.length ||
+    new Set(removeLabels.map((label) => label.toLowerCase())).size !== removeLabels.length
+  )
+    invalidInput("Duplicate labels are not allowed.");
+  const add = new Set(addLabels.map((label) => label.toLowerCase()));
+  if (removeLabels.some((label) => add.has(label.toLowerCase())))
+    invalidInput("A label cannot be both added and removed.");
 }
 
 function validateReference(ref: PullRequestRef) {

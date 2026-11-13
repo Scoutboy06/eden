@@ -179,6 +179,38 @@ test("review-thread resolution validates exact targets and dry-run makes no prov
   expect(resolve).not.toHaveBeenCalled();
 });
 
+test("label edits validate conflicts and use the mutation boundary without dry-run calls", async () => {
+  const state = fixture(true);
+  const { service, execution, calls } = state;
+
+  expect(
+    await service.edit(pr.ref, { addLabels: ["feature"], removeLabels: ["old"] }),
+  ).toBeUndefined();
+  expect(calls).toEqual([]);
+  expect(execution.operations).toMatchObject([
+    {
+      type: "github-pr-edit",
+      input: { patch: { addLabels: ["feature"], removeLabels: ["old"] } },
+    },
+  ]);
+  await expect(service.edit(pr.ref, { addLabels: ["feature", "FEATURE"] })).rejects.toMatchObject({
+    code: "SCM_INVALID_REFERENCE",
+  });
+  await expect(
+    service.edit(pr.ref, { addLabels: ["feature"], removeLabels: ["FEATURE"] }),
+  ).rejects.toMatchObject({ code: "SCM_INVALID_REFERENCE" });
+  expect(state.providerSelections).toBe(1);
+
+  const azure = {
+    provider: "azure-devops" as const,
+    organizationUrl: "https://dev.azure.com/acme",
+    id: 12,
+  };
+  await expect(service.edit(azure, { addLabels: ["feature"] })).rejects.toMatchObject({
+    code: "SCM_UNSUPPORTED_OPERATION",
+  });
+});
+
 test("review and merge reject unsupported providers and malformed mutations before execution", async () => {
   const execution = createExecution({ dryRun: false });
   const service = new PullRequestService(

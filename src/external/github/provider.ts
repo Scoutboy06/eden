@@ -837,6 +837,8 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
     throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
   const input = parameters(ref);
   const { data: current } = await client.pulls.get(input);
+  const currentPr = normalizePullRequest(current);
+  assertPullRequestIdentity(currentPr, ref);
   const restPatch = restFields(patch);
   let updated = current;
   if (Object.keys(restPatch).length > 0)
@@ -861,10 +863,50 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
       );
     }
   }
-  const result = normalizePullRequest(updated);
+  let result = normalizePullRequest(updated);
   assertPullRequestIdentity(result, ref);
+  if (patch.addLabels?.length || patch.removeLabels?.length)
+    result = await updatePullRequestLabels(client, ref, patch);
 
   return result;
+}
+
+async function updatePullRequestLabels(
+  client: Octokit,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  patch: PullRequestPatch,
+) {
+  const input = parameters(ref);
+  const issue = { owner: ref.owner, repo: ref.repository, issue_number: ref.number };
+  try {
+    if (patch.addLabels?.length)
+      await client.issues.addLabels({ ...issue, labels: patch.addLabels });
+    for (const name of patch.removeLabels ?? []) {
+      try {
+        await client.issues.removeLabel({ ...issue, name });
+      } catch (error) {
+        if (responseStatus(error) !== 404) throw error;
+      }
+    }
+  } catch {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      "PR metadata or labels may have been updated; inspect the PR labels before retrying.",
+    );
+  }
+
+  try {
+    const { data } = await client.pulls.get(input);
+    const confirmed = normalizePullRequest(data);
+    assertPullRequestIdentity(confirmed, ref);
+
+    return confirmed;
+  } catch {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      "PR metadata or labels may have been updated, but the final state could not be confirmed.",
+    );
+  }
 }
 
 function postDiscussionComment(

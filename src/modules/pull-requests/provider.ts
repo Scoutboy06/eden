@@ -193,6 +193,8 @@ export type PullRequestPatch = {
   body?: string;
   targetBranch?: string;
   isDraft?: boolean;
+  addLabels?: string[];
+  removeLabels?: string[];
 };
 
 export interface PullRequestWriter {

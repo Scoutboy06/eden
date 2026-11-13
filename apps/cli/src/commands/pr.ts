@@ -240,12 +240,22 @@ const edit = defineCommand({
     base: { type: "string", parse: (value) => value, description: "Change the target branch" },
     draft: { type: "boolean", description: "Mark the PR as a draft; excludes --ready" },
     ready: { type: "boolean", description: "Mark the PR ready for review; excludes --draft" },
+    "add-label": {
+      type: "string",
+      description: "Add comma-separated labels without replacing other labels",
+    },
+    "remove-label": {
+      type: "string",
+      description: "Remove comma-separated labels without replacing other labels",
+    },
   },
   async run(ctx, { pullRequests, output }) {
     const patch = await buildPullRequestPatch({
       ...ctx.values,
       bodyFile: ctx.values["body-file"],
       targetBranch: ctx.values.base,
+      addLabels: ctx.values["add-label"]?.split(",").map((label) => label.trim()),
+      removeLabels: ctx.values["remove-label"]?.split(",").map((label) => label.trim()),
     });
     const pr = await pullRequests.editByReference(ctx.values, patch);
 
