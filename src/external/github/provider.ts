@@ -18,6 +18,7 @@ import type {
   PullRequestReview,
   RepositoryRef,
   PullRequestLister,
+  PullRequestBranchFinder,
   PullRequestListQuery,
   PullRequestListItem,
   PullRequestReviewRequester,
@@ -43,6 +44,7 @@ export class GitHubApiProvider
     PullRequestWriter,
     PullRequestReopener,
     PullRequestLister,
+    PullRequestBranchFinder,
     PullRequestCloser,
     PullRequestCommenter,
     PullRequestReviewRequester,
@@ -455,6 +457,26 @@ export class GitHubApiProvider
       return prs
         .filter((pr) => pr.head.ref === query.sourceBranch)
         .map((pr) => ({ ...repository, number: pr.number }));
+    });
+  }
+
+  findPullRequestsBySourceBranch(query: {
+    repository: Extract<RepositoryRef, { provider: "github" }>;
+    sourceBranch: string;
+  }): Promise<PullRequestRef[]> {
+    return providerRequest(async () => {
+      const { owner, repository } = query.repository;
+      const prs = await this.client.paginate(this.client.pulls.list, {
+        owner,
+        repo: repository,
+        state: "all",
+        head: `${owner}:${query.sourceBranch}`,
+        per_page: 100,
+      });
+
+      return prs
+        .filter((pr) => pr.head.ref === query.sourceBranch)
+        .map((pr) => ({ provider: "github", owner, repository, number: pr.number }));
     });
   }
 

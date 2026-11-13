@@ -175,6 +175,13 @@ export interface PullRequestLister {
   listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]>;
 }
 
+export interface PullRequestBranchFinder {
+  findPullRequestsBySourceBranch(query: {
+    repository: Extract<RepositoryRef, { provider: "github" }>;
+    sourceBranch: string;
+  }): Promise<PullRequestRef[]>;
+}
+
 export type PullRequestCreateInput = {
   title: string;
   body: string;

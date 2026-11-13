@@ -31,6 +31,11 @@ export type GitLocalBranch = {
   worktrees: string[];
 };
 
+export type GitWorktree = {
+  path: string;
+  branch: string | null;
+};
+
 export type GitCommit = {
   hash: string;
   parents: string[];
@@ -98,6 +103,26 @@ export class GitModule {
           };
         }),
     );
+  }
+
+  static async worktrees(cwd: string): Promise<GitWorktree[]> {
+    await GitModule.executeRaw(cwd, ["rev-parse", "--git-dir"]);
+    const output = await GitModule.executeRaw(cwd, ["worktree", "list", "--porcelain", "-z"]);
+    const worktrees: GitWorktree[] = [];
+    let path: string | undefined;
+    let branch: string | null = null;
+    for (const record of output.split("\0")) {
+      if (record.startsWith("worktree ")) {
+        if (path !== undefined) worktrees.push({ path, branch });
+        path = record.slice("worktree ".length);
+        branch = null;
+      } else if (record.startsWith("branch ")) {
+        branch = displayRef(record.slice("branch ".length));
+      }
+    }
+    if (path !== undefined) worktrees.push({ path, branch });
+
+    return worktrees;
   }
 
   static async showBranch(cwd: string, name: string): Promise<GitLocalBranch> {
