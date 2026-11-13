@@ -24,7 +24,15 @@ import type {
   PullRequestDiffer,
   PullRequestDiff,
   PullRequestFileDiff,
+  PullRequestCommentThreadLister,
+  PullRequestCommentThreadsQuery,
+  PullRequestReviewer,
+  PullRequestReviewInput,
+  PullRequestMerger,
+  PullRequestMergeInput,
+  PullRequestMergeResult,
 } from "../../modules/pull-requests/provider";
+import { listReviewThreads } from "./review-threads";
 
 type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
 
@@ -37,7 +45,10 @@ export class GitHubApiProvider
     PullRequestCloser,
     PullRequestCommenter,
     PullRequestReviewRequester,
-    PullRequestDiffer
+    PullRequestDiffer,
+    PullRequestCommentThreadLister,
+    PullRequestReviewer,
+    PullRequestMerger
 {
   constructor(private readonly client: Octokit) {}
 
@@ -352,6 +363,72 @@ export class GitHubApiProvider
     });
   }
 
+  listCommentThreads(ref: PullRequestRef, query: PullRequestCommentThreadsQuery) {
+    if (ref.provider !== "github")
+      return Promise.reject(
+        new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference."),
+      );
+
+    return listReviewThreads(this.client, ref, query);
+  }
+
+  submitReview(ref: PullRequestRef, input: PullRequestReviewInput) {
+    return providerRequest(async () => {
+      if (ref.provider !== "github")
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      const { data } = await this.client.pulls.get(parameters(ref));
+      const current = normalizePullRequest(data);
+      assertPullRequestIdentity(current, ref);
+      const head = data.head?.sha;
+      if (!head) invalidResponse();
+      if (input.expectedHead && input.expectedHead !== head)
+        throw new ScmError(
+          "SCM_STALE_HEAD",
+          "The PR head changed; inspect the new head before reviewing.",
+        );
+      const event =
+        input.event === "approve"
+          ? "APPROVE"
+          : input.event === "request-changes"
+            ? "REQUEST_CHANGES"
+            : "COMMENT";
+      let result;
+      try {
+        result = await providerRequest(() =>
+          this.client.pulls.createReview({
+            ...parameters(ref),
+            commit_id: input.expectedHead ?? head,
+            event,
+            ...(input.body !== undefined ? { body: input.body } : {}),
+          }),
+        );
+      } catch (error) {
+        if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          `The review may have been submitted for head ${input.expectedHead ?? head}; inspect reviews before retrying.`,
+        );
+      }
+      if (!result.data.user || !reviewStates[result.data.state])
+        throw new ScmError(
+          "SCM_PARTIAL_FAILURE",
+          "The review may have been submitted, but its response could not be verified.",
+        );
+
+      return {
+        reviewer: { id: `user:${result.data.user.id}`, name: result.data.user.login },
+        state: reviewStates[result.data.state]!,
+      };
+    });
+  }
+
+  mergePullRequest(
+    ref: PullRequestRef,
+    input: PullRequestMergeInput,
+  ): Promise<PullRequestMergeResult> {
+    return mergeGitHubPullRequest(this.client, ref, input);
+  }
+
   findOpenPullRequests(query: {
     repository: RepositoryRef;
     sourceBranch: string;
@@ -573,6 +650,135 @@ function parameters(ref: PullRequestRef) {
     throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
 
   return { owner: ref.owner, repo: ref.repository, pull_number: ref.number };
+}
+
+async function mergeGitHubPullRequest(
+  client: Octokit,
+  ref: PullRequestRef,
+  input: PullRequestMergeInput,
+): Promise<PullRequestMergeResult> {
+  if (ref.provider !== "github")
+    throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+  const target = await inspectMergeTarget(client, ref, input);
+  await mergeExpectedHead(client, target, input.method);
+  const pr = await confirmMergedPullRequest(client, target);
+  if (input.deleteBranch) await deleteMergedSourceBranch(client, target, pr);
+
+  return { pr, deletedBranch: input.deleteBranch ?? false };
+}
+
+type MergeTarget = {
+  ref: Extract<PullRequestRef, { provider: "github" }>;
+  parameters: ReturnType<typeof parameters>;
+  head: string;
+  branch: string;
+};
+
+async function inspectMergeTarget(
+  client: Octokit,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  input: PullRequestMergeInput,
+): Promise<MergeTarget> {
+  const params = parameters(ref);
+  const { data } = await client.pulls.get(params);
+  const current = normalizePullRequest(data);
+  assertPullRequestIdentity(current, ref);
+  if (current.state !== "open")
+    throw new ScmError("SCM_INVALID_STATE", "Only an open pull request can be merged.");
+  const head = data.head?.sha;
+  const branch = data.head?.ref;
+  const base = data.base?.ref;
+  if (!head || !branch || !base) invalidResponse();
+  if (input.expectedHead && input.expectedHead !== head)
+    throw new ScmError(
+      "SCM_STALE_HEAD",
+      "The PR head changed; inspect the new head before merging.",
+    );
+  if (input.deleteBranch && !isSafeSourceBranch(branch, base))
+    throw new ScmError(
+      "SCM_INVALID_REFERENCE",
+      "The PR source branch is not a safe distinct branch name.",
+    );
+
+  return { ref, parameters: params, head, branch };
+}
+
+function isSafeSourceBranch(branch: string, base: string) {
+  return branch !== base && /^[A-Za-z0-9._/-]+$/.test(branch) && !branch.includes("..");
+}
+
+async function mergeExpectedHead(
+  client: Octokit,
+  target: MergeTarget,
+  method: PullRequestMergeInput["method"],
+) {
+  try {
+    const result = await client.pulls.merge({
+      ...target.parameters,
+      merge_method: method,
+      sha: target.head,
+    });
+    if (!result.data.merged)
+      throw new ScmError(
+        "SCM_INVALID_STATE",
+        `GitHub did not merge the PR: ${result.data.message}`,
+      );
+  } catch (error) {
+    if (responseStatus(error) === 409)
+      throw new ScmError(
+        "SCM_STALE_HEAD",
+        "GitHub rejected the merge because the head changed or is no longer mergeable; inspect the PR before retrying.",
+      );
+    if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      "The merge may have been applied; inspect the PR before retrying.",
+    );
+  }
+}
+
+function responseStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("status" in error)) return;
+
+  return typeof error.status === "number" ? error.status : undefined;
+}
+
+async function confirmMergedPullRequest(
+  client: Octokit,
+  target: MergeTarget,
+): Promise<PullRequest> {
+  try {
+    const confirmed = await client.pulls.get(target.parameters);
+    const pr = normalizePullRequest(confirmed.data);
+    assertPullRequestIdentity(pr, target.ref);
+    if (pr.state !== "merged") invalidResponse();
+
+    return pr;
+  } catch {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      "The PR merged, but its state could not be confirmed. Do not retry.",
+    );
+  }
+}
+
+async function deleteMergedSourceBranch(client: Octokit, target: MergeTarget, pr: PullRequest) {
+  try {
+    const input = {
+      owner: target.ref.owner,
+      repo: target.ref.repository,
+      ref: `heads/${target.branch}`,
+    };
+    const source = await client.git.getRef(input);
+    if (source.data.object.sha !== target.head)
+      throw new Error("The PR source branch advanced after inspection.");
+    await client.git.deleteRef(input);
+  } catch {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `PR merged: ${pr.url}; source branch ${target.branch} could not be safely deleted. The merge succeeded.`,
+    );
+  }
 }
 
 async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: PullRequestPatch) {
