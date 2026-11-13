@@ -341,6 +341,34 @@ const comments = defineCommand({
   },
 });
 
+function threadResolutionCommand(name: "resolve" | "unresolve", isResolved: boolean) {
+  return defineCommand({
+    name,
+    description: `${isResolved ? "Resolve" : "Reopen"} a GitHub inline review thread`,
+    args: {
+      ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+      thread: { type: "positional", required: true, description: "Thread ID from pr comments" },
+      repo: args.repo,
+      remote: args.remote,
+    },
+    async run(ctx, { pullRequests, output }) {
+      const result = await pullRequests.setReviewThreadResolution(
+        { ...ctx.values, threadId: ctx.values.thread },
+        isResolved,
+      );
+      if (result)
+        output.write({
+          data: { thread: result },
+          human: () =>
+            `${result.threadId}\n${result.isResolved ? "resolved" : "unresolved"}${result.changed ? "" : " (unchanged)"}`,
+        });
+    },
+  });
+}
+
+const resolveThread = threadResolutionCommand("resolve", true);
+const unresolveThread = threadResolutionCommand("unresolve", false);
+
 const review = defineCommand({
   name: "review",
   description: "Submit an approve, request-changes or comment review",
@@ -586,6 +614,8 @@ export default defineCommand({
     status,
     comment,
     comments,
+    resolve: resolveThread,
+    unresolve: unresolveThread,
     review,
     merge,
     close,

@@ -17,6 +17,7 @@ let reviewRequests: {
   users: { id: number; login: string }[];
   teams: { id: number; slug: string }[];
 } = { users: [], teams: [] };
+let threadResolved = false;
 
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(
@@ -91,50 +92,77 @@ function postResponse(url: URL, init: RequestInit): Response | undefined {
       base: { ...pr.base, ref: body.base },
     });
   }
-  if (url.pathname === "/graphql") {
-    const body = JSON.parse(String(init?.body));
-    if (body.query.includes("reviewThreads")) {
-      return Response.json({
-        data: {
-          repository: {
-            pullRequest: {
-              reviewThreads: {
-                nodes: [
-                  {
-                    id: "thread-node-1",
-                    isResolved: false,
-                    comments: {
-                      nodes: [
-                        {
-                          databaseId: 56,
-                          body: "Please update",
-                          createdAt: "2026-11-10T00:00:00Z",
-                          path: "src/auth.ts",
-                          line: 4,
-                          user: { databaseId: 7, login: "alice" },
-                          replyTo: null,
-                        },
-                      ],
-                      pageInfo: { hasNextPage: false },
-                    },
-                  },
-                ],
-                pageInfo: { hasNextPage: false, endCursor: null },
-              },
-            },
-          },
-        },
-      });
-    }
-    pr.draft = body.query.includes("convertPullRequestToDraft");
-    const operation = pr.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
-
-    return Response.json({
-      data: { [operation]: { pullRequest: { id: pr.node_id, isDraft: pr.draft } } },
-    });
-  }
+  if (url.pathname === "/graphql") return respondGraphql(init);
 }
 
+function respondGraphql(init?: RequestInit): Response {
+  const body = JSON.parse(String(init?.body));
+  if (body.query.includes("reviewThreads")) return reviewThreadsResponse();
+  if (body.query.includes("PullRequestReviewThread")) return threadOwnershipResponse();
+  if (body.query.includes("resolveReviewThread") || body.query.includes("unresolveReviewThread"))
+    return threadMutationResponse(body.query);
+  pr.draft = body.query.includes("convertPullRequestToDraft");
+  const operation = pr.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
+
+  return Response.json({
+    data: { [operation]: { pullRequest: { id: pr.node_id, isDraft: pr.draft } } },
+  });
+}
+
+function reviewThreadsResponse() {
+  return Response.json({
+    data: {
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: [
+              {
+                id: "thread-node-1",
+                isResolved: false,
+                comments: {
+                  nodes: [
+                    {
+                      databaseId: 56,
+                      body: "Please update",
+                      createdAt: "2026-11-10T00:00:00Z",
+                      path: "src/auth.ts",
+                      line: 4,
+                      user: { databaseId: 7, login: "alice" },
+                      replyTo: null,
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        },
+      },
+    },
+  });
+}
+
+function threadOwnershipResponse() {
+  return Response.json({
+    data: {
+      node: {
+        id: "thread-node-1",
+        isResolved: threadResolved,
+        pullRequest: { number: 12, repository: { name: "app", owner: { login: "acme" } } },
+      },
+    },
+  });
+}
+
+function threadMutationResponse(query: string) {
+  threadResolved = !query.includes("unresolveReviewThread");
+  const operation = threadResolved ? "resolveReviewThread" : "unresolveReviewThread";
+
+  return Response.json({
+    data: { [operation]: { thread: { id: "thread-node-1", isResolved: threadResolved } } },
+  });
+}
 function applyPatch(request: RequestInit) {
   const patch = JSON.parse(String(request.body));
   if (patch.title !== undefined) pr.title = patch.title;

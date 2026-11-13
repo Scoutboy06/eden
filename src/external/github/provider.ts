@@ -33,6 +33,7 @@ import type {
   PullRequestMergeResult,
 } from "../../modules/pull-requests/provider";
 import { listReviewThreads } from "./review-threads";
+import { setReviewThreadResolution } from "./review-thread-resolution";
 
 type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
 
@@ -370,6 +371,15 @@ export class GitHubApiProvider
       );
 
     return listReviewThreads(this.client, ref, query);
+  }
+
+  setReviewThreadResolution(ref: PullRequestRef, threadId: string, isResolved: boolean) {
+    if (ref.provider !== "github")
+      return Promise.reject(
+        new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference."),
+      );
+
+    return setReviewThreadResolution(this.client, ref, threadId, isResolved);
   }
 
   submitReview(ref: PullRequestRef, input: PullRequestReviewInput) {

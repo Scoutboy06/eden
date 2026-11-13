@@ -117,6 +117,20 @@ export interface PullRequestCommentThreadLister {
   ): Promise<PullRequestCommentThreads>;
 }
 
+export type PullRequestThreadResolution = {
+  threadId: string;
+  isResolved: boolean;
+  changed: boolean;
+};
+
+export interface PullRequestThreadResolver {
+  setReviewThreadResolution(
+    ref: PullRequestRef,
+    threadId: string,
+    isResolved: boolean,
+  ): Promise<PullRequestThreadResolution>;
+}
+
 export type PullRequestReviewInput = {
   event: "approve" | "request-changes" | "comment";
   body?: string;

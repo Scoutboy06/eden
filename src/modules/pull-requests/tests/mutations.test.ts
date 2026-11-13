@@ -145,6 +145,40 @@ test("PR reviews and merges use the mutation boundary, capture explicit intent a
   ]);
 });
 
+test("review-thread resolution validates exact targets and dry-run makes no provider calls", async () => {
+  const execution = createExecution({ dryRun: true });
+  const resolve = mock(async () => ({
+    threadId: "thread-1",
+    isResolved: true,
+    changed: true,
+  }));
+  const service = new PullRequestService(
+    undefined,
+    async () => ({ ...({} as PullRequestProvider), setReviewThreadResolution: resolve }),
+    execution,
+  );
+  const target = { ref: "12", repo: "https://github.com/acme/app", threadId: "thread-1" };
+
+  expect(await service.setReviewThreadResolution(target, true)).toBeUndefined();
+  expect(resolve).not.toHaveBeenCalled();
+  expect(execution.operations).toMatchObject([
+    {
+      type: "github-pr-review-thread-resolution",
+      input: { threadId: "thread-1", isResolved: true },
+    },
+  ]);
+  await expect(
+    service.setReviewThreadResolution({ ...target, threadId: " " }, true),
+  ).rejects.toMatchObject({ code: "SCM_INVALID_OPTIONS" });
+  await expect(
+    service.setReviewThreadResolution(
+      { ref: "12", repo: "https://dev.azure.com/acme/project/_git/app", threadId: "thread-1" },
+      true,
+    ),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  expect(resolve).not.toHaveBeenCalled();
+});
+
 test("review and merge reject unsupported providers and malformed mutations before execution", async () => {
   const execution = createExecution({ dryRun: false });
   const service = new PullRequestService(
