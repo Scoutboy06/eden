@@ -15,6 +15,7 @@ export function listReviewThreads(
     const threads: PullRequestComment[][] = [];
     let cursor: string | null = null;
     let hasMore = false;
+    let incomplete = false;
     do {
       hasMore = false;
       const response: unknown = await client.graphql(threadQuery, {
@@ -24,6 +25,7 @@ export function listReviewThreads(
         cursor,
       });
       const page = normalizePage(response);
+      incomplete ||= page.incomplete;
       for (const thread of page.threads) {
         if (!matchesThread(thread, query)) continue;
         if (threads.length === query.limit) {
@@ -37,7 +39,7 @@ export function listReviewThreads(
       hasMore = page.hasNextPage;
     } while (cursor);
 
-    return { threads, hasMore };
+    return { threads, hasMore, incomplete };
   });
 }
 
@@ -54,7 +56,7 @@ const threadQuery = `query($owner: String!, $repo: String!, $number: Int!, $curs
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       reviewThreads(first: 100, after: $cursor) {
-        nodes { id isResolved comments(first: 100) { nodes { databaseId body createdAt path line originalLine user { databaseId login } replyTo { databaseId } } } }
+        nodes { id isResolved comments(first: 100) { nodes { databaseId body createdAt path line originalLine user { databaseId login } replyTo { databaseId } } pageInfo { hasNextPage } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -65,13 +67,15 @@ function normalizePage(response: unknown): {
   threads: PullRequestComment[][];
   hasNextPage: boolean;
   endCursor: string | null;
+  incomplete: boolean;
 } {
   const connection = readConnection(response);
   const pageInfo = readPageInfo(connection.pageInfo);
 
   return {
-    threads: connection.nodes.map(normalizeThread),
+    threads: connection.nodes.map((thread) => normalizeThread(thread)),
     ...pageInfo,
+    incomplete: connection.nodes.some(hasMoreThreadComments),
   };
 }
 
@@ -115,11 +119,16 @@ function normalizeThread(thread: any): PullRequestComment[] {
   if (
     typeof thread.id !== "string" ||
     typeof thread.isResolved !== "boolean" ||
-    !Array.isArray(thread.comments?.nodes)
+    !Array.isArray(thread.comments?.nodes) ||
+    typeof thread.comments?.pageInfo?.hasNextPage !== "boolean"
   )
     invalidResponse();
 
   return thread.comments.nodes.map((comment: any) => normalizeComment(comment, thread));
+}
+
+function hasMoreThreadComments(thread: any) {
+  return thread.comments?.pageInfo?.hasNextPage === true;
 }
 
 function normalizeComment(comment: any, thread: any): PullRequestComment {

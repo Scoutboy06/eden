@@ -107,6 +107,7 @@ export type PullRequestCommentThreadsQuery = {
 export type PullRequestCommentThreads = {
   threads: PullRequestComment[][];
   hasMore: boolean;
+  incomplete: boolean;
 };
 
 export interface PullRequestCommentThreadLister {

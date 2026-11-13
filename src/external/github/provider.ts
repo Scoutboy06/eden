@@ -672,6 +672,8 @@ type MergeTarget = {
   parameters: ReturnType<typeof parameters>;
   head: string;
   branch: string;
+  sourceOwner: string;
+  sourceRepository: string;
 };
 
 async function inspectMergeTarget(
@@ -688,7 +690,9 @@ async function inspectMergeTarget(
   const head = data.head?.sha;
   const branch = data.head?.ref;
   const base = data.base?.ref;
-  if (!head || !branch || !base) invalidResponse();
+  const sourceOwner = data.head?.repo?.owner?.login;
+  const sourceRepository = data.head?.repo?.name;
+  if (!head || !branch || !base || !sourceOwner || !sourceRepository) invalidResponse();
   if (input.expectedHead && input.expectedHead !== head)
     throw new ScmError(
       "SCM_STALE_HEAD",
@@ -699,8 +703,17 @@ async function inspectMergeTarget(
       "SCM_INVALID_REFERENCE",
       "The PR source branch is not a safe distinct branch name.",
     );
+  if (
+    input.deleteBranch &&
+    (sourceOwner.toLowerCase() !== ref.owner.toLowerCase() ||
+      sourceRepository.toLowerCase() !== ref.repository.toLowerCase())
+  )
+    throw new ScmError(
+      "SCM_UNSUPPORTED_OPERATION",
+      "Automatic deletion is only supported for a source branch in this repository; fork branches are left unchanged.",
+    );
 
-  return { ref, parameters: params, head, branch };
+  return { ref, parameters: params, head, branch, sourceOwner, sourceRepository };
 }
 
 function isSafeSourceBranch(branch: string, base: string) {
@@ -765,8 +778,8 @@ async function confirmMergedPullRequest(
 async function deleteMergedSourceBranch(client: Octokit, target: MergeTarget, pr: PullRequest) {
   try {
     const input = {
-      owner: target.ref.owner,
-      repo: target.ref.repository,
+      owner: target.sourceOwner,
+      repo: target.sourceRepository,
       ref: `heads/${target.branch}`,
     };
     const source = await client.git.getRef(input);
