@@ -1,16 +1,19 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { Outlet, useMatch } from "react-router-dom";
+import { Outlet, useMatch, useParams } from "react-router-dom";
 
 import { ActivityBar } from "@/components/activity-bar";
 import { TasksSidebar } from "@/components/tasks-sidebar";
-import { tasks } from "@/components/tasks-sidebar-data";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useWorktrees } from "@/pages/use-worktrees";
+import { useWorktreeSelection } from "@/pages/use-worktree-selection";
 
 const DRAG_THRESHOLD = 24;
 
 export function AppLayout() {
   const isDoingPage = useMatch("/p/:project/doing") !== null;
-  const [selectedTaskKey, setSelectedTaskKey] = useState(tasks[0]!.key);
+  const { project = "" } = useParams();
+  const worktreeData = useWorktrees(project);
+  const selection = useWorktreeSelection(project, worktreeData.worktrees);
   const [tasksOpen, setTasksOpen] = useState(
     () => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches,
   );
@@ -82,15 +85,21 @@ export function AppLayout() {
         >
           <TasksSidebar
             open={isDoingPage && tasksOpen}
-            selectedTaskKey={selectedTaskKey}
-            onSelectTask={setSelectedTaskKey}
+            worktrees={worktreeData.worktrees}
+            loading={worktreeData.loading}
+            stale={worktreeData.stale}
+            error={worktreeData.error}
+            refreshedAt={worktreeData.refreshedAt}
+            refresh={worktreeData.refresh}
+            selectedWorktreeKey={selection.key}
+            onSelectWorktree={selection.select}
           />
           <button
             type="button"
-            aria-label={tasksOpen ? "Hide tasks sidebar" : "Show tasks sidebar"}
-            aria-controls="tasks-sidebar"
+            aria-label={tasksOpen ? "Hide worktrees sidebar" : "Show worktrees sidebar"}
+            aria-controls="worktrees-sidebar"
             aria-expanded={tasksOpen}
-            title={tasksOpen ? "Hide tasks sidebar" : "Show tasks sidebar"}
+            title={tasksOpen ? "Hide worktrees sidebar" : "Show worktrees sidebar"}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -131,7 +140,13 @@ export function AppLayout() {
         <main
           className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-auto ${isDoingPage ? "" : "p-4"}`}
         >
-          <Outlet context={{ selectedTaskKey }} />
+          <Outlet
+            context={{
+              project,
+              worktrees: worktreeData.worktrees,
+              selectedWorktreeKey: selection.key,
+            }}
+          />
         </main>
       </div>
     </TooltipProvider>
