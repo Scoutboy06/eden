@@ -3,6 +3,7 @@ import { ScmError } from "../../../../src/modules/pull-requests/errors";
 import { buildPullRequestPatch } from "../../../../src/modules/pull-requests/edit-input";
 import { buildPullRequestCreate } from "../../../../src/modules/pull-requests/create-input";
 import { buildPullRequestComment } from "../../../../src/modules/pull-requests/comment-input";
+import type { PullRequestDiff } from "../../../../src/modules/pull-requests/provider";
 
 const args = {
   ref: {
@@ -377,6 +378,92 @@ const requestReview = defineCommand({
   },
 });
 
+const diff = defineCommand({
+  name: "diff",
+  description: "Show the changed files in a GitHub PR",
+  args: {
+    ref: { type: "positional", required: true, description: "PR number or URL" },
+    repo: args.repo,
+    remote: args.remote,
+    format: {
+      type: "string",
+      choices: ["patch", "stat", "json"],
+      description:
+        "Output format (default: patch; text patches omit unavailable modes/rename metadata and may not apply cleanly; --json uses Eden's standard envelope)",
+    },
+    path: { type: "string", description: "Filter files by repository-relative glob" },
+  },
+  async run(ctx, { pullRequests, output }) {
+    const result = await pullRequests.diff(ctx.values);
+    const format = ctx.values.format ?? "patch";
+    const data = { diff: result };
+
+    output.write({
+      data,
+      human: () =>
+        format === "json"
+          ? JSON.stringify(data, null, 2)
+          : format === "stat"
+            ? formatDiffStat(result)
+            : formatDiffPatch(result),
+    });
+  },
+});
+
+function formatDiffStat(diff: PullRequestDiff) {
+  const files = diff.files.map(
+    (file) => `${quoteGitPath(file.path)} | +${file.additions} -${file.deletions} (${file.status})`,
+  );
+  const summary = `${diff.files.length} file(s) changed, ${diff.files.reduce((sum, file) => sum + file.additions, 0)} insertions(+), ${diff.files.reduce((sum, file) => sum + file.deletions, 0)} deletions(-)`;
+
+  return [
+    ...files,
+    ...(files.length ? [summary] : ["No changed files."]),
+    ...(diff.completeness.status === "incomplete"
+      ? [`Incomplete file list: ${diff.completeness.reason}`]
+      : []),
+  ].join("\n");
+}
+
+function formatDiffPatch(diff: PullRequestDiff) {
+  const files = diff.files.map((file) => {
+    if (file.patch.status === "unavailable")
+      return `# Patch unavailable (${file.patch.reason}) for ${quoteGitPath(file.path)}`;
+    const previousPath = file.previousPath ?? file.path;
+    const oldPath = quoteGitPath(`a/${previousPath}`);
+    const newPath = quoteGitPath(`b/${file.path}`);
+    const header = `diff --git ${oldPath} ${newPath}`;
+    const labels = `--- ${file.status === "added" ? "/dev/null" : oldPath}\n+++ ${file.status === "deleted" ? "/dev/null" : newPath}`;
+    const note =
+      file.patch.status === "truncated" ? `# Patch truncated for ${quoteGitPath(file.path)}\n` : "";
+
+    return `${header}\n${note}${labels}\n${file.patch.text}`;
+  });
+
+  return [
+    ...files,
+    ...(files.length ? [] : ["No changed files."]),
+    ...(diff.completeness.status === "incomplete"
+      ? [`# Incomplete file list: ${diff.completeness.reason}`]
+      : []),
+  ].join("\n");
+}
+
+function quoteGitPath(path: string): string {
+  let quoted = '"';
+  for (const byte of new TextEncoder().encode(path)) {
+    if (byte === 0x22) quoted += '\\"';
+    else if (byte === 0x5c) quoted += "\\\\";
+    else if (byte === 0x09) quoted += "\\t";
+    else if (byte === 0x0a) quoted += "\\n";
+    else if (byte === 0x0d) quoted += "\\r";
+    else if (byte < 0x20 || byte > 0x7e) quoted += `\\${byte.toString(8).padStart(3, "0")}`;
+    else quoted += String.fromCharCode(byte);
+  }
+
+  return `${quoted}"`;
+}
+
 export default defineCommand({
   name: "pr",
   description: "Work with GitHub and Azure DevOps pull requests",
@@ -392,5 +479,6 @@ export default defineCommand({
     close,
     reopen,
     "request-review": requestReview,
+    diff,
   },
 });

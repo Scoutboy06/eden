@@ -71,6 +71,32 @@ export interface PullRequestProvider {
   getReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
 }
 
+export type PullRequestFilePatch =
+  | { status: "available"; text: string }
+  | { status: "truncated"; text: string }
+  | { status: "unavailable"; reason: "binary" | "too-large" | "not-provided" };
+
+export type PullRequestFileDiff = {
+  path: string;
+  previousPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "type-changed" | "unknown";
+  additions: number;
+  deletions: number;
+  patch: PullRequestFilePatch;
+};
+
+export type PullRequestDiff = {
+  ref: PullRequestRef;
+  baseCommit: string;
+  headCommit: string;
+  files: PullRequestFileDiff[];
+  completeness: { status: "complete" } | { status: "incomplete"; reason: string };
+};
+
+export interface PullRequestDiffer {
+  getDiff(ref: PullRequestRef): Promise<PullRequestDiff>;
+}
+
 export type PullRequestListQuery = {
   repository: RepositoryRef;
   state: "open" | "closed" | "merged" | "all";

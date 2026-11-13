@@ -10,6 +10,79 @@ const git = {
   branch: async () => "topic",
 };
 
+test("diff resolves provider output and applies repository-relative glob filters", async () => {
+  const { provider } = githubProvider(() => Response.json(githubPr()));
+  const getDiff = mock(async () => ({
+    ref,
+    baseCommit: "base",
+    headCommit: "head",
+    files: [
+      {
+        path: "src/auth.ts",
+        status: "modified" as const,
+        additions: 1,
+        deletions: 0,
+        patch: { status: "unavailable" as const, reason: "not-provided" as const },
+      },
+      {
+        path: "index.ts",
+        status: "added" as const,
+        additions: 1,
+        deletions: 0,
+        patch: { status: "unavailable" as const, reason: "not-provided" as const },
+      },
+      {
+        path: "src/new/name.ts",
+        previousPath: "src/old/name.ts",
+        status: "renamed" as const,
+        additions: 0,
+        deletions: 0,
+        patch: { status: "unavailable" as const, reason: "not-provided" as const },
+      },
+      {
+        path: "README.md",
+        status: "modified" as const,
+        additions: 0,
+        deletions: 1,
+        patch: { status: "unavailable" as const, reason: "not-provided" as const },
+      },
+    ],
+    completeness: { status: "complete" as const },
+  }));
+  provider.getDiff = getDiff;
+  const service = new PullRequestService(git, async () => provider);
+
+  expect(await service.diff({ ref: "12", path: "src/auth.ts" })).toMatchObject({
+    files: [{ path: "src/auth.ts" }],
+    completeness: { status: "complete" },
+  });
+  expect(getDiff).toHaveBeenCalledWith(ref);
+  expect((await service.diff({ ref: "12", path: "**/*.ts" })).files).toHaveLength(3);
+  expect((await service.diff({ ref: "12", path: "src/**/auth.ts" })).files).toMatchObject([
+    { path: "src/auth.ts" },
+  ]);
+  expect((await service.diff({ ref: "12", path: "src/old/**" })).files).toMatchObject([
+    { path: "src/new/name.ts" },
+  ]);
+  await expect(service.diff({ ref: "12", path: "src/foo..bar.ts" })).resolves.toMatchObject({
+    files: expect.any(Array),
+  });
+});
+
+test("diff rejects invalid glob before provider creation and reports Azure as unsupported", async () => {
+  const create = mock(async () => azureProvider());
+  const service = new PullRequestService(git, create);
+
+  await expect(service.diff({ ref: "12", path: "../private" })).rejects.toMatchObject({
+    code: "SCM_INVALID_OPTIONS",
+  });
+  expect(create).not.toHaveBeenCalled();
+  await expect(
+    service.diff({ ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42" }),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  expect(create).not.toHaveBeenCalled();
+});
+
 test("service resolves branch searches before exact lookup", async () => {
   const selected = { ...ref, number: 37 };
   const calls: string[] = [];

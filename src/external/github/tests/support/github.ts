@@ -41,7 +41,7 @@ export function githubPr(overrides: Record<string, unknown> = {}) {
     merged: false,
     draft: true,
     head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
-    base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
+    base: { ref: "main", sha: "base123", repo: { owner: { login: "acme" }, name: "app" } },
     ...overrides,
   };
 }

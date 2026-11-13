@@ -10,7 +10,7 @@ const pr = {
   user: { id: 7, login: "alice" },
   draft: true,
   head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
-  base: { ref: "main", repo: { owner: { login: "acme" }, name: "app" } },
+  base: { ref: "main", sha: "base123", repo: { owner: { login: "acme" }, name: "app" } },
 };
 let checkReads = 0;
 let reviewRequests: {
@@ -96,6 +96,45 @@ function respond(url: URL): Response {
   if (/\/(pulls|issues)\/404(?:\/|$)/.test(url.pathname))
     return Response.json({ message: "secret-token" }, { status: 404 });
   if (url.pathname.endsWith("/pulls/12")) return Response.json(pr);
+  if (url.pathname.endsWith("/pulls/12/files"))
+    return Response.json([
+      {
+        filename: "src/auth.ts",
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+        patch: "@@ -1,2 +1,3 @@\n old\n-old\n+new\n+line",
+      },
+      { filename: "README.md", status: "modified", additions: 1, deletions: 0 },
+      {
+        filename: "src/new file.ts",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        patch: "@@ -0,0 +1 @@\n+new",
+      },
+      {
+        filename: "src/old\tfile.ts",
+        status: "removed",
+        additions: 0,
+        deletions: 1,
+        patch: "@@ -1 +0,0 @@\n-old",
+      },
+      {
+        filename: "src/rename new.ts",
+        previous_filename: "src/rename old.ts",
+        status: "renamed",
+        additions: 0,
+        deletions: 0,
+      },
+      {
+        filename: 'src/quoted"file.ts',
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        patch: "@@ -1 +1 @@\n-old\n+new",
+      },
+    ]);
   if (url.pathname.endsWith("/pulls/comments/56"))
     return Response.json({
       id: 56,

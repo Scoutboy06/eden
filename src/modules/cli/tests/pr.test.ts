@@ -214,6 +214,74 @@ test("PR list renders empty results and structured errors", async () => {
   expect(invalid.stderr).toContain("--limit must be a positive safe integer");
 });
 
+test("PR diff declares format and path options and renders patch, stat and JSON", async () => {
+  const help = await runCli("pr", "diff", "--help");
+  const completion = await runCli("completion", "bash");
+  const ref = "https://github.com/acme/app/pull/12";
+  const patch = await runPr("pr", "diff", ref);
+  const stat = await runPr("pr", "diff", ref, "--format", "stat");
+  const jsonFormat = await runPr("pr", "diff", ref, "--format", "json");
+  const globalJson = await runPr("pr", "diff", ref, "--format", "json", "--json");
+  const filtered = await runPr("pr", "diff", ref, "--path", "src/auth.ts", "--json");
+
+  for (const flag of ["--format", "--path"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  expect(help.stdout).toContain("patch");
+  expect(help.stdout).toContain("may not apply cleanly");
+  expect(patch.exitCode).toBe(0);
+  expect(patch.stdout).toContain('diff --git "a/src/auth.ts" "b/src/auth.ts"');
+  expect(patch.stdout).toContain('--- /dev/null\n+++ "b/src/new file.ts"');
+  expect(patch.stdout).toContain('--- "a/src/old\\tfile.ts"\n+++ /dev/null');
+  expect(patch.stdout).toContain('# Patch unavailable (not-provided) for "src/rename new.ts"');
+  expect(patch.stdout).toContain('a/src/quoted\\"file.ts');
+  expect(stat.stdout).toContain("6 file(s) changed");
+  expect(jsonFormat.stdout.startsWith("{\n")).toBe(true);
+  expect(JSON.parse(jsonFormat.stdout)).toMatchObject({ diff: { baseCommit: "base123" } });
+  expect(JSON.parse(jsonFormat.stdout)).not.toHaveProperty("ok");
+  expect(JSON.parse(globalJson.stdout)).toMatchObject({
+    ok: true,
+    diff: { files: expect.any(Array) },
+  });
+  expect(JSON.parse(globalJson.stdout)).toHaveProperty("dryRun", false);
+  expect(JSON.parse(filtered.stdout).diff.files.map((file: { path: string }) => file.path)).toEqual(
+    ["src/auth.ts"],
+  );
+});
+
+test("PR diff preserves empty results and returns structured errors for invalid and unsupported targets", async () => {
+  const empty = await runPr(
+    "pr",
+    "diff",
+    "https://github.com/acme/app/pull/12",
+    "--path",
+    "missing/**",
+  );
+  const invalid = await runPr(
+    "pr",
+    "diff",
+    "12",
+    "--repo",
+    "https://github.com/acme/app",
+    "--path",
+    "../secret",
+    "--json",
+  );
+  const azure = await runPr(
+    "pr",
+    "diff",
+    "https://dev.azure.com/acme/Product/_git/app/pullrequest/42",
+    "--json",
+  );
+
+  expect(empty.stdout).toBe("No changed files.\n");
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
+  expect(azure.exitCode).toBe(1);
+  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_UNSUPPORTED_OPERATION" } });
+});
+
 test("PR create declares options and renders human and JSON results", async () => {
   const help = await runCli("pr", "create", "--help");
   const completion = await runCli("completion", "bash");

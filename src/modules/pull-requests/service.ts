@@ -14,6 +14,8 @@ import type {
   PullRequestLister,
   PullRequestListQuery,
   RepositoryRef,
+  PullRequestDiffer,
+  PullRequestDiff,
 } from "./provider";
 import { createExecution } from "../execution/execution";
 import type { Execution } from "../execution/types";
@@ -301,6 +303,23 @@ export class PullRequestService {
     };
   }
 
+  async diff(input: PullRequestInput & { path?: string }): Promise<PullRequestDiff> {
+    if (input.path !== undefined) validateDiffPath(input.path);
+    const pathGlob = input.path === undefined ? undefined : new Bun.Glob(input.path);
+    const { provider, ref } = await this.resolve(input, "diff");
+    if (!("getDiff" in provider) || typeof provider.getDiff !== "function")
+      throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot return PR diffs.");
+    const result = await (provider as PullRequestProvider & PullRequestDiffer).getDiff(ref);
+
+    return {
+      ...result,
+      files:
+        pathGlob === undefined
+          ? result.files
+          : result.files.filter((file) => matchesDiffPath(pathGlob, file.path, file.previousPath)),
+    };
+  }
+
   async checks(
     input: PullRequestInput & { requiredOnly?: boolean; watch?: boolean },
     options: WatchOptions = {},
@@ -341,8 +360,13 @@ export class PullRequestService {
     };
   }
 
-  private async resolve(input: PullRequestInput) {
+  private async resolve(input: PullRequestInput, operation?: "diff") {
     const lookup = await resolvePullRequestLookup(input, this.git);
+    if (operation === "diff" && lookup.repository.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "eden pr diff currently supports GitHub only; Azure DevOps diff is deferred.",
+      );
     const provider = await this.createProvider(lookup.repository);
     if (lookup.kind === "exact") return { provider, ref: lookup.ref };
 
@@ -472,4 +496,22 @@ function validateBranch(branch: string) {
 
 function invalidInput(message: string): never {
   throw new ScmError("SCM_INVALID_REFERENCE", message);
+}
+
+function validateDiffPath(pattern: string) {
+  if (
+    !pattern.trim() ||
+    pattern.startsWith("/") ||
+    pattern.includes("\\") ||
+    pattern.includes("\0") ||
+    pattern.split("/").some((segment) => segment === "..")
+  )
+    throw new ScmError(
+      "SCM_INVALID_OPTIONS",
+      "--path must be a nonempty repository-relative glob.",
+    );
+}
+
+function matchesDiffPath(glob: Bun.Glob, path: string, previousPath?: string): boolean {
+  return glob.match(path) || (previousPath !== undefined && glob.match(previousPath));
 }
