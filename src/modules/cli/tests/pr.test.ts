@@ -106,6 +106,69 @@ test("PR comment dry-run sends no HTTP and input/provider failures are structure
   expect(denied.stdout).not.toContain("secret-token");
 });
 
+test("PR comments declare filters and render review threads in human and JSON output", async () => {
+  const help = await runCli("pr", "comments", "--help");
+  const completion = await runCli("completion", "bash");
+  for (const flag of ["--unresolved", "--since", "--limit"]) {
+    expect(help.stdout).toContain(flag);
+    expect(completion.stdout).toContain(flag);
+  }
+  const args = ["pr", "comments", "https://github.com/acme/app/pull/12", "--unresolved"];
+  const human = await runPr(...args);
+  const json = await runPr(...args, "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("review:56 (unresolved)");
+  expect(human.stdout).toContain("Please update");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    threads: [[{ id: "review:56", threadId: "thread-node-1", replyTo: "review:56" }]],
+    hasMore: false,
+  });
+});
+
+test("PR review and merge require explicit valid choices and render verified mutations", async () => {
+  const reviewHelp = await runCli("pr", "review", "--help");
+  const mergeHelp = await runCli("pr", "merge", "--help");
+  const reviewArgs = ["pr", "review", "https://github.com/acme/app/pull/12", "--event", "approve"];
+  const review = await runPr(...reviewArgs, "--json");
+  const reviewDryRun = await runPrWithEnv(
+    { PR_FORBID_REQUESTS: "1" },
+    ...reviewArgs,
+    "--expected-head",
+    "a".repeat(40),
+    "--dry-run",
+    "--json",
+  );
+  const mergeArgs = ["pr", "merge", "https://github.com/acme/app/pull/12", "--method", "squash"];
+  const merge = await runPr(...mergeArgs, "--json");
+  const invalid = await runPr(
+    "pr",
+    "review",
+    "https://github.com/acme/app/pull/12",
+    "--event",
+    "request-changes",
+    "--json",
+  );
+
+  expect(reviewHelp.stdout).toContain("--expected-head");
+  expect(mergeHelp.stdout).toContain("--delete-branch");
+  expect(review.exitCode).toBe(0);
+  expect(JSON.parse(review.stdout)).toMatchObject({ ok: true, review: { state: "approved" } });
+  expect(reviewDryRun.exitCode).toBe(0);
+  expect(JSON.parse(reviewDryRun.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [{ type: "github-pr-review", input: { expectedHead: "a".repeat(40) } }],
+  });
+  expect(merge.exitCode).toBe(0);
+  expect(JSON.parse(merge.stdout)).toMatchObject({ ok: true, pr: { state: "merged" } });
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({
+    error: { code: "SCM_INVALID_OPTIONS" },
+  });
+});
+
 test("PR close declares comment, renders success and records no-HTTP dry-run", async () => {
   const help = await runCli("pr", "close", "--help");
   const completion = await runCli("completion", "bash");
@@ -372,7 +435,9 @@ test("PR help and completion expose the read commands and show enrichments", asy
   expect(help.stdout).toContain("show");
   expect(help.stdout).toContain("checks");
   expect(help.stdout).toContain("reviewers");
-  expect(help.stdout).not.toMatch(/\n  merge\s/);
+  expect(help.stdout).toMatch(/\n  merge\s/);
+  expect(help.stdout).toMatch(/\n  comments\s/);
+  expect(help.stdout).toMatch(/\n  review\s/);
   expect(completion.stdout).toContain("--remote");
   expect(completion.stdout).toContain("--head");
   for (const flag of ["--raw", "--comments", "--checks"]) {

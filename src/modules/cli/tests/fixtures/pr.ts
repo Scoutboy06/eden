@@ -45,6 +45,8 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       teams: reviewRequests.teams,
     });
   }
+  const mergeResponse = respondMergeMutation(url, init);
+  if (mergeResponse) return mergeResponse;
   if (init?.method === "PATCH") applyPatch(init);
   const response = respond(url);
   Object.defineProperty(response, "url", { value: url.href });
@@ -52,9 +54,25 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   return response;
 }) as typeof fetch;
 
+function respondMergeMutation(url: URL, init?: RequestInit): Response | undefined {
+  if (init?.method === "PUT" && url.pathname.endsWith("/pulls/12/merge")) {
+    pr.state = "closed";
+    pr.merged = true;
+    return Response.json({ merged: true, sha: pr.head.sha, message: "Merged" });
+  }
+  if (init?.method === "DELETE" && url.pathname.includes("/git/refs/heads%2Ftopic"))
+    return new Response(null, { status: 204 });
+}
+
 await import("../../../../../apps/cli/src/main");
 
 function postResponse(url: URL, init: RequestInit): Response | undefined {
+  if (url.pathname.endsWith("/pulls/12/reviews"))
+    return Response.json({
+      id: 91,
+      state: JSON.parse(String(init.body)).event === "APPROVE" ? "APPROVED" : "COMMENTED",
+      user: { id: 7, login: "alice" },
+    });
   if (url.pathname.endsWith("/issues/12/comments")) {
     if (process.env.PR_COMMENT_FAIL)
       return Response.json({ message: "secret-token" }, { status: 403 });
@@ -75,6 +93,39 @@ function postResponse(url: URL, init: RequestInit): Response | undefined {
   }
   if (url.pathname === "/graphql") {
     const body = JSON.parse(String(init?.body));
+    if (body.query.includes("reviewThreads")) {
+      return Response.json({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    id: "thread-node-1",
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: 56,
+                          body: "Please update",
+                          createdAt: "2026-11-10T00:00:00Z",
+                          path: "src/auth.ts",
+                          line: 4,
+                          user: { databaseId: 7, login: "alice" },
+                          replyTo: null,
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      });
+    }
     pr.draft = body.query.includes("convertPullRequestToDraft");
     const operation = pr.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
 
@@ -146,6 +197,7 @@ function respond(url: URL): Response {
       { id: 1, body: "Looks good", user: { id: 7, login: "alice" }, created_at: "2026-01-01" },
     ]);
   if (url.pathname.endsWith("/pulls/12/comments")) return Response.json([]);
+  if (url.pathname.includes("/git/ref/")) return Response.json({ object: { sha: pr.head.sha } });
   if (url.pathname.endsWith("/protection"))
     return Response.json({ required_status_checks: { contexts: ["build"] } });
   if (url.pathname.includes("/rules/branches/")) return Response.json([]);

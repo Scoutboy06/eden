@@ -336,7 +336,7 @@ const comments = defineCommand({
     output.write({
       data: result,
       human: () =>
-        `${result.threads.map((thread) => thread.map((comment) => `${comment.id}${comment.isResolved ? " (resolved)" : " (unresolved)"}\n${comment.author?.name ?? "Deleted user"}${comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ""}` : ""}\n${comment.body}`).join("\n\n")).join("\n\n") || "No review threads."}${result.hasMore ? "\nMore matching threads available; increase --limit." : ""}`,
+        `${result.threads.map((thread) => thread.map((comment) => `${comment.id}${comment.replyTo ? ` · reply-to ${comment.replyTo}` : ""}${comment.isResolved ? " (resolved)" : " (unresolved)"}\n${comment.author?.name ?? "Deleted user"}${comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ""}` : ""}\n${comment.body}`).join("\n\n")).join("\n\n") || "No review threads."}${result.hasMore ? "\nMore matching threads available; increase --limit." : ""}${result.incomplete ? "\nOne or more threads have more than 100 comments; replies are omitted." : ""}`,
     });
   },
 });
@@ -367,12 +367,10 @@ const review = defineCommand({
     "expected-head": { type: "string", description: "Full head commit SHA to bind this review to" },
   },
   async run(ctx, { pullRequests, output }) {
-    if (ctx.values.body !== undefined && ctx.values["body-file"] !== undefined)
-      throw new ScmError("SCM_INVALID_OPTIONS", "--body and --body-file are mutually exclusive.");
-    const body =
-      ctx.values["body-file"] === undefined
-        ? ctx.values.body
-        : await Bun.file(ctx.values["body-file"]).text();
+    const { body } = await buildPullRequestPatch({
+      body: ctx.values.body,
+      bodyFile: ctx.values["body-file"],
+    });
     const result = await pullRequests.review({
       ...ctx.values,
       event: ctx.values.event as "approve" | "request-changes" | "comment",

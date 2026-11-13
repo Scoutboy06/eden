@@ -119,6 +119,64 @@ test("request review validates and deduplicates targets and dry-run never calls 
   expect(execution.operations).toHaveLength(1);
 });
 
+test("PR reviews and merges use the mutation boundary, capture explicit intent and avoid dry-run calls", async () => {
+  const execution = createExecution({ dryRun: true });
+  const review = mock(async () => ({
+    reviewer: { id: "user:1", name: "alice" },
+    state: "approved" as const,
+  }));
+  const merge = mock(async () => ({ pr, deletedBranch: false }));
+  const service = new PullRequestService(
+    undefined,
+    async () => ({ ...({} as PullRequestProvider), submitReview: review, mergePullRequest: merge }),
+    execution,
+  );
+  const target = { ref: "12", repo: "https://github.com/acme/app" };
+
+  expect(
+    await service.review({ ...target, event: "approve", expectedHead: "a".repeat(40) }),
+  ).toBeUndefined();
+  expect(await service.merge({ ...target, method: "squash", deleteBranch: true })).toBeUndefined();
+  expect(review).not.toHaveBeenCalled();
+  expect(merge).not.toHaveBeenCalled();
+  expect(execution.operations).toMatchObject([
+    { type: "github-pr-review", input: { event: "approve", expectedHead: "a".repeat(40) } },
+    { type: "github-pr-merge", input: { method: "squash", deleteBranch: true } },
+  ]);
+});
+
+test("review and merge reject unsupported providers and malformed mutations before execution", async () => {
+  const execution = createExecution({ dryRun: false });
+  const service = new PullRequestService(
+    undefined,
+    async () => ({}) as PullRequestProvider,
+    execution,
+  );
+
+  await expect(
+    service.review({
+      ref: "12",
+      repo: "https://dev.azure.com/acme/project/_git/app",
+      event: "approve",
+    }),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  await expect(
+    service.merge({
+      ref: "12",
+      repo: "https://github.com/acme/app",
+      method: "merge",
+    }),
+  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  await expect(
+    service.review({
+      ref: "12",
+      repo: "https://github.com/acme/app",
+      event: "request-changes",
+    }),
+  ).rejects.toMatchObject({ code: "SCM_INVALID_OPTIONS" });
+  expect(execution.operations).toEqual([]);
+});
+
 test("request review requires provider capability before recording a mutation", async () => {
   const execution = createExecution({ dryRun: false });
   const service = new PullRequestService(
