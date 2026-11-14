@@ -32,7 +32,13 @@ test.each([
     },
   };
 
-  await new SandboxService(execution, provider).stop("example");
+  await new SandboxService(
+    execution,
+    provider,
+    undefined,
+    undefined,
+    createIsolatedHooks(execution),
+  ).stop("example");
 
   const expectedCalls = shouldStop ? ["example"] : [];
   expect(calls).toEqual(expectedCalls);
@@ -69,12 +75,17 @@ test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async
       calls.push("create");
     },
   };
-  const service = new SandboxService(execution, provider, {
-    name: "work",
-    template: "profile:image",
-  });
+  const service = new SandboxService(
+    execution,
+    provider,
+    { name: "work", template: "profile:image" },
+    undefined,
+    createIsolatedHooks(execution),
+  );
 
-  await expect(service.run({ name: "typo" })).rejects.toMatchObject({ code: "SANDBOX_NOT_FOUND" });
+  await expect(service.run({ name: "typo" })).rejects.toMatchObject({
+    code: "SANDBOX_NOT_FOUND",
+  });
 
   expect(calls).toEqual(["list"]);
   expect(execution.operations).toEqual([]);
@@ -106,7 +117,13 @@ test.each([
       calls.push("create");
     },
   };
-  const service = new SandboxService(execution, provider);
+  const service = new SandboxService(
+    execution,
+    provider,
+    undefined,
+    undefined,
+    createIsolatedHooks(execution),
+  );
 
   const exitCode = await service.run({ name: "example" });
 
@@ -214,8 +231,18 @@ test.each([false, true])(
         return { exitCode: 7, stdout: "out", stderr: "err" };
       },
     };
-    const input = { name: "example", argv: ["echo", "a b", "--"], output: "capture" } as const;
-    const result = await new SandboxService(execution, provider).exec({
+    const input = {
+      name: "example",
+      argv: ["echo", "a b", "--"],
+      output: "capture",
+    } as const;
+    const result = await new SandboxService(
+      execution,
+      provider,
+      undefined,
+      undefined,
+      createIsolatedHooks(execution),
+    ).exec({
       ...input,
       argv: [...input.argv],
     });
