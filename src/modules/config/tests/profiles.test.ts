@@ -14,7 +14,10 @@ test("reads profiles without interpreting references or injecting profile defaul
         provider: "docker-sbx" as const,
         agent: "claude" as const,
         mcp_servers: ["notion", "db"],
-        mounts: { packages: { path: "~/cache", readonly: true } },
+        mounts: {
+          packages: { path: "~/cache", readonly: true },
+          scratch: { path: "~/scratch", create: true },
+        },
         pull: "never" as const,
         disk: { root: "100g", docker: "50g" },
         workspace: { mode: "clone" as const, path: "~/repository" },
@@ -56,6 +59,10 @@ test.each([
   [
     { unused: { mounts: { x: { path: ".", readonly: "true" } } } },
     "sandbox.profiles.unused.mounts.x.readonly",
+  ],
+  [
+    { unused: { mounts: { x: { path: ".", create: "yes" } } } },
+    "sandbox.profiles.unused.mounts.x.create",
   ],
   [{ unused: { pull: "invalid" } }, "sandbox.profiles.unused.pull"],
   [{ unused: { disk: { root: "" } } }, "sandbox.profiles.unused.disk.root"],
