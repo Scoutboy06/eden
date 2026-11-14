@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
 import { resolveSandboxPaths } from "./sandbox-paths";
 import type { Execution } from "../execution";
 import { HookFailure, HookService, type SandboxHookInput } from "../hook/hook.service";
@@ -7,6 +5,12 @@ import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
+import {
+  createAuditInput,
+  describeCreation,
+  resolveCreateInput,
+  workspaceWarnings,
+} from "./sandbox-creation";
 import type {
   CreateSandboxInput,
   ExecSandboxInput,
@@ -38,10 +42,13 @@ export class SandboxService {
 
   async exec(input: ExecSandboxInput): Promise<ExecSandboxResult | undefined> {
     validateSandboxInput(input.name);
-    if (!input.argv.length || !input.argv[0]) {
+    const hasCommand = input.argv.length > 0 && Boolean(input.argv[0]);
+    if (!hasCommand) {
       throw new SandboxError("SANDBOX_INVALID_INPUT", "Provide a command to execute.");
     }
-    if (!(await this.provider.list()).some((sandbox) => sandbox.name === input.name)) {
+    const sandboxes = await this.provider.list();
+    const sandboxExists = sandboxes.some((sandbox) => sandbox.name === input.name);
+    if (!sandboxExists) {
       throw new SandboxError(
         "SANDBOX_NOT_FOUND",
         `Sandbox ${input.name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
@@ -54,12 +61,13 @@ export class SandboxService {
       );
     }
     let result: ExecSandboxResult | undefined;
+    const providerName = this.provider.name;
     await this.execution.mutate(
       {
         type: "sandbox.exec",
-        description: `Execute a command in sandbox ${input.name} using ${this.provider.name}`,
+        description: `Execute a command in sandbox ${input.name} using ${providerName}`,
         input: {
-          provider: this.provider.name,
+          provider: providerName,
           name: input.name,
           argv: input.argv,
           output: input.output,
@@ -74,7 +82,8 @@ export class SandboxService {
 
   async stop(name: string): Promise<void> {
     validateSandboxInput(name);
-    const sandbox = (await this.provider.list()).find((sandbox) => sandbox.name === name);
+    const sandboxes = await this.provider.list();
+    const sandbox = sandboxes.find((entry) => entry.name === name);
 
     if (!sandbox) {
       throw new SandboxError(
@@ -90,41 +99,52 @@ export class SandboxService {
         input: { provider: this.provider.name, name },
       },
       async () => {
-        if (sandbox.status !== "stopped") await this.provider.stop(name);
+        const alreadyStopped = sandbox.status === "stopped";
+        if (!alreadyStopped) {
+          await this.provider.stop(name);
+        }
       },
     );
   }
 
   async remove(name: string, force: boolean): Promise<void> {
     validateSandboxInput(name);
-    const sandbox = (await this.provider.list()).find((entry) => entry.name === name);
+    const sandboxes = await this.provider.list();
+    const sandbox = sandboxes.find((entry) => entry.name === name);
     if (!sandbox) {
       throw new SandboxError(
         "SANDBOX_NOT_FOUND",
         `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
       );
     }
-    if (sandbox.status !== "stopped" && !force) {
+    const sandboxIsRunningOrUnknown = sandbox.status !== "stopped";
+    if (sandboxIsRunningOrUnknown && !force) {
       throw new SandboxError(
         "SANDBOX_REMOVE_REQUIRES_FORCE",
         `Sandbox ${name} is ${sandbox.status}. Use --force to remove a sandbox that is running or has an unknown status.`,
       );
     }
-    if (!this.provider.remove)
+    const canRemove = this.provider.remove !== undefined;
+    if (!canRemove) {
       throw new SandboxError(
         "SANDBOX_PROVIDER_UNAVAILABLE",
         "Sandbox removal is unavailable for this provider.",
       );
+    }
 
-    const path = force ? undefined : await this.hooks.discover("sandbox.remove.pre");
+    let path: string | undefined;
+    if (!force) {
+      path = await this.hooks.discover("sandbox.remove.pre");
+    }
     if (path) {
       this.onHook?.();
+      const cwd = process.cwd();
       const input: SandboxHookInput = {
         request: { name },
-        context: { cwd: process.cwd() },
+        context: { cwd },
         sandbox: { name, provider: this.provider.name, status: sandbox.status },
       };
-      await this.hooks.run("sandbox.remove.pre", path, input, input.context.cwd, "pre", "empty");
+      await this.hooks.run("sandbox.remove.pre", path, input, cwd, "pre", "empty");
     }
 
     await this.execution.mutate(
@@ -167,7 +187,9 @@ export class SandboxService {
   }
 
   async create(input: CreateSandboxInput, path?: string): Promise<{ warnings: string[] }> {
-    if (input.workspace?.mode === "host" && this.profile?.workspace?.mode !== "host") {
+    const requestedHostWorkspace = input.workspace?.mode === "host";
+    const profileAllowsHostWorkspace = this.profile?.workspace?.mode === "host";
+    if (requestedHostWorkspace && !profileAllowsHostWorkspace) {
       throw new SandboxError(
         "SANDBOX_INVALID_INPUT",
         "Host workspace mode must be configured explicitly in a sandbox profile.",
@@ -178,7 +200,9 @@ export class SandboxService {
     validateSandboxInput(resolved.name, resolved.image);
     await resolveSandboxPaths(resolved, path);
     const warnings = workspaceWarnings(resolved);
-    for (const warning of warnings) this.onWarning?.(warning);
+    for (const warning of warnings) {
+      this.onWarning?.(warning);
+    }
 
     await this.provider.preflight(resolved);
     const hookInput = this.createHookInput(resolved);
@@ -192,12 +216,7 @@ export class SandboxService {
       {
         type: "sandbox.create",
         description: describeCreation(this.provider.name, resolved),
-        input: {
-          provider: this.provider.name,
-          ...resolved,
-          ...(warnings.length ? { warnings } : {}),
-          ...(this.profile === undefined ? {} : { profile: this.profile.name }),
-        },
+        input: createAuditInput(this.provider.name, resolved, warnings, this.profile),
       },
       () => this.provider.create(resolved),
     );
@@ -208,11 +227,18 @@ export class SandboxService {
   }
 
   private createHookInput(resolved: CreateSandboxInput): SandboxHookInput {
-    const profile = this.profile ? { profile: this.profile.name } : {};
+    const profileName = this.profile?.name;
+    const request: SandboxHookInput["request"] = { name: resolved.name };
+    const sandbox: Record<string, unknown> = { provider: this.provider.name, ...resolved };
+    if (profileName !== undefined) {
+      request.profile = profileName;
+      sandbox.profile = profileName;
+    }
+
     return {
-      request: { name: resolved.name, ...profile },
+      request,
       context: { cwd: process.cwd() },
-      sandbox: { provider: this.provider.name, ...resolved, ...profile },
+      sandbox,
     };
   }
 
@@ -264,15 +290,28 @@ export function createSandboxServiceFactory(
 ): (selection?: SandboxSelection) => Promise<SandboxService> {
   return async (selection = {}) => {
     const { provider: providerName, profile: profileName, useDefaultProfile } = selection;
-    const settings =
-      providerName === undefined || profileName !== undefined || useDefaultProfile
-        ? (await config.read()).sandbox
-        : undefined;
-    const selectedProfile =
-      profileName ?? (useDefaultProfile ? settings?.default_profile : undefined);
-    const profile =
-      selectedProfile === undefined ? undefined : resolveProfile(settings, selectedProfile);
-    const name = providerName ?? profile?.provider ?? settings?.default_provider;
+    const shouldReadSettings =
+      providerName === undefined || profileName !== undefined || useDefaultProfile === true;
+    let settings: Config["sandbox"] | undefined;
+    if (shouldReadSettings) {
+      const configValue = await config.read();
+      settings = configValue.sandbox;
+    }
+
+    let selectedProfile = profileName;
+    if (selectedProfile === undefined && useDefaultProfile) {
+      selectedProfile = settings?.default_profile;
+    }
+
+    let profile: SandboxProfile | undefined;
+    let namedProfile: (SandboxProfile & { name: string }) | undefined;
+    if (selectedProfile !== undefined) {
+      profile = resolveProfile(settings, selectedProfile);
+      namedProfile = { ...profile, name: selectedProfile };
+    }
+
+    const configuredProvider = profile?.provider ?? settings?.default_provider;
+    const name = providerName ?? configuredProvider;
 
     if (name === undefined) {
       throw new SandboxError(
@@ -281,10 +320,15 @@ export function createSandboxServiceFactory(
       );
     }
 
+    const provider = providerFactory(
+      name,
+      presentation.onCreateOutput,
+      presentation.interactiveCreate,
+    );
     return new SandboxService(
       execution,
-      providerFactory(name, presentation.onCreateOutput, presentation.interactiveCreate),
-      selectedProfile === undefined ? undefined : { ...profile, name: selectedProfile },
+      provider,
+      namedProfile,
       presentation.onWarning,
       hooks,
       presentation.onHook,
@@ -300,10 +344,12 @@ function resolveProfile(settings: Config["sandbox"], name: string) {
       .sort()
       .map((key) => JSON.stringify(key))
       .join(", ");
+    const profileName = JSON.stringify(name);
+    const configuredProfiles = available || "none";
 
     throw new SandboxError(
       "SANDBOX_PROFILE_NOT_FOUND",
-      `Unknown sandbox profile ${JSON.stringify(name)}. Configured profiles: ${available || "none"}.`,
+      `Unknown sandbox profile ${profileName}. Configured profiles: ${configuredProfiles}.`,
     );
   }
 
@@ -324,91 +370,13 @@ export function createSandboxProvider(
 }
 
 function validateSandboxInput(name: string, image?: string): void {
-  if (!name.trim() || (image !== undefined && !image.trim())) {
+  const isNameBlank = name.trim().length === 0;
+  const isImageBlank = image !== undefined && image.trim().length === 0;
+
+  if (isNameBlank || isImageBlank) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
       "Sandbox name and supplied image must not be empty.",
     );
   }
-}
-
-function workspaceWarnings(input: CreateSandboxInput): string[] {
-  if (
-    input.workspace?.mode === "host" ||
-    Object.values(input.mounts ?? {}).some((mount) => !mount.readonly)
-  ) {
-    return [
-      "Host workspace or mount is writable: the agent can change hooks, Git configuration, and build output that may run on the host later.",
-    ];
-  }
-  return [];
-}
-
-function resolveCreateInput(
-  input: CreateSandboxInput,
-  profile?: SandboxProfile,
-): CreateSandboxInput {
-  const settings = {
-    workspace: input.workspace ?? profile?.workspace,
-    mounts: input.mounts ?? profile?.mounts,
-    agent: input.agent ?? profile?.agent,
-    pull: input.pull ?? profile?.pull,
-    disk: input.disk ?? profile?.disk,
-    kits: (input.kits ?? profile?.kits)?.map(resolveKitReference),
-    mcpServers: input.mcpServers ?? profile?.mcp_servers,
-    kitArgs: input.kitArgs ?? profile?.kit_args,
-  };
-  const defined = Object.fromEntries(
-    Object.entries(settings).filter(([, value]) => value !== undefined),
-  );
-
-  return { ...input, image: input.image ?? profile?.template, ...defined };
-}
-
-function expandWorkspacePath(path: string): string {
-  if (path === "~") return homedir();
-  if (path.startsWith("~/") || path.startsWith("~\\")) {
-    return join(homedir(), path.slice(2).replaceAll("\\", "/"));
-  }
-
-  return path;
-}
-
-function resolveKitReference(reference: string): string {
-  if (reference.startsWith("~/") || reference.startsWith("~\\")) {
-    return expandWorkspacePath(reference);
-  }
-
-  if (/^\.{1,2}[\\/]/.test(reference)) {
-    return resolve(reference.replaceAll("\\", "/"));
-  }
-
-  return reference;
-}
-
-function describeCreation(provider: string, input: CreateSandboxInput): string {
-  const workspace = input.workspace?.path
-    ? ` with ${input.workspace.mode} workspace ${input.workspace.path}`
-    : "";
-  const kits = input.kits?.length ? `\n  Kits: ${input.kits.join(", ")}` : "";
-  const mounts = Object.entries(input.mounts ?? {})
-    .map(
-      ([name, mount]) =>
-        `\n  Mount ${name}: ${mount.path}${mount.readonly ? " (read-only)" : " (writable)"}`,
-    )
-    .join("");
-  const args = Object.entries(input.kitArgs ?? {})
-    .map(([name, value]) => `\n  Kit argument ${name}: ${String(value)}`)
-    .join("");
-  const mcp = input.mcpServers?.length
-    ? `\n  Static MCP servers: ${input.mcpServers.join(", ")}`
-    : "";
-  const pull = input.pull ? `\n  Pull: ${input.pull}` : "";
-  const disk = input.disk
-    ? `\n  Disk: ${Object.entries(input.disk)
-        .map(([key, value]) => `${key}=${value}`)
-        .join(", ")}`
-    : "";
-
-  return `Create sandbox ${input.name} using ${provider}${workspace}${kits}${mounts}${args}${mcp}${pull}${disk}`;
 }
