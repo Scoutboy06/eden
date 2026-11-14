@@ -429,7 +429,11 @@ function formatFreshSandboxList(result: {
 }): string {
   const table = formatSandboxes(result.sandboxes);
   const freshness = result.sandboxes
-    .map((entry) => `\n  ${entry.name}: ${entry.freshness.state} — ${entry.freshness.reason}`)
+    .map((entry) => {
+      const profile = entry.profile ? ` (profile ${entry.profile})` : "";
+
+      return `\n  ${entry.name}${profile}: ${entry.freshness.state} — ${entry.freshness.reason}`;
+    })
     .join("");
   const warnings = result.warnings.map((warning) => `\nWarning: ${warning}`).join("");
 
