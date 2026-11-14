@@ -338,11 +338,18 @@ function formatFreshSandboxList(result: {
 function formatSandboxes(sandboxes: readonly SandboxSummary[]): string {
   if (sandboxes.length === 0) return "No sandboxes found.";
 
+  const showProfile = sandboxes.some(({ profile }) => profile !== undefined);
+  const header = ["NAME", "STATUS", "PROVIDER", ...(showProfile ? ["PROFILE"] : [])];
   const rows = [
-    ["NAME", "STATUS", "PROVIDER"],
-    ...sandboxes.map(({ name, status, provider }) => [name, status, provider]),
+    header,
+    ...sandboxes.map(({ name, status, provider, profile }) => [
+      name,
+      status,
+      provider,
+      ...(showProfile ? [profile ?? "-"] : []),
+    ]),
   ];
-  const widths = [0, 1, 2].map((column) => Math.max(...rows.map((row) => row[column]!.length)));
+  const widths = header.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)));
 
   return rows
     .map((row) =>

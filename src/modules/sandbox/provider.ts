@@ -11,6 +11,8 @@ export type SandboxSummary = {
   name: string;
   status: string;
   workspace?: string;
+  createdAt?: string;
+  profile?: string;
 };
 export type CreateSandboxInput = {
   name: string;

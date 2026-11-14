@@ -17,6 +17,7 @@ export async function prepareSandboxCli(
     env: {
       PATH: pathWith(directory),
       XDG_CONFIG_HOME: xdg,
+      XDG_STATE_HOME: join(directory, "state"),
       EDEN_SBX_RUN_MODE: mode,
       EDEN_SBX_RUN_NAME: name,
       EDEN_SBX_RUN_LOG: join(directory, "commands"),

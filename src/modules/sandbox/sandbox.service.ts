@@ -6,6 +6,11 @@ import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
+import {
+  FileSandboxProfileRegistry,
+  type SandboxProfileRecord,
+  type SandboxProfileRegistry,
+} from "./profile-registry";
 import { findCheckout } from "./sandbox-checkout";
 import { inferSandbox, type InferredSandbox } from "./sandbox-inference";
 import {
@@ -38,10 +43,29 @@ export class SandboxService {
     private readonly onWarning?: (warning: string) => void,
     private readonly hooks: HookService = new HookService(execution),
     private readonly onHook?: () => void,
+    private readonly registry: SandboxProfileRegistry = new FileSandboxProfileRegistry(),
   ) {}
 
-  list(): Promise<SandboxSummary[]> {
-    return this.provider.list();
+  async list(): Promise<SandboxSummary[]> {
+    const sandboxes = await this.provider.list();
+    const records = await this.registry.read(this.provider.name).catch(() => undefined);
+
+    return sandboxes.map(({ createdAt, ...sandbox }) => {
+      const record =
+        records !== undefined && Object.hasOwn(records, sandbox.name)
+          ? records[sandbox.name]
+          : undefined;
+      const profile = record && isCurrentRecord(record, createdAt) ? record.profile : undefined;
+
+      return profile === undefined ? sandbox : { ...sandbox, profile };
+    });
+  }
+
+  async profileOf(name: string): Promise<string | undefined> {
+    validateSandboxInput(name);
+    const sandboxes = await this.list();
+
+    return sandboxes.find((sandbox) => sandbox.name === name)?.profile;
   }
 
   async infer(cwd: string): Promise<InferredSandbox> {
@@ -99,29 +123,14 @@ export class SandboxService {
         "SSH access is unavailable for this provider.",
       );
     }
-    const sandboxes = await this.provider.list();
-    const sandbox = sandboxes.find((entry) => entry.name === name);
-    if (!sandbox) {
-      throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
-      );
-    }
+    const sandbox = await this.requireSandbox(name);
 
     return { ...this.provider.sshAccess(name), status: sandbox.status };
   }
 
   async stop(name: string): Promise<void> {
     validateSandboxInput(name);
-    const sandboxes = await this.provider.list();
-    const sandbox = sandboxes.find((entry) => entry.name === name);
-
-    if (!sandbox) {
-      throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
-      );
-    }
+    const sandbox = await this.requireSandbox(name);
 
     await this.execution.mutate(
       {
@@ -140,14 +149,7 @@ export class SandboxService {
 
   async remove(name: string, force: boolean): Promise<void> {
     validateSandboxInput(name);
-    const sandboxes = await this.provider.list();
-    const sandbox = sandboxes.find((entry) => entry.name === name);
-    if (!sandbox) {
-      throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
-      );
-    }
+    const sandbox = await this.requireSandbox(name);
     const sandboxIsRunningOrUnknown = sandbox.status !== "stopped";
     if (sandboxIsRunningOrUnknown && !force) {
       throw new SandboxError(
@@ -184,8 +186,49 @@ export class SandboxService {
         description: `Remove sandbox ${name} using ${this.provider.name}`,
         input: { provider: this.provider.name, name, force },
       },
-      () => this.provider.remove!(name, force),
+      async () => {
+        await this.provider.remove!(name, force);
+        await this.forgetProfile(name);
+      },
     );
+  }
+
+  private async requireSandbox(name: string): Promise<SandboxSummary> {
+    const sandboxes = await this.provider.list();
+    const sandbox = sandboxes.find((entry) => entry.name === name);
+    if (!sandbox) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
+      );
+    }
+
+    return sandbox;
+  }
+
+  private async recordProfile(name: string): Promise<void> {
+    if (this.profile === undefined) return;
+
+    try {
+      await this.registry.record(this.provider.name, name, {
+        profile: this.profile.name,
+        recordedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.onWarning?.(
+        `Could not remember profile ${this.profile.name} for sandbox ${name}: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  private async forgetProfile(name: string): Promise<void> {
+    try {
+      await this.registry.forget(this.provider.name, name);
+    } catch (error) {
+      this.onWarning?.(
+        `Could not forget the recorded profile of sandbox ${name}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   async run(input: RunSandboxInput): Promise<number> {
@@ -250,7 +293,10 @@ export class SandboxService {
         description: describeCreation(this.provider.name, resolved),
         input: createAuditInput(this.provider.name, resolved, warnings, this.profile),
       },
-      () => this.provider.create(resolved),
+      async () => {
+        await this.provider.create(resolved);
+        await this.recordProfile(resolved.name);
+      },
     );
 
     await this.runCreatePostHook(post, hookInput);
@@ -336,6 +382,7 @@ export function createSandboxServiceFactory(
   presentation: SandboxServicePresentation = {},
   hooks: HookService = new HookService(execution),
   providerFactory: typeof createSandboxProvider = createSandboxProvider,
+  registry: SandboxProfileRegistry = new FileSandboxProfileRegistry(),
 ): (selection?: SandboxSelection) => Promise<SandboxService> {
   return async (selection = {}) => {
     const { provider: providerName, profile: profileName, useDefaultProfile } = selection;
@@ -381,6 +428,7 @@ export function createSandboxServiceFactory(
       presentation.onWarning,
       hooks,
       presentation.onHook,
+      registry,
     );
   };
 }
@@ -428,4 +476,17 @@ function validateSandboxInput(name: string, image?: string): void {
       "Sandbox name and supplied image must not be empty.",
     );
   }
+}
+
+function isCurrentRecord(record: SandboxProfileRecord, createdAt: string | undefined): boolean {
+  if (createdAt === undefined) return true;
+
+  const created = Date.parse(createdAt);
+  const recorded = Date.parse(record.recordedAt);
+
+  return Number.isNaN(created) || Number.isNaN(recorded) || created <= recorded;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

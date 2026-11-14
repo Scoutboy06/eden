@@ -142,6 +142,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         provider: this.name,
         name: entry.name,
         status: entry.status,
+        ...(entry.created_at === undefined ? {} : { createdAt: entry.created_at }),
         ...(workspace === undefined ? {} : { workspace }),
       };
     });
@@ -324,6 +325,7 @@ function dockerAgent(agent: CreateSandboxInput["agent"]): string {
 const DockerSandboxEntriesSchema = v.array(
   v.object({
     name: v.string(),
+    created_at: v.optional(v.string()),
     status: v.string(),
     workspaces: v.optional(v.array(v.string())),
   }),

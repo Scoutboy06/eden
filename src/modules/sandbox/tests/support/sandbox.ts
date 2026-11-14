@@ -9,6 +9,7 @@ import { createExecution } from "../../../execution";
 import { HookService } from "../../../hook/hook.service";
 import { createSandboxServiceFactory } from "../../sandbox.service";
 import type { SandboxProviderName } from "../../provider";
+import type { SandboxProfileRegistry } from "../../profile-registry";
 
 export async function createSandboxHarness(options: {
   directory: string;
@@ -18,6 +19,7 @@ export async function createSandboxHarness(options: {
   dryRun?: boolean;
   useDefaultProfile?: boolean;
   run?: DockerCommandRunner;
+  registry?: SandboxProfileRegistry;
 }) {
   const execution = createExecution({ dryRun: options.dryRun ?? false });
   const commands: { args: string[]; options: Parameters<DockerCommandRunner>[1] }[] = [];
@@ -42,6 +44,7 @@ export async function createSandboxHarness(options: {
     },
     new HookService(execution, { directory: join(options.directory, "hooks") }),
     () => provider,
+    options.registry,
   )({
     provider: options.provider,
     profile: options.profile,
