@@ -9,7 +9,7 @@ import { createExecution } from "../../../execution";
 import { HookService } from "../../../hook/hook.service";
 import { createSandboxServiceFactory } from "../../sandbox.service";
 import type { SandboxProviderName } from "../../provider";
-import type { SandboxProfileRegistry } from "../../profile-registry";
+import { FileSandboxProfileRegistry, type SandboxProfileRegistry } from "../../profile-registry";
 
 export async function createSandboxHarness(options: {
   directory: string;
@@ -44,7 +44,7 @@ export async function createSandboxHarness(options: {
     },
     new HookService(execution, { directory: join(options.directory, "hooks") }),
     () => provider,
-    options.registry,
+    options.registry ?? new FileSandboxProfileRegistry(join(options.directory, "profiles.json")),
   )({
     provider: options.provider,
     profile: options.profile,

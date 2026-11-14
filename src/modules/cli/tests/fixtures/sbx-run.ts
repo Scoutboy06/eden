@@ -105,13 +105,7 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
     process.exit(7);
   }
 
-  if (mode === "interrupt") {
-    process.on("SIGINT", () => process.exit(130));
-    await Bun.write(process.env.EDEN_SBX_RUN_READY!, String(process.pid));
-    setInterval(() => {}, 1000);
-  } else {
-    process.stdout.write("started\n");
-  }
+  process.stdout.write("started\n");
 } else if (JSON.stringify(args) === JSON.stringify(["stop", "--", name])) {
   if (process.env.EDEN_SBX_STOP_FAILURE) {
     process.stderr.write(process.env.EDEN_SBX_STOP_FAILURE);

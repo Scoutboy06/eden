@@ -219,44 +219,6 @@ export class SandboxService {
     );
   }
 
-  private async requireSandbox(name: string): Promise<SandboxSummary> {
-    const sandboxes = await this.provider.list();
-    const sandbox = sandboxes.find((entry) => entry.name === name);
-    if (!sandbox) {
-      throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
-      );
-    }
-
-    return sandbox;
-  }
-
-  private async recordProfile(name: string): Promise<void> {
-    if (this.profile === undefined) return;
-
-    try {
-      await this.registry.record(this.provider.name, name, {
-        profile: this.profile.name,
-        recordedAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      this.onWarning?.(
-        `Could not remember profile ${this.profile.name} for sandbox ${name}: ${errorMessage(error)}`,
-      );
-    }
-  }
-
-  private async forgetProfile(name: string): Promise<void> {
-    try {
-      await this.registry.forget(this.provider.name, name);
-    } catch (error) {
-      this.onWarning?.(
-        `Could not forget the recorded profile of sandbox ${name}: ${errorMessage(error)}`,
-      );
-    }
-  }
-
   async run(input: RunSandboxInput): Promise<number> {
     validateSandboxInput(input.name);
     const { name } = input;
@@ -328,6 +290,47 @@ export class SandboxService {
     await this.runCreatePostHook(post, hookInput);
 
     return { warnings };
+  }
+
+  private async requireSandbox(name: string): Promise<SandboxSummary> {
+    const sandboxes = await this.provider.list();
+    const sandbox = sandboxes.find((entry) => entry.name === name);
+    if (!sandbox) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
+      );
+    }
+
+    return sandbox;
+  }
+
+  private async recordProfile(name: string): Promise<void> {
+    if (this.profile === undefined) {
+      await this.forgetProfile(name);
+      return;
+    }
+
+    try {
+      await this.registry.record(this.provider.name, name, {
+        profile: this.profile.name,
+        recordedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.onWarning?.(
+        `Could not remember profile ${this.profile.name} for sandbox ${name}: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  private async forgetProfile(name: string): Promise<void> {
+    try {
+      await this.registry.forget(this.provider.name, name);
+    } catch (error) {
+      this.onWarning?.(
+        `Could not forget the recorded profile of sandbox ${name}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   private async createMountDirectories(input: CreateSandboxInput): Promise<void> {

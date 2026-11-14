@@ -145,3 +145,15 @@ test("a failing registry warns without failing create, list or remove", async ()
     ]);
   });
 });
+
+test("a profile-less create forgets an older record of the same name", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const registry = new FileSandboxProfileRegistry(join(directory, "profiles.json"));
+    await registry.record("docker-sbx", "example", { profile: "work", recordedAt: "t" });
+    const { service } = await createSandboxHarness({ directory, config, registry });
+
+    await service.create({ name: "example" });
+
+    expect(await registry.read("docker-sbx")).toEqual({});
+  });
+});

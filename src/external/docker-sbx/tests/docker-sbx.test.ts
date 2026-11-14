@@ -383,3 +383,24 @@ test("start classifies provider failure", async () => {
   await expect(provider.start("example")).rejects.toMatchObject({ code: "SANDBOX_START_FAILED" });
   await expect(provider.start("example")).rejects.toThrow("unexpected start failure");
 });
+
+test("list maps the provider creation time", async () => {
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify([
+        { name: "example", status: "running", created_at: "2026-11-14T10:00:00Z" },
+      ]),
+      stderr: "",
+    }),
+  });
+
+  expect(await provider.list()).toEqual([
+    {
+      provider: "docker-sbx",
+      name: "example",
+      status: "running",
+      createdAt: "2026-11-14T10:00:00Z",
+    },
+  ]);
+});
