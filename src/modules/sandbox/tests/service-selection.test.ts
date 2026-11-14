@@ -12,6 +12,7 @@ import {
   SandboxService,
 } from "../sandbox.service";
 import type { SandboxProvider } from "../provider";
+import { createIsolatedHooks } from "./support/hooks";
 
 test("sandbox construction passes resolved selection and IO options to its provider factory", async () => {
   const execution = createExecution({ dryRun: false });
@@ -75,10 +76,16 @@ test.each([undefined, "explicit:image"])(
         calls.push(input);
       },
     };
-    const service = new SandboxService(execution, provider, {
-      name: "work",
-      template: "profile:image",
-    });
+    const service = new SandboxService(
+      execution,
+      provider,
+      {
+        name: "work",
+        template: "profile:image",
+      },
+      undefined,
+      createIsolatedHooks(execution),
+    );
 
     await service.create({ name: "example", image });
     const expectedImage = image ?? "profile:image";

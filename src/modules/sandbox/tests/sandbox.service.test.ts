@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { createExecution } from "../../execution";
 import { SandboxService } from "../sandbox.service";
 import type { SandboxProvider } from "../provider";
+import { createIsolatedHooks } from "./support/hooks";
 
 test.each([
   ["running", false, true],
@@ -133,7 +134,13 @@ test("dry-run checks prerequisites but never calls creation", async () => {
     },
   };
 
-  await new SandboxService(execution, provider).create({ name: "example" });
+  await new SandboxService(
+    execution,
+    provider,
+    undefined,
+    undefined,
+    createIsolatedHooks(execution),
+  ).create({ name: "example" });
 
   expect(calls).toEqual(["preflight"]);
   expect(execution.operations).toHaveLength(1);
@@ -157,11 +164,17 @@ test.each([false, true])(
         calls.push(input);
       },
     };
-    const service = new SandboxService(execution, provider, {
-      name: "work",
-      kits,
-      kit_args: kitArgs,
-    });
+    const service = new SandboxService(
+      execution,
+      provider,
+      {
+        name: "work",
+        kits,
+        kit_args: kitArgs,
+      },
+      undefined,
+      createIsolatedHooks(execution),
+    );
 
     await service.create({ name: "example" });
 
