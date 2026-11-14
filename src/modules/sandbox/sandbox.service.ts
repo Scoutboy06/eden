@@ -28,6 +28,7 @@ import {
   type SandboxSnapshot,
   type SandboxSnapshotStore,
 } from "./snapshot-store";
+import { withSetupNetwork } from "./setup-network";
 import { findCheckout } from "./sandbox-checkout";
 import { inferSandbox, type InferredSandbox } from "./sandbox-inference";
 import {
@@ -549,6 +550,10 @@ export class SandboxService {
     );
   }
 
+  private setupNetworkContext() {
+    return { execution: this.execution, provider: this.provider, onWarning: this.onWarning };
+  }
+
   private snapshotContext() {
     return {
       execution: this.execution,
@@ -644,12 +649,19 @@ export class SandboxService {
     path: string | undefined,
     input: SandboxHookInput,
   ): Promise<void> {
-    await this.runPostHook(
-      "sandbox.create.post",
-      path,
-      input,
-      `Sandbox ${input.request.name} was created and is left in place.`,
-    );
+    const name = input.request.name;
+    const hosts = this.profile?.setup?.network?.allow ?? [];
+    const run = (hookInput: SandboxHookInput) =>
+      this.runPostHook(
+        "sandbox.create.post",
+        path,
+        hookInput,
+        `Sandbox ${name} was created and is left in place.`,
+      );
+    if (!path || hosts.length === 0) return run(input);
+
+    const opened = { ...input, sandbox: { ...input.sandbox, setupNetwork: { allow: hosts } } };
+    await withSetupNetwork(this.setupNetworkContext(), name, hosts, () => run(opened));
   }
 
   private async runStartPostHook(path: string | undefined, name: string): Promise<void> {
