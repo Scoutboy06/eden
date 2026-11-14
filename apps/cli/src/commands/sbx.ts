@@ -1,6 +1,7 @@
 import { defineCommand } from "../../../../src/modules/cli";
 import {
   sandboxProviderNames,
+  type SandboxProviderName,
   type SandboxSummary,
 } from "../../../../src/modules/sandbox/provider";
 import { SandboxError } from "../../../../src/modules/sandbox/errors";
@@ -118,6 +119,48 @@ const exec = defineCommand({
       if (json) output.write({ data: { result }, human: () => "" });
       else output.raw("");
     }
+  },
+});
+
+const shell = defineCommand({
+  name: "shell",
+  description: "Open an interactive login shell in a sandbox; start it if stopped",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+    profile: {
+      type: "string",
+      description: "Sandbox profile for shell settings (defaults to the profile that created it)",
+    },
+    cwd: {
+      type: "string",
+      description: "Start folder inside the sandbox (overrides profile shell.cwd)",
+    },
+  },
+
+  async run(ctx, { sandbox }) {
+    const { json, dryRun } = ctx.extensions.eden;
+
+    if (json && !dryRun) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "Interactive sandbox shells do not support --json. Use --dry-run --json to preview it.",
+      );
+    }
+
+    const lookup = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, lookup, json);
+    const service = await shellService(sandbox, lookup, name, ctx.values.profile);
+    const result = await service.shell({ name, cwd: ctx.values.cwd });
+
+    if (result && !dryRun) process.exitCode = result.exitCode;
   },
 });
 
@@ -293,7 +336,7 @@ const list = defineCommand({
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, start, exec, list, stop, ssh, rm: remove },
+  subCommands: { create, run, start, exec, shell, list, stop, ssh, rm: remove },
 });
 
 function confirmRemoval(name: string): Promise<boolean> {
@@ -317,6 +360,29 @@ async function selectName(
   }
 
   return inferred.name;
+}
+
+async function shellService(
+  sandbox: (selection: {
+    provider?: SandboxProviderName;
+    profile?: string;
+  }) => Promise<SandboxService>,
+  lookup: SandboxService,
+  name: string,
+  explicitProfile: string | undefined,
+): Promise<SandboxService> {
+  const provider = lookup.providerName;
+  if (explicitProfile !== undefined) return sandbox({ provider, profile: explicitProfile });
+
+  const remembered = await lookup.profileOf(name);
+  if (remembered === undefined) return lookup;
+
+  try {
+    return await sandbox({ provider, profile: remembered });
+  } catch (error) {
+    if (error instanceof SandboxError && error.code === "SANDBOX_PROFILE_NOT_FOUND") return lookup;
+    throw error;
+  }
 }
 
 function quoteShellArgument(value: string): string {
