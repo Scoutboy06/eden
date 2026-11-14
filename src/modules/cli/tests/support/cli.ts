@@ -1,5 +1,9 @@
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const interruptPreload = fileURLToPath(new URL("./interrupt-preload.ts", import.meta.url));
 const application = fileURLToPath(new URL("../../../../../apps/cli/src/main.ts", import.meta.url));
 
 export type CliOptions = { cwd: string; env?: Record<string, string | undefined> };
@@ -13,13 +17,23 @@ export async function withRunningCli<T>(
     waitForReady(path: string): Promise<void>;
   }) => Promise<T>,
 ): Promise<T> {
-  const child = spawn(application, argv, options);
+  const trigger = join(tmpdir(), `eden-interrupt-${crypto.randomUUID()}`);
+  const windows = process.platform === "win32";
+  const child = spawn(
+    application,
+    argv,
+    windows ? { ...options, env: { ...options.env, EDEN_TEST_INTERRUPT_FILE: trigger } } : options,
+    windows ? ["--preload", interruptPreload] : [],
+  );
   const result = collect(child);
 
   try {
     return await action({
       result,
-      interrupt: () => child.kill("SIGINT"),
+      interrupt: () => {
+        if (windows) writeFileSync(trigger, "");
+        else child.kill("SIGINT");
+      },
       async waitForReady(path) {
         const deadline = Date.now() + 3000;
         while (!(await Bun.file(path).exists())) {
@@ -32,6 +46,7 @@ export async function withRunningCli<T>(
   } finally {
     if (child.exitCode === null) child.kill("SIGTERM");
     await result;
+    rmSync(trigger, { force: true });
   }
 }
 
@@ -54,8 +69,8 @@ async function execute(
   return collect(spawn(entry, argv, options));
 }
 
-function spawn(entry: string, argv: string[], options?: CliOptions) {
-  return Bun.spawn([process.execPath, entry, ...argv], {
+function spawn(entry: string, argv: string[], options?: CliOptions, runtimeArgs: string[] = []) {
+  return Bun.spawn([process.execPath, ...runtimeArgs, entry, ...argv], {
     stdout: "pipe",
     stderr: "pipe",
     cwd: options?.cwd,

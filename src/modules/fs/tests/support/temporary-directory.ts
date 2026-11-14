@@ -9,6 +9,6 @@ export async function withTemporaryDirectory<T>(
   try {
     return await run(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }

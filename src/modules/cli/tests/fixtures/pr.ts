@@ -291,10 +291,15 @@ function reviewResponse() {
   ];
 }
 
+function raiseSignal(): void {
+  const signal = process.env.PR_SIGNAL as NodeJS.Signals;
+  if (process.platform === "win32") process.emit(signal);
+  else process.kill(process.pid, signal);
+}
+
 function checkResponse(): Response {
   checkReads++;
-  if (process.env.PR_SIGNAL)
-    setTimeout(() => process.kill(process.pid, process.env.PR_SIGNAL as NodeJS.Signals), 1);
+  if (process.env.PR_SIGNAL) setTimeout(raiseSignal, 1);
   const mode = process.env.PR_CHECK_MODE ?? "passed";
   if (mode === "empty") return Response.json({ total_count: 0, check_runs: [] });
   const pending = mode === "pending" || (mode === "transition" && checkReads === 1);
