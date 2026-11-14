@@ -335,7 +335,7 @@ export class SandboxService {
     if (profile === undefined) {
       throw new SandboxError(
         "SANDBOX_INVALID_INPUT",
-        `Sandbox ${name} has no remembered profile to rebuild from. Pass --profile.`,
+        `Sandbox ${name} has no remembered or configured profile to rebuild from. Pass --profile.`,
       );
     }
     this.assertRemovable(await this.requireSandbox(name), input.force);

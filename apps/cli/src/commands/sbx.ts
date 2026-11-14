@@ -383,6 +383,88 @@ const status = defineCommand({
   },
 });
 
+const rebuild = defineCommand({
+  name: "rebuild",
+  description: "Remove a sandbox and recreate it from its profile, keeping its snapshot paths",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+    profile: {
+      type: "string",
+      description: "Sandbox profile to recreate from (defaults to the profile that created it)",
+    },
+    image: { type: "string", description: "Container image (overrides profile template)" },
+    path: { type: "string", description: "Workspace path (overrides profile workspace path)" },
+    force: {
+      type: "boolean",
+      description: "Skip removal hook and confirmation; allow rebuilding a running sandbox",
+    },
+    snapshot: {
+      type: "boolean",
+      negatable: true,
+      default: true,
+      description: "Snapshot the profile snapshot paths first (--no-snapshot skips it)",
+    },
+    restore: {
+      type: "boolean",
+      negatable: true,
+      default: true,
+      description: "Restore the new snapshot afterwards (--no-restore skips it)",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const { json, dryRun } = ctx.extensions.eden;
+    if (ctx.values.name === undefined && ctx.values.force) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "Rebuilding an inferred sandbox cannot use --force. Pass --name to rebuild a sandbox without confirmation.",
+      );
+    }
+    if (
+      !ctx.values.force &&
+      !dryRun &&
+      (json || !process.stdin.isTTY || !process.stdout.isTTY || !process.stderr.isTTY)
+    ) {
+      throw new SandboxError(
+        "SANDBOX_REMOVE_REQUIRES_FORCE",
+        "Noninteractive sandbox rebuilds require --force; without it, run in a terminal to confirm removal.",
+      );
+    }
+    const lookup = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, lookup, json);
+    if (ctx.values.name === undefined && !dryRun && !(await confirmRebuild(name))) {
+      throw new SandboxError("CANCELLED", `Rebuild of sandbox ${name} was not confirmed.`);
+    }
+    const service = await shellService(sandbox, lookup, name, ctx.values.profile);
+    const result = await service.rebuild({
+      name,
+      force: ctx.values.force ?? false,
+      snapshot: ctx.values.snapshot,
+      restore: ctx.values.restore,
+      image: ctx.values.image,
+      path: ctx.values.path,
+    });
+
+    output.write({
+      data: {
+        sandbox: { provider: service.providerName, name },
+        restored: result.restored,
+        ...(result.snapshot ? { snapshot: result.snapshot } : {}),
+        ...(result.warnings.length ? { warnings: result.warnings } : {}),
+      },
+      human: () => formatRebuilt(name, service.providerName, result),
+    });
+  },
+});
+
 const snapshot = defineCommand({
   name: "snapshot",
   description: "Archive a sandbox's profile snapshot paths to the host; --list shows snapshots",
@@ -478,6 +560,7 @@ export default defineCommand({
     list,
     stop,
     ssh,
+    rebuild,
     status,
     snapshot,
     restore,
@@ -487,6 +570,10 @@ export default defineCommand({
 
 function confirmRemoval(name: string): Promise<boolean> {
   return confirm(`Remove sandbox ${name} and its data? [y/N] `);
+}
+
+function confirmRebuild(name: string): Promise<boolean> {
+  return confirm(`Remove sandbox ${name} and its data, then recreate it from its profile? [y/N] `);
 }
 
 async function selectName(
@@ -567,6 +654,20 @@ function formatCreatedSandbox(name: string, provider: string): string {
   const message = `Created sandbox ${name} using ${provider}.\n\nAttach with Eden:\n  eden sbx run --provider ${provider} --name ${quotedName}`;
 
   return formatMessage(message, "success", "stdout");
+}
+
+function formatRebuilt(
+  name: string,
+  provider: string,
+  result: { snapshot?: SandboxSnapshot; restored: boolean },
+): string {
+  const lines = [`Rebuilt sandbox ${name} using ${provider}.`];
+  if (result.snapshot) {
+    const action = result.restored ? "Restored" : "Kept";
+    lines.push(`  ${action} snapshot ${result.snapshot.id}: ${result.snapshot.path}`);
+  }
+
+  return formatMessage(lines.join("\n"), "success", "stdout");
 }
 
 function formatTakenSnapshot(name: string, result: SnapshotResult | undefined): string {
