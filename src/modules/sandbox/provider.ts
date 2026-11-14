@@ -16,7 +16,7 @@ export type SandboxSummary = {
 };
 export type CreateSandboxInput = {
   name: string;
-  agent?: Agent;
+  agent?: Agent | (string & {});
   workspace?: { mode: "none" | "clone" | "host"; path?: string };
   mounts?: Record<string, { path: string; readonly?: boolean; create?: boolean }>;
   image?: string;

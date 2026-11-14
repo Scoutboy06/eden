@@ -434,6 +434,8 @@ function dockerAgent(agent: CreateSandboxInput["agent"]): string {
         "SANDBOX_AGENT_UNSUPPORTED",
         "Docker Sandboxes does not support the omp agent. Choose claude, codex, or opencode in the sandbox profile.",
       );
+    default:
+      return agent;
   }
 }
 

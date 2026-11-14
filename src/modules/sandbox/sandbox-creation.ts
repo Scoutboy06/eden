@@ -3,13 +3,15 @@ import { join, resolve } from "node:path";
 import type { SandboxProfile } from "../config/schema";
 import type { CreateSandboxInput, SandboxProviderName } from "./provider";
 
+const KNOWN_AGENTS: ReadonlySet<string> = new Set(["codex", "claude", "opencode", "omp"]);
+
 export function resolveCreateInput(
   input: CreateSandboxInput,
   profile?: SandboxProfile,
 ): CreateSandboxInput {
   const workspace = input.workspace ?? profile?.workspace;
   const mounts = input.mounts ?? profile?.mounts;
-  const agent = input.agent ?? profile?.agent;
+  const agent = resolveAgent(input.agent ?? profile?.agent);
   const pull = input.pull ?? profile?.pull;
   const disk = input.disk ?? profile?.disk;
   const kits = input.kits ?? profile?.kits;
@@ -64,6 +66,10 @@ export function createAuditInput(
 
 export function describeCreation(provider: string, input: CreateSandboxInput): string {
   const descriptions = [`Create sandbox ${input.name} using ${provider}`];
+  if (input.agent !== undefined && !KNOWN_AGENTS.has(input.agent)) {
+    descriptions.push(`
+  Agent kit: ${input.agent}`);
+  }
   if (input.workspace?.path) {
     descriptions.push(` with ${input.workspace.mode} workspace ${input.workspace.path}`);
   }
@@ -104,6 +110,14 @@ function expandWorkspacePath(path: string): string {
   }
 
   return path;
+}
+
+function resolveAgent(agent: CreateSandboxInput["agent"]): CreateSandboxInput["agent"] {
+  if (agent === undefined || KNOWN_AGENTS.has(agent)) {
+    return agent;
+  }
+
+  return resolveKitReference(agent);
 }
 
 function resolveKitReference(reference: string): string {

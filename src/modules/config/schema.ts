@@ -6,6 +6,14 @@ import { sandboxProviderNames } from "../sandbox/provider";
 const AGENTS = ["codex", "claude", "opencode", "omp"] as const;
 export type Agent = (typeof AGENTS)[number];
 
+const agentReferenceSchema = v.pipe(
+  v.string(),
+  v.regex(
+    /^\S*[\\/]\S*$/,
+    "Expected codex, claude, opencode, omp, or a sandbox kit reference containing a slash, like docker.io/sbx/claude-kit:latest or ./my-agent-kit",
+  ),
+);
+
 const mapping = v.custom<Record<string, unknown>>(
   (value) => typeof value === "object" && value !== null && !Array.isArray(value),
   "Expected a configuration mapping",
@@ -126,7 +134,7 @@ const profileSchema = v.pipe(
   mapping,
   v.strictObject({
     provider: v.optional(v.picklist(sandboxProviderNames)),
-    agent: v.optional(v.picklist(AGENTS)),
+    agent: v.optional(v.union([v.picklist(AGENTS), agentReferenceSchema])),
     workspace: v.optional(
       v.strictObject({
         mode: v.picklist(["none", "clone", "host"]),
