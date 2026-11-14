@@ -15,7 +15,7 @@ export type CreateSandboxInput = {
   name: string;
   agent?: Agent;
   workspace?: { mode: "none" | "clone" | "host"; path?: string };
-  mounts?: Record<string, { path: string; readonly?: boolean }>;
+  mounts?: Record<string, { path: string; readonly?: boolean; create?: boolean }>;
   image?: string;
   pull?: "always" | "missing" | "never";
   disk?: { root?: string; docker?: string };

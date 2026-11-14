@@ -123,7 +123,13 @@ const profileSchema = v.pipe(
       }),
     ),
     mounts: v.optional(
-      configMap(v.strictObject({ path: nonEmptyString, readonly: v.optional(v.boolean()) })),
+      configMap(
+        v.strictObject({
+          path: nonEmptyString,
+          readonly: v.optional(v.boolean()),
+          create: v.optional(v.boolean()),
+        }),
+      ),
     ),
     template: v.optional(nonEmptyString),
     pull: v.optional(v.picklist(["always", "missing", "never"])),

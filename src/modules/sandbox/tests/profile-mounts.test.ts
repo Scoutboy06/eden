@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SandboxProfile } from "../../config/schema";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
@@ -91,3 +92,40 @@ test("read-only mounts on a clone workspace do not trigger the writable warning"
     expect(warnings).toEqual([]);
   });
 });
+
+test.each([false, true])(
+  "mounts marked create get their directory only when not previewing, dryRun=%s",
+  async (dryRun) => {
+    await withTemporaryDirectory(async (directory) => {
+      const mountPath = join(directory, "per-sandbox", "${{ sandbox.name }}");
+      const { service, execution, commands } = await createSandboxHarness({
+        directory,
+        profile: "work",
+        dryRun,
+        config: {
+          sandbox: {
+            default_provider: "docker-sbx",
+            profiles: {
+              work: {
+                workspace: { mode: "clone", path: directory },
+                mounts: { files: { path: mountPath, create: true } },
+              },
+            },
+          },
+        },
+      });
+
+      await service.create({ name: "example" });
+
+      const created = join(directory, "per-sandbox", "example");
+      expect(
+        await stat(created).then(
+          () => true,
+          () => false,
+        ),
+      ).toBe(!dryRun);
+      expect(execution.operations.map(({ type }) => type)).toContain("sandbox.mount.create");
+      expect(commands.some(({ args }) => args.includes(created))).toBe(!dryRun);
+    });
+  },
+);

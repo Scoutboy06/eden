@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { resolveSandboxPaths } from "./sandbox-paths";
 import type { Execution } from "../execution";
 import { HookFailure, HookService, type SandboxHookInput } from "../hook/hook.service";
@@ -211,6 +212,7 @@ export class SandboxService {
       this.hooks.discover("sandbox.create.post"),
     ]);
     await this.runCreatePreHook(pre, hookInput);
+    await this.createMountDirectories(resolved);
 
     await this.execution.mutate(
       {
@@ -224,6 +226,23 @@ export class SandboxService {
     await this.runCreatePostHook(post, hookInput);
 
     return { warnings };
+  }
+
+  private async createMountDirectories(input: CreateSandboxInput): Promise<void> {
+    for (const [name, mount] of Object.entries(input.mounts ?? {})) {
+      if (!mount.create) continue;
+
+      await this.execution.mutate(
+        {
+          type: "sandbox.mount.create",
+          description: `Create directory for mount ${name}: ${mount.path}`,
+          input: { name, path: mount.path },
+        },
+        async () => {
+          await mkdir(mount.path, { recursive: true });
+        },
+      );
+    }
   }
 
   private createHookInput(resolved: CreateSandboxInput): SandboxHookInput {

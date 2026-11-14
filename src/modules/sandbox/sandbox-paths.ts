@@ -5,7 +5,7 @@ import { findRepositoryPath } from "../config/repository";
 import { SandboxError } from "./errors";
 import type { CreateSandboxInput } from "./provider";
 
-type Mount = { path: string; readonly?: boolean };
+type Mount = { path: string; readonly?: boolean; create?: boolean };
 
 export async function resolveSandboxPaths(
   input: CreateSandboxInput,
@@ -58,7 +58,7 @@ async function resolveMounts(
     if (!/^[A-Za-z0-9_-]+$/.test(name))
       throw invalid(`Invalid mount name: ${JSON.stringify(name)}.`);
     const path = value(`mounts.${name}.hostPath`);
-    await requireDirectory(path, `Mount ${name}`);
+    if (!mount.create) await requireDirectory(path, `Mount ${name}`);
     resolved[name] = { ...mount, path };
   }
   return resolved;
