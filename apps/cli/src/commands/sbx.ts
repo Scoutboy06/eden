@@ -121,6 +121,40 @@ const exec = defineCommand({
   },
 });
 
+const start = defineCommand({
+  name: "start",
+  description: "Start an existing sandbox without attaching to it",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const service = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, service, ctx.extensions.eden.json);
+    const { started } = await service.start(name);
+
+    output.write({
+      data: { sandbox: { provider: service.providerName, name }, started },
+      human: () =>
+        formatMessage(
+          started
+            ? `Sandbox ${name} is running using ${service.providerName}.`
+            : `Sandbox ${name} is already running using ${service.providerName}.`,
+          "success",
+          "stdout",
+        ),
+    });
+  },
+});
+
 const stop = defineCommand({
   name: "stop",
   description: "Stop a named sandbox without removing it or its data",
@@ -259,7 +293,7 @@ const list = defineCommand({
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, exec, list, stop, ssh, rm: remove },
+  subCommands: { create, run, start, exec, list, stop, ssh, rm: remove },
 });
 
 function confirmRemoval(name: string): Promise<boolean> {
