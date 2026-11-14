@@ -7,6 +7,8 @@ import {
 import { SandboxError } from "../../../../src/modules/sandbox/errors";
 import { confirm } from "../../../../src/modules/cli/confirm";
 import { formatMessage } from "../../../../src/modules/cli/format";
+import type { SnapshotResult } from "../../../../src/modules/sandbox/sandbox-snapshot";
+import type { SandboxSnapshot } from "../../../../src/modules/sandbox/snapshot-store";
 import type { SandboxService } from "../../../../src/modules/sandbox/sandbox.service";
 import { deriveSandboxName, findCheckout } from "../../../../src/modules/sandbox/sandbox-checkout";
 
@@ -333,10 +335,93 @@ const list = defineCommand({
   },
 });
 
+const snapshot = defineCommand({
+  name: "snapshot",
+  description: "Archive a sandbox's profile snapshot paths to the host; --list shows snapshots",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+    profile: {
+      type: "string",
+      description:
+        "Sandbox profile for snapshot settings (defaults to the profile that created it)",
+    },
+    list: {
+      type: "boolean",
+      description: "List the snapshots of the sandbox instead of taking one",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const { json } = ctx.extensions.eden;
+    const lookup = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, lookup, json);
+
+    if (ctx.values.list) {
+      const snapshots = await lookup.snapshots(name);
+      output.write({
+        data: { sandbox: { provider: lookup.providerName, name }, snapshots },
+        human: () => formatSnapshots(name, snapshots),
+      });
+      return;
+    }
+
+    const service = await shellService(sandbox, lookup, name, ctx.values.profile);
+    const result = await service.snapshot(name);
+    output.write({
+      data: { sandbox: { provider: service.providerName, name }, ...result },
+      human: () => formatTakenSnapshot(name, result),
+    });
+  },
+});
+
+const restore = defineCommand({
+  name: "restore",
+  description: "Restore a snapshot into a sandbox's home folder",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+    snapshot: {
+      type: "string",
+      description: "Snapshot id from eden sbx snapshot --list, or latest (default)",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const service = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, service, ctx.extensions.eden.json);
+    const { snapshot } = await service.restore(name, ctx.values.snapshot);
+
+    output.write({
+      data: { sandbox: { provider: service.providerName, name }, snapshot },
+      human: () =>
+        formatMessage(
+          `Restored snapshot ${snapshot.id} into sandbox ${name}.`,
+          "success",
+          "stdout",
+        ),
+    });
+  },
+});
+
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, start, exec, shell, list, stop, ssh, rm: remove },
+  subCommands: { create, run, start, exec, shell, list, stop, ssh, snapshot, restore, rm: remove },
 });
 
 function confirmRemoval(name: string): Promise<boolean> {
@@ -421,6 +506,38 @@ function formatCreatedSandbox(name: string, provider: string): string {
   const message = `Created sandbox ${name} using ${provider}.\n\nAttach with Eden:\n  eden sbx run --provider ${provider} --name ${quotedName}`;
 
   return formatMessage(message, "success", "stdout");
+}
+
+function formatTakenSnapshot(name: string, result: SnapshotResult | undefined): string {
+  if (result === undefined) return "";
+
+  const lines = [
+    `Snapshot ${result.snapshot.id} of sandbox ${name} saved (${formatSize(result.snapshot.sizeBytes)}).`,
+    `  ${result.snapshot.path}`,
+    `  Archived: ${result.archived.join(", ")}`,
+  ];
+  if (result.skipped.length > 0) lines.push(`  Skipped (not found): ${result.skipped.join(", ")}`);
+  if (result.pruned.length > 0) lines.push(`  Pruned ${result.pruned.length} older snapshot(s).`);
+
+  return formatMessage(lines.join("\n"), "success", "stdout");
+}
+
+function formatSnapshots(name: string, snapshots: readonly SandboxSnapshot[]): string {
+  if (snapshots.length === 0) return `No snapshots found for sandbox ${name}.`;
+
+  return [
+    "ID  CREATED  SIZE",
+    ...snapshots.map(
+      ({ id, createdAt, sizeBytes }) => `${id}  ${createdAt}  ${formatSize(sizeBytes)}`,
+    ),
+  ].join("\n");
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function formatFreshSandboxList(result: {

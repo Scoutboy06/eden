@@ -119,6 +119,19 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
   } else {
     process.stdout.write("stopped\n");
   }
+} else if (args[0] === "exec" && mode === "snapshot") {
+  const separator = args.indexOf("--");
+  const script = args[separator + 4]!;
+  const paths = args.slice(separator + 6);
+
+  if (script.includes("printf")) {
+    const present: string[] = JSON.parse(process.env.EDEN_SBX_PRESENT ?? "[]");
+    process.stdout.write(`${paths.filter((path) => present.includes(path)).join("\n")}\n`);
+  } else if (script.includes("-czf")) {
+    await Bun.write(Bun.stdout, Buffer.from(process.env.EDEN_SBX_ARCHIVE_HEX!, "hex"));
+  } else if (script.includes("-xzf")) {
+    await Bun.write(process.env.EDEN_SBX_RESTORE_OUT!, await Bun.stdin.bytes());
+  }
 } else if (args[0] === "exec") {
   if (mode === "interrupt") await waitForInterrupt();
   if (mode === "terminal") process.stdin.setRawMode(true);
