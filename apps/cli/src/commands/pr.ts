@@ -3,7 +3,14 @@ import { ScmError } from "../../../../src/modules/pull-requests/errors";
 import { buildPullRequestPatch } from "../../../../src/modules/pull-requests/edit-input";
 import { buildPullRequestCreate } from "../../../../src/modules/pull-requests/create-input";
 import { buildPullRequestComment } from "../../../../src/modules/pull-requests/comment-input";
-import type { PullRequestDiff } from "../../../../src/modules/pull-requests/provider";
+import {
+  formatChecks,
+  formatDiffOutput,
+  formatPullRequestDetails,
+  formatPullRequestListItem,
+  formatReviewThreads,
+  formatReviews,
+} from "./pr-output";
 
 const args = {
   ref: {
@@ -41,12 +48,7 @@ const list = defineCommand({
     output.write({
       data: result,
       human: () =>
-        result.prs
-          .map(
-            (pr) =>
-              `${pr.ref.provider === "github" ? `#${pr.ref.number}` : pr.ref.id}\t${pr.state}${pr.isDraft ? " (draft)" : ""}\t${pr.title}\n${pr.url}`,
-          )
-          .join("\n") || "No pull requests.",
+        result.prs.map((pr) => formatPullRequestListItem(pr)).join("\n") || "No pull requests.",
     });
   },
 });
@@ -105,32 +107,7 @@ const show = defineCommand({
 
     output.write({
       data: { pr },
-      human: () =>
-        [
-          `${pr.title}\n${pr.state}${pr.isDraft ? " (draft)" : ""} · ${pr.sourceBranch} → ${pr.targetBranch}\n${pr.url}${pr.body ? `\n\n${pr.body}` : ""}`,
-          ...(pr.comments
-            ? [
-                "Comments",
-                pr.comments
-                  .map(
-                    (comment) =>
-                      `${comment.author?.name ?? "Deleted user"}${comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ""}` : ""}\n${comment.body}`,
-                  )
-                  .join("\n\n") || "No comments.",
-              ]
-            : []),
-          ...(pr.checks
-            ? [
-                "Checks",
-                pr.checks
-                  .map(
-                    (check) => `${check.state}\t${check.name}${check.url ? `\t${check.url}` : ""}`,
-                  )
-                  .join("\n") || "No checks.",
-              ]
-            : []),
-          ...(pr.raw !== undefined ? ["Raw provider data", JSON.stringify(pr.raw, null, 2)] : []),
-        ].join("\n\n"),
+      human: () => formatPullRequestDetails(pr),
     });
   },
 });
@@ -180,10 +157,7 @@ const checks = defineCommand({
 
     output.write({
       data: result,
-      human: () =>
-        result.checks
-          .map((check) => `${check.state}\t${check.name}${check.url ? `\t${check.url}` : ""}`)
-          .join("\n") || "No checks.",
+      human: () => formatChecks(result.checks),
     });
   },
 });
@@ -208,13 +182,15 @@ const reviewers = defineCommand({
 
     output.write({
       data: result,
-      human: () =>
-        result.reviews.map((review) => `${review.state}\t${review.reviewer.name}`).join("\n") ||
-        (ctx.values.pending
-          ? "No pending reviewers."
-          : ctx.values.approved
-            ? "No approved reviewers."
-            : "No reviewers."),
+      human: () => {
+        const reviews = result.reviews
+          .map((review) => `${review.state}\t${review.reviewer.name}`)
+          .join("\n");
+        if (reviews) return reviews;
+        if (ctx.values.pending) return "No pending reviewers.";
+        if (ctx.values.approved) return "No approved reviewers.";
+        return "No reviewers.";
+      },
     });
   },
 });
@@ -272,8 +248,8 @@ const status = defineCommand({
       human: () =>
         [
           `${pr.title}\n${pr.state}${pr.isDraft ? " (draft)" : ""} · ${pr.sourceBranch} → ${pr.targetBranch}\n${pr.url}`,
-          `Reviewers\n${reviews.map((review) => `${review.state}\t${review.reviewer.name}`).join("\n") || "No reviewers."}`,
-          `Checks\n${checks.map((check) => `${check.state}\t${check.name}${check.url ? `\t${check.url}` : ""}`).join("\n") || "No checks."}`,
+          `Reviewers\n${formatReviews(reviews)}`,
+          `Checks\n${formatChecks(checks)}`,
         ].join("\n\n"),
     });
   },
@@ -335,8 +311,7 @@ const comments = defineCommand({
     const result = await pullRequests.comments(ctx.values);
     output.write({
       data: result,
-      human: () =>
-        `${result.threads.map((thread) => thread.map((comment) => `${comment.id}${comment.replyTo ? ` · reply-to ${comment.replyTo}` : ""}${comment.isResolved ? " (resolved)" : " (unresolved)"}\n${comment.author?.name ?? "Deleted user"}${comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ""}` : ""}\n${comment.body}`).join("\n\n")).join("\n\n") || "No review threads."}${result.hasMore ? "\nMore matching threads available; increase --limit." : ""}${result.incomplete ? "\nOne or more threads have more than 100 comments; replies are omitted." : ""}`,
+      human: () => formatReviewThreads(result),
     });
   },
 });
@@ -509,69 +484,10 @@ const diff = defineCommand({
 
     output.write({
       data,
-      human: () =>
-        format === "json"
-          ? JSON.stringify(data, null, 2)
-          : format === "stat"
-            ? formatDiffStat(result)
-            : formatDiffPatch(result),
+      human: () => formatDiffOutput(format, data, result),
     });
   },
 });
-
-function formatDiffStat(diff: PullRequestDiff) {
-  const files = diff.files.map(
-    (file) => `${quoteGitPath(file.path)} | +${file.additions} -${file.deletions} (${file.status})`,
-  );
-  const summary = `${diff.files.length} file(s) changed, ${diff.files.reduce((sum, file) => sum + file.additions, 0)} insertions(+), ${diff.files.reduce((sum, file) => sum + file.deletions, 0)} deletions(-)`;
-
-  return [
-    ...files,
-    ...(files.length ? [summary] : ["No changed files."]),
-    ...(diff.completeness.status === "incomplete"
-      ? [`Incomplete file list: ${diff.completeness.reason}`]
-      : []),
-  ].join("\n");
-}
-
-function formatDiffPatch(diff: PullRequestDiff) {
-  const files = diff.files.map((file) => {
-    if (file.patch.status === "unavailable")
-      return `# Patch unavailable (${file.patch.reason}) for ${quoteGitPath(file.path)}`;
-    const previousPath = file.previousPath ?? file.path;
-    const oldPath = quoteGitPath(`a/${previousPath}`);
-    const newPath = quoteGitPath(`b/${file.path}`);
-    const header = `diff --git ${oldPath} ${newPath}`;
-    const labels = `--- ${file.status === "added" ? "/dev/null" : oldPath}\n+++ ${file.status === "deleted" ? "/dev/null" : newPath}`;
-    const note =
-      file.patch.status === "truncated" ? `# Patch truncated for ${quoteGitPath(file.path)}\n` : "";
-
-    return `${header}\n${note}${labels}\n${file.patch.text}`;
-  });
-
-  return [
-    ...files,
-    ...(files.length ? [] : ["No changed files."]),
-    ...(diff.completeness.status === "incomplete"
-      ? [`# Incomplete file list: ${diff.completeness.reason}`]
-      : []),
-  ].join("\n");
-}
-
-function quoteGitPath(path: string): string {
-  let quoted = '"';
-  for (const byte of new TextEncoder().encode(path)) {
-    if (byte === 0x22) quoted += '\\"';
-    else if (byte === 0x5c) quoted += "\\\\";
-    else if (byte === 0x09) quoted += "\\t";
-    else if (byte === 0x0a) quoted += "\\n";
-    else if (byte === 0x0d) quoted += "\\r";
-    else if (byte < 0x20 || byte > 0x7e) quoted += `\\${byte.toString(8).padStart(3, "0")}`;
-    else quoted += String.fromCharCode(byte);
-  }
-
-  return `${quoted}"`;
-}
 
 export default defineCommand({
   name: "pr",
