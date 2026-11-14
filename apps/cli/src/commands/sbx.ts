@@ -9,6 +9,7 @@ import { confirm } from "../../../../src/modules/cli/confirm";
 import { formatMessage } from "../../../../src/modules/cli/format";
 import type { SnapshotResult } from "../../../../src/modules/sandbox/sandbox-snapshot";
 import type { SandboxSnapshot } from "../../../../src/modules/sandbox/snapshot-store";
+import type { Freshness } from "../../../../src/modules/sandbox/template-freshness";
 import type { SandboxService } from "../../../../src/modules/sandbox/sandbox.service";
 import { deriveSandboxName, findCheckout } from "../../../../src/modules/sandbox/sandbox-checkout";
 
@@ -335,6 +336,53 @@ const list = defineCommand({
   },
 });
 
+const status = defineCommand({
+  name: "status",
+  description: "Show a sandbox's state, workspace, profile, image freshness and latest snapshot",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+    "check-updates": {
+      type: "boolean",
+      negatable: true,
+      default: true,
+      description: "Check image freshness against the registry (--no-check-updates skips it)",
+    },
+  },
+
+  async run(ctx, { sandbox, output, readResolvedConfig, checkSandboxFreshness }) {
+    const service = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, service, ctx.extensions.eden.json);
+    const { sandbox: summary, latestSnapshot } = await service.status(name);
+
+    let freshness: Freshness = { state: "unknown", reason: "Not checked (--no-check-updates)." };
+    let warnings: string[] = [];
+    if (ctx.values["check-updates"]) {
+      const config = await readResolvedConfig();
+      const result = await checkSandboxFreshness([summary], config.config.sandbox?.profiles ?? {});
+      freshness = result.sandboxes[0]!.freshness;
+      warnings = result.warnings;
+    }
+
+    output.write({
+      data: {
+        sandbox: summary,
+        freshness,
+        latestSnapshot: latestSnapshot ?? null,
+        ...(warnings.length ? { warnings } : {}),
+      },
+      human: () => formatStatus(summary, freshness, latestSnapshot, warnings),
+    });
+  },
+});
+
 const snapshot = defineCommand({
   name: "snapshot",
   description: "Archive a sandbox's profile snapshot paths to the host; --list shows snapshots",
@@ -421,7 +469,20 @@ const restore = defineCommand({
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, start, exec, shell, list, stop, ssh, snapshot, restore, rm: remove },
+  subCommands: {
+    create,
+    run,
+    start,
+    exec,
+    shell,
+    list,
+    stop,
+    ssh,
+    status,
+    snapshot,
+    restore,
+    rm: remove,
+  },
 });
 
 function confirmRemoval(name: string): Promise<boolean> {
@@ -520,6 +581,25 @@ function formatTakenSnapshot(name: string, result: SnapshotResult | undefined): 
   if (result.pruned.length > 0) lines.push(`  Pruned ${result.pruned.length} older snapshot(s).`);
 
   return formatMessage(lines.join("\n"), "success", "stdout");
+}
+
+function formatStatus(
+  sandbox: SandboxSummary,
+  freshness: Freshness,
+  latestSnapshot: SandboxSnapshot | undefined,
+  warnings: readonly string[],
+): string {
+  const lines = [
+    `Sandbox ${sandbox.name} (${sandbox.provider})`,
+    `  State:     ${sandbox.status}`,
+    `  Workspace: ${sandbox.workspace ?? "-"}`,
+    `  Profile:   ${sandbox.profile ?? "-"}`,
+    `  Image:     ${freshness.state} - ${freshness.reason}`,
+    `  Snapshot:  ${latestSnapshot ? `${latestSnapshot.id} (${latestSnapshot.createdAt}, ${formatSize(latestSnapshot.sizeBytes)})` : "none"}`,
+    ...warnings.map((warning) => `Warning: ${warning}`),
+  ];
+
+  return lines.join("\n");
 }
 
 function formatSnapshots(name: string, snapshots: readonly SandboxSnapshot[]): string {
