@@ -130,28 +130,8 @@ export class SandboxService {
 
   async start(name: string): Promise<{ started: boolean }> {
     validateSandboxInput(name);
-    const sandbox = await this.requireSandbox(name);
-    const provider = this.provider;
-    if (!provider.start) {
-      throw new SandboxError(
-        "SANDBOX_PROVIDER_UNAVAILABLE",
-        "Starting sandboxes is unavailable for this provider.",
-      );
-    }
 
-    const started = sandbox.status !== "running";
-    await this.execution.mutate(
-      {
-        type: "sandbox.start",
-        description: `Start sandbox ${name} using ${provider.name}`,
-        input: { provider: provider.name, name },
-      },
-      async () => {
-        if (started) await provider.start!(name);
-      },
-    );
-
-    return { started };
+    return this.startSandbox(await this.requireSandbox(name));
   }
 
   async stop(name: string): Promise<void> {
@@ -223,14 +203,20 @@ export class SandboxService {
     validateSandboxInput(input.name);
     const { name } = input;
     const sandboxes = await this.provider.list();
-    const exists = sandboxes.some((sandbox) => sandbox.name === name);
+    const sandbox = sandboxes.find((entry) => entry.name === name);
 
-    if (!exists) {
+    if (!sandbox) {
       throw new SandboxError(
         "SANDBOX_NOT_FOUND",
         `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider. Create it explicitly with eden sbx create.`,
       );
     }
+
+    const startsFirst =
+      sandbox.status === "stopped" &&
+      this.provider.start !== undefined &&
+      (await this.hooks.discover("sandbox.start.post")) !== undefined;
+    if (startsFirst) await this.startSandbox(sandbox);
 
     let exitCode = 0;
 
@@ -290,6 +276,33 @@ export class SandboxService {
     await this.runCreatePostHook(post, hookInput);
 
     return { warnings };
+  }
+
+  private async startSandbox(sandbox: SandboxSummary): Promise<{ started: boolean }> {
+    const { name } = sandbox;
+    const provider = this.provider;
+    if (!provider.start) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Starting sandboxes is unavailable for this provider.",
+      );
+    }
+
+    const started = sandbox.status !== "running";
+    const post = started ? await this.hooks.discover("sandbox.start.post") : undefined;
+    await this.execution.mutate(
+      {
+        type: "sandbox.start",
+        description: `Start sandbox ${name} using ${provider.name}`,
+        input: { provider: provider.name, name },
+      },
+      async () => {
+        if (started) await provider.start!(name);
+      },
+    );
+    await this.runStartPostHook(post, name);
+
+    return { started };
   }
 
   private async requireSandbox(name: string): Promise<SandboxSummary> {
@@ -376,16 +389,49 @@ export class SandboxService {
     path: string | undefined,
     input: SandboxHookInput,
   ): Promise<void> {
+    await this.runPostHook(
+      "sandbox.create.post",
+      path,
+      input,
+      `Sandbox ${input.request.name} was created and is left in place.`,
+    );
+  }
+
+  private async runStartPostHook(path: string | undefined, name: string): Promise<void> {
+    if (!path) return;
+    const profile = await this.profileOf(name).catch(() => undefined);
+    const request: SandboxHookInput["request"] = { name };
+    const sandbox: Record<string, unknown> = {
+      name,
+      provider: this.provider.name,
+      status: "running",
+    };
+    if (profile !== undefined) {
+      request.profile = profile;
+      sandbox.profile = profile;
+    }
+
+    await this.runPostHook(
+      "sandbox.start.post",
+      path,
+      { request, context: { cwd: process.cwd() }, sandbox },
+      `Sandbox ${name} was started and is left running.`,
+    );
+  }
+
+  private async runPostHook(
+    hook: string,
+    path: string | undefined,
+    input: SandboxHookInput,
+    outcome: string,
+  ): Promise<void> {
     if (!path) return;
     this.onHook?.();
     try {
-      await this.hooks.run("sandbox.create.post", path, input, input.context.cwd, "post");
+      await this.hooks.run(hook, path, input, input.context.cwd, "post");
     } catch (error) {
       if (error instanceof HookFailure) {
-        throw new HookFailure({
-          ...error.detail,
-          message: `${error.message}. Sandbox ${input.request.name} was created and is left in place.`,
-        });
+        throw new HookFailure({ ...error.detail, message: `${error.message}. ${outcome}` });
       }
       throw error;
     }

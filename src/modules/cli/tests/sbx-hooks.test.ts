@@ -236,3 +236,83 @@ test("cancelling the pre hook prevents creation", async () => {
     ]);
   });
 });
+
+test("start runs the start hook after starting, with the remembered profile", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "stopped");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          default_provider: "docker-sbx",
+          profiles: { work: { agent: "claude", pull: "never" } },
+        },
+      }),
+    );
+    options.env.EDEN_SBX_AGENT = "claude";
+    options.env.EDEN_SBX_PULL = "never";
+    await runCliWith(options, "sbx", "create", "--name", "example", "--profile", "work");
+    await installHook(options.env.XDG_CONFIG_HOME!, "sandbox.start.post");
+
+    const result = await runCliWith(options, "sbx", "start", "--name", "example", "--json");
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).hooks).toHaveLength(1);
+    const events = await sandboxCommands(directory);
+    expect(events.at(-1)).toMatchObject({
+      hook: "sandbox.start.post",
+      input: {
+        request: { name: "example", profile: "work" },
+        context: { cwd: directory },
+        sandbox: { name: "example", provider: "docker-sbx", status: "running", profile: "work" },
+      },
+    });
+    expect(events.at(-3)).toEqual(["run", "--detach", "--name", "example"]);
+  });
+});
+
+test("start does not run the start hook for a sandbox that is already running", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "running");
+    await installHook(options.env.XDG_CONFIG_HOME!, "sandbox.start.post");
+
+    const result = await runCliWith(options, "sbx", "start", "--name", "example", "--json");
+
+    expect(result.exitCode).toBe(0);
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
+  });
+});
+
+test("start hook failure reports that the sandbox remains running", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "stopped");
+    await installHook(options.env.XDG_CONFIG_HOME!, "sandbox.start.post");
+    options.env.EDEN_HOOK_EXIT = "5";
+
+    const result = await runCliWith(options, "sbx", "start", "--name", "example", "--json");
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      code: "HOOK_FAILED",
+      message: expect.stringContaining("was started and is left running"),
+    });
+  });
+});
+
+test("run starts a stopped sandbox through the start hook before attaching", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "stopped");
+    await installHook(options.env.XDG_CONFIG_HOME!, "sandbox.start.post");
+
+    const result = await runCliWith(options, "sbx", "run", "--name", "example");
+
+    expect(result.exitCode).toBe(0);
+    expect((await sandboxCommands(directory)).map((event: any) => event.hook ?? event[0])).toEqual([
+      "ls",
+      "run",
+      "ls",
+      "sandbox.start.post",
+      "run",
+    ]);
+  });
+});
