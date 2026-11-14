@@ -45,7 +45,28 @@ import { DockerSandboxProvider } from "../../external/docker-sbx/provider";
 
 export type ShellSandboxInput = { name: string; cwd?: string };
 
+export type RebuildSandboxInput = {
+  name: string;
+  force: boolean;
+  snapshot: boolean;
+  restore: boolean;
+  image?: string;
+  path?: string;
+};
+
+export type RebuildSandboxResult = {
+  snapshot?: SandboxSnapshot;
+  restored: boolean;
+  warnings: string[];
+};
+
 const defaultShellCommand = ["bash", "-l"];
+const pendingSnapshot: SandboxSnapshot = {
+  id: "(taken by this rebuild)",
+  path: "",
+  createdAt: "",
+  sizeBytes: 0,
+};
 
 export class SandboxService {
   get providerName(): SandboxProviderName {
@@ -235,13 +256,7 @@ export class SandboxService {
   async remove(name: string, force: boolean): Promise<void> {
     validateSandboxInput(name);
     const sandbox = await this.requireSandbox(name);
-    const sandboxIsRunningOrUnknown = sandbox.status !== "stopped";
-    if (sandboxIsRunningOrUnknown && !force) {
-      throw new SandboxError(
-        "SANDBOX_REMOVE_REQUIRES_FORCE",
-        `Sandbox ${name} is ${sandbox.status}. Use --force to remove a sandbox that is running or has an unknown status.`,
-      );
-    }
+    this.assertRemovable(sandbox, force);
     const canRemove = this.provider.remove !== undefined;
     if (!canRemove) {
       throw new SandboxError(
@@ -313,6 +328,57 @@ export class SandboxService {
     return exitCode;
   }
 
+  async rebuild(input: RebuildSandboxInput): Promise<RebuildSandboxResult> {
+    const { name } = input;
+    validateSandboxInput(name);
+    const profile = this.profile;
+    if (profile === undefined) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        `Sandbox ${name} has no remembered profile to rebuild from. Pass --profile.`,
+      );
+    }
+    this.assertRemovable(await this.requireSandbox(name), input.force);
+    if (!this.provider.remove) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Sandbox removal is unavailable for this provider.",
+      );
+    }
+    const snapshotSettings = input.snapshot ? profile.snapshot : undefined;
+    if (snapshotSettings) this.requireTransfer();
+    await this.assertRecreatable(input);
+
+    const taken = snapshotSettings
+      ? await snapshotSandbox(this.snapshotContext(), name, snapshotSettings)
+      : undefined;
+    const snapshot = taken?.snapshot;
+    await this.remove(name, input.force);
+
+    let warnings: string[];
+    try {
+      ({ warnings } = await this.create({ name, image: input.image }, input.path));
+    } catch (error) {
+      throw rebuildFailure(name, "removed but could not be recreated", error, snapshot);
+    }
+
+    const restoring = snapshotSettings !== undefined && input.restore;
+    if (!restoring) return { snapshot, restored: false, warnings };
+
+    try {
+      await restoreSandbox(this.snapshotContext(), name, snapshot ?? pendingSnapshot);
+    } catch (error) {
+      throw rebuildFailure(
+        name,
+        "recreated but its snapshot could not be restored",
+        error,
+        snapshot,
+      );
+    }
+
+    return { snapshot, restored: snapshot !== undefined, warnings };
+  }
+
   async create(input: CreateSandboxInput, path?: string): Promise<{ warnings: string[] }> {
     const requestedHostWorkspace = input.workspace?.mode === "host";
     const profileAllowsHostWorkspace = this.profile?.workspace?.mode === "host";
@@ -382,6 +448,23 @@ export class SandboxService {
     await this.runStartPostHook(post, name);
 
     return { started };
+  }
+
+  private assertRemovable(sandbox: SandboxSummary, force: boolean): void {
+    const sandboxIsRunningOrUnknown = sandbox.status !== "stopped";
+    if (sandboxIsRunningOrUnknown && !force) {
+      throw new SandboxError(
+        "SANDBOX_REMOVE_REQUIRES_FORCE",
+        `Sandbox ${sandbox.name} is ${sandbox.status}. Use --force to remove a sandbox that is running or has an unknown status.`,
+      );
+    }
+  }
+
+  private async assertRecreatable(input: RebuildSandboxInput): Promise<void> {
+    const resolved = resolveCreateInput({ name: input.name, image: input.image }, this.profile);
+    validateSandboxInput(resolved.name, resolved.image);
+    await resolveSandboxPaths(resolved, input.path);
+    await this.provider.preflight(resolved);
   }
 
   private requireTransfer(): void {
@@ -652,6 +735,23 @@ function validateSandboxInput(name: string, image?: string): void {
       "Sandbox name and supplied image must not be empty.",
     );
   }
+}
+
+function rebuildFailure(
+  name: string,
+  state: string,
+  error: unknown,
+  snapshot: SandboxSnapshot | undefined,
+): SandboxError {
+  const code =
+    error instanceof SandboxError && error.code === "CANCELLED"
+      ? "CANCELLED"
+      : "SANDBOX_REBUILD_FAILED";
+  const kept = snapshot
+    ? ` Its snapshot ${snapshot.id} is kept at ${snapshot.path}; restore it with eden sbx restore --name ${name} --snapshot ${snapshot.id}.`
+    : "";
+
+  return new SandboxError(code, `Sandbox ${name} was ${state}: ${errorMessage(error)}${kept}`);
 }
 
 function isCurrentRecord(record: SandboxProfileRecord, createdAt: string | undefined): boolean {
