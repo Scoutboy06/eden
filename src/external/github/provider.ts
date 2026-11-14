@@ -23,7 +23,6 @@ import type {
   PullRequestReviewRequester,
   PullRequestDiffer,
   PullRequestDiff,
-  PullRequestFileDiff,
   PullRequestCommentThreadLister,
   PullRequestCommentThreadsQuery,
   PullRequestReviewer,
@@ -33,8 +32,16 @@ import type {
   PullRequestMergeResult,
 } from "../../modules/pull-requests/provider";
 import { listReviewThreads } from "./review-threads";
+import { readGitHubDiff } from "./diff";
+import {
+  assertPullRequestIdentity,
+  normalizePullRequest,
+  type GitHubListItem,
+} from "./pull-request-normalization";
 
-type GitHubListItem = Awaited<ReturnType<Octokit["pulls"]["list"]>>["data"][number];
+type GitHubCreatedComment =
+  | Awaited<ReturnType<Octokit["issues"]["createComment"]>>["data"]
+  | Awaited<ReturnType<Octokit["pulls"]["createReplyForReviewComment"]>>["data"];
 
 export class GitHubApiProvider
   implements
@@ -162,17 +169,19 @@ export class GitHubApiProvider
       }
       let data;
       try {
-        data = await providerRequest(async () =>
-          replyId === undefined
-            ? (await postDiscussionComment(this.client, ref, input.body)).data
-            : (
-                await this.client.pulls.createReplyForReviewComment({
-                  ...parameters(ref),
-                  comment_id: replyId,
-                  body: input.body,
-                })
-              ).data,
-        );
+        data = await providerRequest(async () => {
+          if (replyId === undefined) {
+            const response = await postDiscussionComment(this.client, ref, input.body);
+            return response.data;
+          }
+
+          const response = await this.client.pulls.createReplyForReviewComment({
+            ...parameters(ref),
+            comment_id: replyId,
+            body: input.body,
+          });
+          return response.data;
+        });
       } catch (error) {
         if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
         throw commentConfirmationFailure(ref, error);
@@ -210,6 +219,7 @@ export class GitHubApiProvider
       ];
       const reviewers = input.reviewers.filter((name) => !pendingUsers.has(name.toLowerCase()));
       const teams = input.teams.filter((name) => !pendingTeams.has(name.toLowerCase()));
+      const requestedReviewers = [...reviewers, ...teams];
       if (reviewers.length || teams.length) {
         try {
           await providerRequest(() =>
@@ -221,10 +231,7 @@ export class GitHubApiProvider
           );
         } catch (error) {
           if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
-          throw new ScmError(
-            "SCM_PARTIAL_FAILURE",
-            `Review requests may have been applied for ${[...reviewers, ...teams].join(", ")}; inspect pending reviewers before retrying. ${safeFailureDetails(error)}`,
-          );
+          throw reviewRequestFailure(requestedReviewers, error);
         }
         try {
           const confirmed = await this.requestedReviewers(ref);
@@ -244,14 +251,11 @@ export class GitHubApiProvider
           ];
           if (missing.length) throw new Error("Review requests were not confirmed.");
         } catch (error) {
-          throw new ScmError(
-            "SCM_PARTIAL_FAILURE",
-            `Review requests may have been applied for ${[...reviewers, ...teams].join(", ")}; inspect pending reviewers before retrying. ${safeFailureDetails(error)}`,
-          );
+          throw reviewRequestFailure(requestedReviewers, error);
         }
       }
 
-      return { requested: [...reviewers, ...teams], alreadyPending };
+      return { requested: requestedReviewers, alreadyPending };
     });
   }
 
@@ -315,7 +319,10 @@ export class GitHubApiProvider
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       const { data } = await this.client.pulls.get(parameters(ref));
-      return { ...normalizePullRequest(data, ref), ...(options.raw ? { raw: data } : {}) };
+      const pullRequest = normalizePullRequest(data, ref);
+      if (!options.raw) return pullRequest;
+
+      return { ...pullRequest, raw: data };
     });
   }
 
@@ -341,25 +348,44 @@ export class GitHubApiProvider
         this.client.paginate(this.client.pulls.listReviewComments, input),
       ]);
 
-      return [
-        ...discussion.map((comment): PullRequestComment => ({
+      const comments: PullRequestComment[] = [];
+      for (const comment of discussion) {
+        let author: PullRequestComment["author"] = null;
+        if (comment.user) author = { id: `user:${comment.user.id}`, name: comment.user.login };
+
+        comments.push({
           id: `issue:${comment.id}`,
           body: comment.body ?? "",
-          author: comment.user ? { id: `user:${comment.user.id}`, name: comment.user.login } : null,
+          author,
           url: comment.html_url,
           createdAt: comment.created_at,
-        })),
-        ...inline.map((comment): PullRequestComment => ({
+        });
+      }
+
+      for (const comment of inline) {
+        let author: PullRequestComment["author"] = null;
+        if (comment.user) author = { id: `user:${comment.user.id}`, name: comment.user.login };
+
+        const normalized: PullRequestComment = {
           id: `review:${comment.id}`,
           body: comment.body,
-          author: comment.user ? { id: `user:${comment.user.id}`, name: comment.user.login } : null,
+          author,
           url: comment.html_url,
           createdAt: comment.created_at,
           path: comment.path,
-          ...(comment.line != null ? { line: comment.line } : {}),
           threadId: String(comment.in_reply_to_id ?? comment.id),
-        })),
-      ].sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+        };
+        if (comment.line != null) normalized.line = comment.line;
+        comments.push(normalized);
+      }
+
+      comments.sort((first, second) => {
+        const firstCreatedAt = first.createdAt ?? "";
+        const secondCreatedAt = second.createdAt ?? "";
+        return firstCreatedAt.localeCompare(secondCreatedAt);
+      });
+
+      return comments;
     });
   }
 
@@ -386,27 +412,29 @@ export class GitHubApiProvider
           "SCM_STALE_HEAD",
           "The PR head changed; inspect the new head before reviewing.",
         );
-      const event =
-        input.event === "approve"
-          ? "APPROVE"
-          : input.event === "request-changes"
-            ? "REQUEST_CHANGES"
-            : "COMMENT";
+      let event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      if (input.event === "approve") {
+        event = "APPROVE";
+      } else if (input.event === "request-changes") {
+        event = "REQUEST_CHANGES";
+      } else {
+        event = "COMMENT";
+      }
+      const commitId = input.expectedHead ?? head;
+      const reviewInput = {
+        ...parameters(ref),
+        commit_id: commitId,
+        event,
+        ...(input.body !== undefined ? { body: input.body } : {}),
+      };
       let result;
       try {
-        result = await providerRequest(() =>
-          this.client.pulls.createReview({
-            ...parameters(ref),
-            commit_id: input.expectedHead ?? head,
-            event,
-            ...(input.body !== undefined ? { body: input.body } : {}),
-          }),
-        );
+        result = await providerRequest(() => this.client.pulls.createReview(reviewInput));
       } catch (error) {
         if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
         throw new ScmError(
           "SCM_PARTIAL_FAILURE",
-          `The review may have been submitted for head ${input.expectedHead ?? head}; inspect reviews before retrying.`,
+          `The review may have been submitted for head ${commitId}; inspect reviews before retrying.`,
         );
       }
       if (!result.data.user || !reviewStates[result.data.state])
@@ -483,35 +511,13 @@ export class GitHubApiProvider
       const latest = new Map<string, (typeof statuses)[number]>();
       for (const status of statuses) {
         const existing = latest.get(status.context);
-        if (!existing || status.id > existing.id) latest.set(status.context, status);
+        const isLatest = existing === undefined || status.id > existing.id;
+        if (isLatest) latest.set(status.context, status);
       }
 
-      const checks: PullRequestCheck[] = [
-        ...runs.map((run): PullRequestCheck => ({
-          id: `check:${run.id}`,
-          name: run.name,
-          ...(run.html_url ? { url: run.html_url } : {}),
-          state:
-            run.status === "completed"
-              ? conclusion(run.conclusion)
-              : run.status === "in_progress"
-                ? "running"
-                : "pending",
-        })),
-        ...[...latest.values()].map((status): PullRequestCheck => ({
-          id: `status:${status.id}`,
-          name: status.context,
-          ...(status.target_url ? { url: status.target_url } : {}),
-          state:
-            status.state === "success"
-              ? "passed"
-              : status.state === "pending"
-                ? "pending"
-                : status.state === "failure" || status.state === "error"
-                  ? "failed"
-                  : "unknown",
-        })),
-      ];
+      const checks: PullRequestCheck[] = [];
+      for (const run of runs) checks.push(normalizeCheckRun(run));
+      for (const status of latest.values()) checks.push(normalizeCommitStatus(status));
       if (!options.requiredOnly) return checks;
       if (!pr.base?.ref) invalidResponse();
       const required = await this.requiredChecks(
@@ -521,26 +527,32 @@ export class GitHubApiProvider
         options.signal,
       );
 
-      return required.flatMap((requirement) => {
+      const requiredChecks: PullRequestCheck[] = [];
+      for (const requirement of required) {
         const matches = checks.filter((check) => {
           if (check.name !== requirement.context) return false;
-          if (requirement.appId == null || requirement.appId === -1) return true;
+          const appliesToAnyApp = requirement.appId == null || requirement.appId === -1;
+          if (appliesToAnyApp) return true;
 
           return runs.some(
             (run) => check.id === `check:${run.id}` && run.app?.id === requirement.appId,
           );
         });
 
-        return matches.length > 0
-          ? matches
-          : [
-              {
-                id: `required:${requirement.context}:${requirement.appId ?? "any"}`,
-                name: requirement.context,
-                state: "pending" as const,
-              },
-            ];
-      });
+        if (matches.length > 0) {
+          requiredChecks.push(...matches);
+          continue;
+        }
+
+        const appId = requirement.appId ?? "any";
+        requiredChecks.push({
+          id: `required:${requirement.context}:${appId}`,
+          name: requirement.context,
+          state: "pending",
+        });
+      }
+
+      return requiredChecks;
     });
   }
 
@@ -548,13 +560,8 @@ export class GitHubApiProvider
     const target = { owner, repo, branch, request: { signal } };
     const [protection, rules] = await Promise.all([
       this.client.repos.getBranchProtection(target).catch((error: unknown) => {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "status" in error &&
-          error.status === 404
-        )
-          return undefined;
+        const isNotFound = responseStatus(error) === 404;
+        if (isNotFound) return undefined;
 
         throw error;
       }),
@@ -566,14 +573,17 @@ export class GitHubApiProvider
         { ...target, per_page: 100 },
       ),
     ]);
-    if (rules.some((rule) => rule.type === "workflows"))
+    const hasWorkflowRules = rules.some((rule) => rule.type === "workflows");
+    if (hasWorkflowRules)
       throw new ScmError(
         "SCM_UNSUPPORTED_OPERATION",
         "Required workflow rules cannot be projected as named status checks. Run without --required-only.",
       );
     const required = new Map<string, { context: string; appId?: number | null }>();
-    const add = (context: string, appId?: number | null) =>
-      required.set(JSON.stringify([context, appId ?? -1]), { context, appId });
+    const add = (context: string, appId?: number | null) => {
+      const key = JSON.stringify([context, appId ?? -1]);
+      required.set(key, { context, appId });
+    };
     const classic = protection?.data.required_status_checks;
     for (const check of classic?.checks ?? []) add(check.context, check.app_id);
     for (const name of classic?.contexts ?? []) {
@@ -598,11 +608,14 @@ export class GitHubApiProvider
       ]);
       const latest = new Map<string, PullRequestReview>();
       for (const review of reviews) {
-        if (!review.user || review.state === "PENDING") continue;
+        const isPending = review.state === "PENDING";
+        if (!review.user || isPending) continue;
         const id = `user:${review.user.id}`;
         const state = reviewStates[review.state] ?? "unknown";
         const existing = latest.get(id);
-        if (state === "commented" && existing && existing.state !== "commented") continue;
+        const preservesExistingDecision =
+          state === "commented" && existing !== undefined && existing.state !== "commented";
+        if (preservesExistingDecision) continue;
         latest.set(id, { reviewer: { id, name: review.user.login }, state });
       }
       for (const reviewer of requested) latest.set(reviewer.id, { reviewer, state: "pending" });
@@ -693,21 +706,24 @@ async function inspectMergeTarget(
   const sourceOwner = data.head?.repo?.owner?.login;
   const sourceRepository = data.head?.repo?.name;
   if (!head || !branch || !base || !sourceOwner || !sourceRepository) invalidResponse();
-  if (input.expectedHead && input.expectedHead !== head)
+
+  const expectedHeadChanged = input.expectedHead && input.expectedHead !== head;
+  if (expectedHeadChanged)
     throw new ScmError(
       "SCM_STALE_HEAD",
       "The PR head changed; inspect the new head before merging.",
     );
-  if (input.deleteBranch && !isSafeSourceBranch(branch, base))
+  const unsafeSourceBranch = input.deleteBranch && !isSafeSourceBranch(branch, base);
+  if (unsafeSourceBranch)
     throw new ScmError(
       "SCM_INVALID_REFERENCE",
       "The PR source branch is not a safe distinct branch name.",
     );
-  if (
-    input.deleteBranch &&
-    (sourceOwner.toLowerCase() !== ref.owner.toLowerCase() ||
-      sourceRepository.toLowerCase() !== ref.repository.toLowerCase())
-  )
+  const sourceIsInRepository =
+    sourceOwner.toLowerCase() === ref.owner.toLowerCase() &&
+    sourceRepository.toLowerCase() === ref.repository.toLowerCase();
+  const cannotDeleteForkBranch = input.deleteBranch && !sourceIsInRepository;
+  if (cannotDeleteForkBranch)
     throw new ScmError(
       "SCM_UNSUPPORTED_OPERATION",
       "Automatic deletion is only supported for a source branch in this repository; fork branches are left unchanged.",
@@ -717,7 +733,10 @@ async function inspectMergeTarget(
 }
 
 function isSafeSourceBranch(branch: string, base: string) {
-  return branch !== base && /^[A-Za-z0-9._/-]+$/.test(branch) && !branch.includes("..");
+  const isDistinctFromBase = branch !== base;
+  const hasSafeCharacters = /^[A-Za-z0-9._/-]+$/.test(branch);
+  const hasNoTraversal = !branch.includes("..");
+  return isDistinctFromBase && hasSafeCharacters && hasNoTraversal;
 }
 
 async function mergeExpectedHead(
@@ -744,7 +763,8 @@ async function mergeExpectedHead(
 function responseStatus(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null || !("status" in error)) return;
 
-  return typeof error.status === "number" ? error.status : undefined;
+  if (typeof error.status !== "number") return;
+  return error.status;
 }
 
 function mergeFailure(error: unknown): ScmError {
@@ -828,33 +848,59 @@ async function editPullRequest(client: Octokit, ref: PullRequestRef, patch: Pull
   const input = parameters(ref);
   const { data: current } = await client.pulls.get(input);
   const restPatch = restFields(patch);
+  const hasRestPatch = Object.keys(restPatch).length > 0;
   let updated = current;
-  if (Object.keys(restPatch).length > 0)
-    updated = (await client.pulls.update({ ...input, ...restPatch })).data;
-  if (patch.isDraft !== undefined && patch.isDraft !== (updated.draft ?? false)) {
-    try {
-      await providerRequest(() => changeDraftState(client, updated.node_id, patch.isDraft!));
-    } catch (error) {
-      if (Object.keys(restPatch).length === 0) throw error;
-      const cause = safeFailureDetails(error);
-      throw new ScmError(
-        "SCM_PARTIAL_FAILURE",
-        `Pull request fields were updated, but its draft state change failed. ${cause}`,
-      );
-    }
-    try {
-      updated = (await providerRequest(() => client.pulls.get(input))).data;
-    } catch (error) {
-      throw new ScmError(
-        "SCM_PARTIAL_FAILURE",
-        `Pull request changes may have been applied, but confirmation failed. ${safeFailureDetails(error)}`,
-      );
-    }
+  if (hasRestPatch) {
+    const response = await client.pulls.update({ ...input, ...restPatch });
+    updated = response.data;
   }
+
+  const requestedDraftState = patch.isDraft;
+  const draftStateMatches =
+    requestedDraftState === undefined || requestedDraftState === (updated.draft ?? false);
+  if (!draftStateMatches && requestedDraftState !== undefined) {
+    updated = await updatePullRequestDraftState(
+      client,
+      input,
+      updated,
+      requestedDraftState,
+      hasRestPatch,
+    );
+  }
+
   const result = normalizePullRequest(updated);
   assertPullRequestIdentity(result, ref);
 
   return result;
+}
+
+async function updatePullRequestDraftState(
+  client: Octokit,
+  input: ReturnType<typeof parameters>,
+  current: Awaited<ReturnType<Octokit["pulls"]["get"]>>["data"],
+  isDraft: boolean,
+  hasRestPatch: boolean,
+) {
+  try {
+    await providerRequest(() => changeDraftState(client, current.node_id, isDraft));
+  } catch (error) {
+    if (!hasRestPatch) throw error;
+    const cause = safeFailureDetails(error);
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `Pull request fields were updated, but its draft state change failed. ${cause}`,
+    );
+  }
+
+  try {
+    const response = await providerRequest(() => client.pulls.get(input));
+    return response.data;
+  } catch (error) {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      `Pull request changes may have been applied, but confirmation failed. ${safeFailureDetails(error)}`,
+    );
+  }
 }
 
 function postDiscussionComment(
@@ -888,43 +934,77 @@ function commentConfirmationFailure(
 }
 
 function normalizeCreatedComment(
-  data:
-    | Awaited<ReturnType<Octokit["issues"]["createComment"]>>["data"]
-    | Awaited<ReturnType<Octokit["pulls"]["createReplyForReviewComment"]>>["data"],
+  data: GitHubCreatedComment,
   ref: Extract<PullRequestRef, { provider: "github" }>,
   replyId: number | undefined,
 ): PullRequestComment {
-  if (!Number.isSafeInteger(data.id) || data.id < 1 || typeof data.body !== "string")
-    invalidResponse();
-  const url = new URL(data.html_url);
-  const path = `/${ref.owner}/${ref.repository}/pull/${ref.number}`.toLowerCase();
-  if (
-    url.origin !== "https://github.com" ||
-    !(url.pathname.toLowerCase() === path || url.pathname.toLowerCase().startsWith(`${path}/`))
-  )
-    invalidResponse();
-  if (replyId === undefined) {
-    if (
-      !("issue_url" in data) ||
-      data.issue_url.toLowerCase() !==
-        `https://api.github.com/repos/${ref.owner}/${ref.repository}/issues/${ref.number}`.toLowerCase()
-    )
-      invalidResponse();
-  } else if (
-    !("pull_request_url" in data) ||
-    !samePrApiUrl(data.pull_request_url, ref) ||
-    data.in_reply_to_id !== replyId
-  )
-    invalidResponse();
+  assertCreatedCommentResponse(data, ref, replyId);
 
-  return {
-    id: `${replyId === undefined ? "issue" : "review"}:${data.id}`,
+  const commentKind = replyId === undefined ? "issue" : "review";
+  let author: PullRequestComment["author"] = null;
+  if (data.user) author = { id: `user:${data.user.id}`, name: data.user.login };
+
+  const normalized: PullRequestComment = {
+    id: `${commentKind}:${data.id}`,
     body: data.body,
-    author: data.user ? { id: `user:${data.user.id}`, name: data.user.login } : null,
+    author,
     url: data.html_url,
     createdAt: data.created_at,
-    ...(replyId !== undefined ? { threadId: String(replyId) } : {}),
   };
+  if (replyId !== undefined) normalized.threadId = String(replyId);
+
+  return normalized;
+}
+
+function assertCreatedCommentResponse(
+  data: GitHubCreatedComment,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  replyId: number | undefined,
+): asserts data is GitHubCreatedComment & { body: string } {
+  const hasValidId = Number.isSafeInteger(data.id) && data.id >= 1;
+  if (!hasValidId) invalidResponse();
+  if (typeof data.body !== "string") invalidResponse();
+
+  assertCommentLocation(data, ref);
+  if (replyId === undefined) {
+    assertDiscussionCommentTarget(data, ref);
+    return;
+  }
+
+  assertReviewReplyTarget(data, ref, replyId);
+}
+
+function assertCommentLocation(
+  data: GitHubCreatedComment,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+) {
+  const url = new URL(data.html_url);
+  const path = `/${ref.owner}/${ref.repository}/pull/${ref.number}`.toLowerCase();
+  const pathname = url.pathname.toLowerCase();
+  const isPullRequestPage = pathname === path || pathname.startsWith(`${path}/`);
+  const isGitHubPullRequestUrl = url.origin === "https://github.com" && isPullRequestPage;
+  if (!isGitHubPullRequestUrl) invalidResponse();
+}
+
+function assertDiscussionCommentTarget(
+  data: GitHubCreatedComment,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+) {
+  if (!("issue_url" in data)) invalidResponse();
+  const expectedIssueUrl =
+    `https://api.github.com/repos/${ref.owner}/${ref.repository}/issues/${ref.number}`.toLowerCase();
+  if (data.issue_url.toLowerCase() !== expectedIssueUrl) invalidResponse();
+}
+
+function assertReviewReplyTarget(
+  data: GitHubCreatedComment,
+  ref: Extract<PullRequestRef, { provider: "github" }>,
+  replyId: number,
+) {
+  if (!("pull_request_url" in data)) invalidResponse();
+  const hasExpectedPullRequest = samePrApiUrl(data.pull_request_url, ref);
+  const hasExpectedReplyTarget = data.in_reply_to_id === replyId;
+  if (!hasExpectedPullRequest || !hasExpectedReplyTarget) invalidResponse();
 }
 
 async function closeGitHubPullRequest(
@@ -958,371 +1038,67 @@ async function closeGitHubPullRequest(
 }
 
 function normalizeListItem(data: GitHubListItem): PullRequestListItem {
-  if (
-    !Number.isSafeInteger(data.number) ||
-    data.number < 1 ||
-    !["open", "closed"].includes(data.state) ||
-    !(data.merged_at === null || typeof data.merged_at === "string") ||
-    (data.user != null && typeof data.user.login !== "string")
-  )
-    invalidResponse();
+  const hasValidNumber = Number.isSafeInteger(data.number) && data.number >= 1;
+  const hasValidState = data.state === "open" || data.state === "closed";
+  const hasValidMergedAt = data.merged_at === null || typeof data.merged_at === "string";
+  const hasValidAuthor = data.user == null || typeof data.user.login === "string";
+  if (!hasValidNumber || !hasValidState || !hasValidMergedAt || !hasValidAuthor) invalidResponse();
+
+  let author: PullRequestListItem["author"] = null;
+  if (data.user) author = { id: `user:${data.user.id}`, name: data.user.login };
 
   return {
     ...normalizePullRequest({ ...data, merged: data.merged_at !== null }),
-    author: data.user ? { id: `user:${data.user.id}`, name: data.user.login } : null,
+    author,
   };
-}
-
-type GitHubDiffSnapshot = {
-  baseCommit: string;
-  headCommit: string;
-  changedFiles: number | undefined;
-};
-
-async function readGitHubDiff(
-  client: Octokit,
-  ref: Extract<PullRequestRef, { provider: "github" }>,
-): Promise<PullRequestDiff> {
-  const input = parameters(ref);
-  const snapshot = await readGitHubDiffSnapshot(client, ref);
-  const result = await readGitHubDiffFiles(client, input);
-  await confirmGitHubDiffSnapshot(client, input, ref, snapshot);
-  if (snapshot.changedFiles !== undefined && result.files.length > snapshot.changedFiles)
-    invalidResponse();
-
-  return {
-    ref,
-    baseCommit: snapshot.baseCommit,
-    headCommit: snapshot.headCommit,
-    files: result.files,
-    completeness: githubDiffCompleteness(result, snapshot.changedFiles),
-  };
-}
-
-async function readGitHubDiffSnapshot(
-  client: Octokit,
-  ref: Extract<PullRequestRef, { provider: "github" }>,
-): Promise<GitHubDiffSnapshot> {
-  const { data } = await client.pulls.get(parameters(ref));
-  assertPullRequestIdentity(normalizePullRequest(data), ref);
-  const baseCommit = data.base?.sha;
-  const headCommit = data.head?.sha;
-  const changedFiles = data.changed_files;
-  if (
-    !baseCommit ||
-    !headCommit ||
-    (changedFiles !== undefined && (!Number.isSafeInteger(changedFiles) || changedFiles < 0))
-  )
-    invalidResponse();
-
-  return { baseCommit, headCommit, changedFiles };
-}
-
-async function readGitHubDiffFiles(
-  client: Octokit,
-  input: ReturnType<typeof parameters>,
-): Promise<{ files: PullRequestFileDiff[]; reachedLimit: boolean }> {
-  const files: PullRequestFileDiff[] = [];
-  let reachedLimit = false;
-  for await (const { data } of client.paginate.iterator(client.pulls.listFiles, {
-    ...input,
-    per_page: 100,
-  })) {
-    files.push(...data.map(normalizeFileDiff));
-    if (files.length >= 3000) {
-      reachedLimit = true;
-      break;
-    }
-  }
-
-  return { files, reachedLimit };
-}
-
-async function confirmGitHubDiffSnapshot(
-  client: Octokit,
-  input: ReturnType<typeof parameters>,
-  ref: Extract<PullRequestRef, { provider: "github" }>,
-  snapshot: GitHubDiffSnapshot,
-) {
-  const { data } = await client.pulls.get(input);
-  assertPullRequestIdentity(normalizePullRequest(data), ref);
-  if (data.base?.sha !== snapshot.baseCommit || data.head?.sha !== snapshot.headCommit)
-    throw new ScmError(
-      "SCM_PARTIAL_FAILURE",
-      "The PR changed while its file diff was being read. Retry to get a diff for stable commits.",
-    );
-  if (snapshot.changedFiles !== undefined && data.changed_files !== snapshot.changedFiles)
-    throw new ScmError(
-      "SCM_PARTIAL_FAILURE",
-      "The PR file count changed while its file diff was being read. Retry for a stable result.",
-    );
-}
-
-function githubDiffCompleteness(
-  result: { files: PullRequestFileDiff[]; reachedLimit: boolean },
-  changedFiles: number | undefined,
-): PullRequestDiff["completeness"] {
-  if (changedFiles !== undefined && result.files.length < changedFiles)
-    return {
-      status: "incomplete",
-      reason: `GitHub reported ${changedFiles} changed files but returned ${result.files.length}; file lists are limited to 3,000 files.`,
-    };
-  if (result.reachedLimit && changedFiles === undefined)
-    return {
-      status: "incomplete",
-      reason: "GitHub file-list completeness cannot be verified at the 3,000-file limit.",
-    };
-
-  return { status: "complete" };
-}
-
-function normalizeFileDiff(
-  data: Awaited<ReturnType<Octokit["pulls"]["listFiles"]>>["data"][number],
-): PullRequestFileDiff {
-  if (
-    typeof data.filename !== "string" ||
-    data.filename.length === 0 ||
-    !Number.isSafeInteger(data.additions) ||
-    data.additions < 0 ||
-    !Number.isSafeInteger(data.deletions) ||
-    data.deletions < 0 ||
-    (data.previous_filename !== undefined && typeof data.previous_filename !== "string")
-  )
-    invalidResponse();
-  const statuses: Record<string, PullRequestFileDiff["status"]> = {
-    added: "added",
-    modified: "modified",
-    removed: "deleted",
-    renamed: "renamed",
-    copied: "copied",
-    changed: "type-changed",
-  };
-
-  return {
-    path: data.filename,
-    ...(data.previous_filename ? { previousPath: data.previous_filename } : {}),
-    status: statuses[data.status] ?? "unknown",
-    additions: data.additions,
-    deletions: data.deletions,
-    patch: normalizeFilePatch(data.patch, data.additions, data.deletions),
-  };
-}
-
-function normalizeFilePatch(
-  patch: string | undefined,
-  additions: number,
-  deletions: number,
-): PullRequestFileDiff["patch"] {
-  if (typeof patch !== "string") return { status: "unavailable", reason: "not-provided" };
-  const inspection = inspectFilePatch(patch);
-  if (inspection.status === "truncated") return { status: "truncated", text: patch };
-  if (inspection.status === "invalid") return { status: "unavailable", reason: "not-provided" };
-  if (inspection.additions < additions || inspection.deletions < deletions)
-    return { status: "truncated", text: patch };
-  if (inspection.additions > additions || inspection.deletions > deletions)
-    return { status: "unavailable", reason: "not-provided" };
-
-  return { status: "available", text: patch };
-}
-
-type PatchInspection = {
-  status: "complete" | "truncated" | "invalid";
-  additions: number;
-  deletions: number;
-};
-
-type PatchScan = {
-  hunks: number;
-  expectedAdditions: number;
-  expectedDeletions: number;
-  additions: number;
-  deletions: number;
-  hunkAdditions: number;
-  hunkDeletions: number;
-};
-
-function inspectFilePatch(patch: string): PatchInspection {
-  const scan: PatchScan = {
-    hunks: 0,
-    expectedAdditions: 0,
-    expectedDeletions: 0,
-    additions: 0,
-    deletions: 0,
-    hunkAdditions: 0,
-    hunkDeletions: 0,
-  };
-  const hasTrailingNewline = patch.endsWith("\n");
-  for (const line of patch.split("\n")) {
-    const status = consumePatchLine(line, scan, hasTrailingNewline);
-    if (status) return { status, additions: scan.additions, deletions: scan.deletions };
-  }
-  if (scan.hunks === 0) return { status: "invalid", additions: 0, deletions: 0 };
-
-  return {
-    status: compareHunkCounts(
-      scan.hunkAdditions,
-      scan.hunkDeletions,
-      scan.expectedAdditions,
-      scan.expectedDeletions,
-    ),
-    additions: scan.additions,
-    deletions: scan.deletions,
-  };
-}
-
-function consumePatchLine(
-  line: string,
-  scan: PatchScan,
-  hasTrailingNewline: boolean,
-): PatchInspection["status"] | undefined {
-  const hunk = consumePatchHunk(line, scan);
-  if (hunk !== undefined) return hunk === "complete" ? undefined : hunk;
-  const kind = patchLineKind(line, scan.hunks > 0, hasTrailingNewline);
-  if (kind === "invalid") return "invalid";
-  if (kind === "addition") {
-    scan.additions++;
-    scan.hunkAdditions++;
-  } else if (kind === "deletion") {
-    scan.deletions++;
-    scan.hunkDeletions++;
-  } else if (kind === "context") {
-    scan.hunkAdditions++;
-    scan.hunkDeletions++;
-  }
-
-  return undefined;
-}
-
-function consumePatchHunk(line: string, scan: PatchScan): PatchInspection["status"] | undefined {
-  const range = patchHunkRange(line);
-  if (!range) return;
-  if (scan.hunks > 0) {
-    const status = compareHunkCounts(
-      scan.hunkAdditions,
-      scan.hunkDeletions,
-      scan.expectedAdditions,
-      scan.expectedDeletions,
-    );
-    if (status !== "complete") return status;
-  }
-  scan.hunks++;
-  scan.expectedAdditions = range.additions;
-  scan.expectedDeletions = range.deletions;
-  scan.hunkAdditions = 0;
-  scan.hunkDeletions = 0;
-
-  return "complete";
-}
-
-function patchHunkRange(line: string): { additions: number; deletions: number } | undefined {
-  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/.exec(line);
-  if (!match) return;
-
-  return { deletions: Number(match[2] ?? 1), additions: Number(match[4] ?? 1) };
-}
-
-function patchLineKind(
-  line: string,
-  inHunk: boolean,
-  hasTrailingNewline: boolean,
-): "addition" | "deletion" | "context" | "ignored" | "invalid" {
-  if ((line === "" && hasTrailingNewline) || line.startsWith("\\ No newline at end of file"))
-    return "ignored";
-  if (!inHunk) return "invalid";
-  if (line.startsWith("+")) return "addition";
-  if (line.startsWith("-")) return "deletion";
-  if (line.startsWith(" ")) return "context";
-
-  return "invalid";
-}
-
-function compareHunkCounts(
-  additions: number,
-  deletions: number,
-  expectedAdditions: number,
-  expectedDeletions: number,
-): PatchInspection["status"] {
-  if (additions === expectedAdditions && deletions === expectedDeletions) return "complete";
-  if (additions < expectedAdditions || deletions < expectedDeletions) return "truncated";
-
-  return "invalid";
 }
 
 function matchesListQuery(pr: PullRequestListItem, query: PullRequestListQuery): boolean {
-  if (query.state !== "all" && pr.state !== query.state) return false;
-  if (query.author !== undefined && pr.author?.name.toLowerCase() !== query.author.toLowerCase())
-    return false;
+  const stateDoesNotMatch = query.state !== "all" && pr.state !== query.state;
+  if (stateDoesNotMatch) return false;
+
+  const authorName = pr.author?.name.toLowerCase();
+  const queryAuthor = query.author?.toLowerCase();
+  const authorDoesNotMatch = query.author !== undefined && authorName !== queryAuthor;
+  if (authorDoesNotMatch) return false;
 
   return query.draft === undefined || pr.isDraft === query.draft;
 }
 
 function safeFailureDetails(error: unknown): string {
-  return error instanceof ScmError
-    ? `${error.code}: ${error.message}`
-    : "The provider request failed.";
+  if (!(error instanceof ScmError)) return "The provider request failed.";
+  return `${error.code}: ${error.message}`;
+}
+
+function reviewRequestFailure(reviewers: string[], error: unknown): ScmError {
+  const requestedNames = reviewers.join(", ");
+  const details = safeFailureDetails(error);
+  const message = `Review requests may have been applied for ${requestedNames}; inspect pending reviewers before retrying. ${details}`;
+
+  return new ScmError("SCM_PARTIAL_FAILURE", message);
 }
 
 function restFields(patch: PullRequestPatch) {
-  return {
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.body !== undefined ? { body: patch.body } : {}),
-    ...(patch.targetBranch !== undefined ? { base: patch.targetBranch } : {}),
-  };
+  const fields: { title?: string; body?: string; base?: string } = {};
+  if (patch.title !== undefined) fields.title = patch.title;
+  if (patch.body !== undefined) fields.body = patch.body;
+  if (patch.targetBranch !== undefined) fields.base = patch.targetBranch;
+
+  return fields;
 }
 
 async function changeDraftState(client: Octokit, nodeId: string | null, isDraft: boolean) {
   if (!nodeId) invalidResponse();
-  const mutation = isDraft
-    ? "mutation($pullRequestId: ID!) { convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }"
-    : "mutation($pullRequestId: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }";
+  let mutation: string;
+  if (isDraft) {
+    mutation =
+      "mutation($pullRequestId: ID!) { convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }";
+  } else {
+    mutation =
+      "mutation($pullRequestId: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }";
+  }
+
   await client.graphql(mutation, { pullRequestId: nodeId });
-}
-
-function assertPullRequestIdentity(
-  result: PullRequest,
-  ref: Extract<PullRequestRef, { provider: "github" }>,
-) {
-  if (
-    result.ref.provider !== "github" ||
-    result.ref.number !== ref.number ||
-    result.ref.owner.toLowerCase() !== ref.owner.toLowerCase() ||
-    result.ref.repository.toLowerCase() !== ref.repository.toLowerCase()
-  )
-    invalidResponse();
-}
-
-function normalizePullRequest(
-  data:
-    | (GitHubListItem & { merged: boolean })
-    | Awaited<ReturnType<Octokit["pulls"]["get"]>>["data"]
-    | Awaited<ReturnType<Octokit["pulls"]["create"]>>["data"]
-    | Awaited<ReturnType<Octokit["pulls"]["update"]>>["data"],
-  ref?: PullRequestRef,
-): PullRequest {
-  if (!data.title || !data.html_url || !data.head?.ref || !data.base?.ref) invalidResponse();
-  const state = data.merged
-    ? "merged"
-    : data.state === "open"
-      ? "open"
-      : data.state === "closed"
-        ? "closed"
-        : invalidResponse();
-
-  return {
-    ref: ref ?? {
-      provider: "github",
-      owner: data.base.repo?.owner?.login ?? "",
-      repository: data.base.repo?.name ?? "",
-      number: data.number,
-    },
-    url: data.html_url,
-    title: data.title,
-    body: data.body ?? "",
-    state,
-    isDraft: data.draft ?? false,
-    sourceBranch: data.head.ref,
-    targetBranch: data.base.ref,
-  };
 }
 
 function githubRepository(repository: RepositoryRef) {
@@ -1349,4 +1125,50 @@ function conclusion(value: string | null): PullRequestCheck["state"] {
     default:
       return "unknown";
   }
+}
+
+function normalizeCheckRun(
+  run: Awaited<ReturnType<Octokit["checks"]["listForRef"]>>["data"]["check_runs"][number],
+): PullRequestCheck {
+  let state: PullRequestCheck["state"];
+  if (run.status === "completed") {
+    state = conclusion(run.conclusion);
+  } else if (run.status === "in_progress") {
+    state = "running";
+  } else {
+    state = "pending";
+  }
+
+  const check: PullRequestCheck = {
+    id: `check:${run.id}`,
+    name: run.name,
+    state,
+  };
+  if (run.html_url) check.url = run.html_url;
+
+  return check;
+}
+
+function normalizeCommitStatus(
+  status: Awaited<ReturnType<Octokit["repos"]["listCommitStatusesForRef"]>>["data"][number],
+): PullRequestCheck {
+  let state: PullRequestCheck["state"];
+  if (status.state === "success") {
+    state = "passed";
+  } else if (status.state === "pending") {
+    state = "pending";
+  } else if (status.state === "failure" || status.state === "error") {
+    state = "failed";
+  } else {
+    state = "unknown";
+  }
+
+  const check: PullRequestCheck = {
+    id: `status:${status.id}`,
+    name: status.context,
+    state,
+  };
+  if (status.target_url) check.url = status.target_url;
+
+  return check;
 }
