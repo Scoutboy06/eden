@@ -1,12 +1,14 @@
+const initialState = process.env.PR_STATE;
+const initialStateIsMerged = initialState === "merged";
 const pr = {
   number: 12,
   node_id: "PR_node_12",
   html_url: "https://github.com/acme/app/pull/12",
   title: "Improve login",
   body: "Details",
-  state: process.env.PR_STATE === "closed" || process.env.PR_STATE === "merged" ? "closed" : "open",
-  merged: process.env.PR_STATE === "merged",
-  merged_at: process.env.PR_STATE === "merged" ? "2026-11-10T00:00:00Z" : null,
+  state: initialState === "closed" || initialStateIsMerged ? "closed" : "open",
+  merged: initialStateIsMerged,
+  merged_at: initialStateIsMerged ? "2026-11-10T00:00:00Z" : null,
   user: { id: 7, login: "alice" },
   draft: true,
   head: { ref: "topic", sha: "abc", repo: { owner: { login: "acme" }, name: "app" } },
@@ -19,9 +21,12 @@ let reviewRequests: {
 } = { users: [], teams: [] };
 
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-  const url = new URL(
-    typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
-  );
+  let requestUrl: string;
+  if (typeof input === "string") requestUrl = input;
+  else if (input instanceof URL) requestUrl = input.href;
+  else requestUrl = input.url;
+
+  const url = new URL(requestUrl);
   if (url.hostname !== "api.github.com") throw new Error("Unexpected request host");
   if (process.env.PR_FORBID_REQUESTS) throw new Error("SDK requests are forbidden for this test");
   if (init?.method === "POST") {
