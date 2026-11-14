@@ -10,7 +10,10 @@ import type {
   SandboxSummary,
 } from "../../modules/sandbox/provider";
 import type { ReadinessCheck, ReadinessResult } from "../../modules/sandbox/readiness";
-import { saveTerminal, type TerminalSaver } from "./terminal";
+import { attachDockerExec, attachDockerSandbox } from "./attach";
+
+export { attachDockerSandbox } from "./attach";
+export type { AttachDependencies } from "./attach";
 
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
 export type DockerCommandRunner = (
@@ -105,7 +108,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     const result = await (this.dependencies.run ?? runDockerCommand)(["ls", "--json"], {});
 
     if (result.exitCode !== 0) {
-      throw diagnoseFailure(undefined, result.exitCode, `${result.stdout}\n${result.stderr}`);
+      const diagnostics = `${result.stdout}\n${result.stderr}`;
+      throw diagnoseFailure(undefined, result.exitCode, diagnostics);
     }
 
     let sandboxes: unknown;
@@ -157,9 +161,11 @@ export class DockerSandboxProvider implements SandboxProvider {
       { sandboxName: input.name, operation: "exec", inheritIO: false },
     );
     if (result.exitCode === 125) {
+      const stderr = result.stderr.trim();
+      const details = result.stderr ? `\n\n${stderr}` : "";
       throw new SandboxError(
         "SANDBOX_PROVIDER_UNAVAILABLE",
-        `Docker Sandboxes could not execute the command in ${input.name}.${result.stderr ? `\n\n${result.stderr.trim()}` : ""}`,
+        `Docker Sandboxes could not execute the command in ${input.name}.${details}`,
       );
     }
     return result;
@@ -233,23 +239,30 @@ export class DockerSandboxProvider implements SandboxProvider {
     });
 
     const diagnostics = `${stdout}\n${stderr}`;
-    if (
+    const missingCredentialApproval =
       operation === "create" &&
       sandboxName !== undefined &&
       !inheritIO &&
-      credentialApprovalMissing(stderr)
-    ) {
-      const state =
-        exitCode === 0
-          ? `Sandbox ${sandboxName} was created and is left in place.`
-          : `Sandbox ${sandboxName} may already exist; check before retrying.`;
-      throw new SandboxError(
-        "SANDBOX_CREDENTIAL_APPROVAL_REQUIRED",
-        `Docker Sandboxes reported a credential without an approved binding. ${state} In a terminal, run sbx create --name <new-name> <agent> --kit <kit> using the same agent and kits to approve the credential.`,
-      );
+      credentialApprovalMissing(stderr);
+    if (missingCredentialApproval) {
+      throw credentialApprovalError(sandboxName, exitCode);
     }
     if (exitCode !== 0) throw diagnoseFailure(sandboxName, exitCode, diagnostics, operation);
   }
+}
+
+function credentialApprovalError(name: string, exitCode: number): SandboxError {
+  const state =
+    exitCode === 0
+      ? `Sandbox ${name} was created and is left in place.`
+      : `Sandbox ${name} may already exist; check before retrying.`;
+  const instructions =
+    "In a terminal, run sbx create --name <new-name> <agent> --kit <kit> using the same agent and kits to approve the credential.";
+
+  return new SandboxError(
+    "SANDBOX_CREDENTIAL_APPROVAL_REQUIRED",
+    `Docker Sandboxes reported a credential without an approved binding. ${state} ${instructions}`,
+  );
 }
 
 function credentialApprovalMissing(diagnostics: string): boolean {
@@ -260,13 +273,17 @@ function validateWorkspace(
   workspace: CreateSandboxInput["workspace"],
   mounts?: CreateSandboxInput["mounts"],
 ): void {
-  if ((!workspace || workspace.mode === "none") && Object.keys(mounts ?? {}).length) {
+  const hasMounts = Object.keys(mounts ?? {}).length > 0;
+  const workspaceMissingOrDisabled = !workspace || workspace.mode === "none";
+  if (workspaceMissingOrDisabled && hasMounts) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
       "Named mounts require a clone or host workspace.",
     );
   }
-  if (workspace && (workspace.mode === "none") !== (workspace.path === undefined)) {
+  const pathProvided = workspace?.path !== undefined;
+  const pathAllowed = workspace !== undefined && workspace.mode !== "none";
+  if (workspace && pathProvided !== pathAllowed) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
       "Workspace path must be supplied only for clone or host mode.",
@@ -396,18 +413,22 @@ function dockerCommandResult(
       break;
   }
 
-  throw new SandboxError(
-    "CANCELLED",
-    sandboxName === undefined
-      ? "Sandbox prerequisite check cancelled."
-      : operation === "exec"
-        ? `Execution in sandbox ${sandboxName} cancelled.`
-        : operation === "remove"
-          ? `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`
-          : operation === "stop"
-            ? `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`
-            : `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`,
-  );
+  throw new SandboxError("CANCELLED", cancellationMessage(sandboxName, operation));
+}
+
+function cancellationMessage(
+  sandboxName: string | undefined,
+  operation: "create" | "stop" | "remove" | "exec",
+): string {
+  if (sandboxName === undefined) return "Sandbox prerequisite check cancelled.";
+  if (operation === "exec") return `Execution in sandbox ${sandboxName} cancelled.`;
+  if (operation === "remove") {
+    return `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`;
+  }
+  if (operation === "stop") {
+    return `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`;
+  }
+  return `Sandbox creation cancelled. Sandbox ${sandboxName} may already exist; no cleanup was attempted.`;
 }
 
 function diagnoseFailure(
@@ -472,81 +493,4 @@ function diagnoseFailure(
     "SANDBOX_CREATE_FAILED",
     `Docker Sandboxes could not create sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
   );
-}
-
-export type AttachDependencies = {
-  saveTerminal?: TerminalSaver;
-  spawn?: (name: string) => ReturnType<typeof Bun.spawn>;
-  platform?: NodeJS.Platform;
-  isTerminal?: boolean;
-  killGraceMs?: number;
-};
-
-export async function attachDockerSandbox(
-  name: string,
-  dependencies: AttachDependencies = {},
-): Promise<number> {
-  const platform = dependencies.platform ?? process.platform;
-  const restoreTerminal =
-    (dependencies.isTerminal ?? process.stdin.isTTY)
-      ? (dependencies.saveTerminal ?? (() => saveTerminal(platform)))()
-      : undefined;
-
-  let child: ReturnType<typeof Bun.spawn>;
-
-  try {
-    child = (dependencies.spawn ?? spawnDockerAttach)(name);
-  } catch {
-    restoreTerminal?.();
-
-    throw new SandboxError(
-      "SANDBOX_PROVIDER_UNAVAILABLE",
-      "Could not start Docker Sandboxes. Install sbx and ensure it is available on PATH.",
-    );
-  }
-
-  let cancellationExitCode: number | undefined;
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
-  const cancel = (signal: "SIGINT" | "SIGTERM") => {
-    if (cancellationExitCode !== undefined) return;
-
-    cancellationExitCode = 128 + constants.signals[signal];
-    if (!(platform === "win32" && signal === "SIGINT")) child.kill(signal);
-    killTimer = setTimeout(() => child.kill("SIGKILL"), dependencies.killGraceMs ?? 1000);
-    killTimer.unref();
-  };
-  const interrupt = () => cancel("SIGINT");
-  const terminate = () => cancel("SIGTERM");
-  process.on("SIGINT", interrupt);
-  process.on("SIGTERM", terminate);
-
-  try {
-    const exitCode = await child.exited;
-
-    return cancellationExitCode ?? exitCode;
-  } finally {
-    clearTimeout(killTimer);
-    process.off("SIGINT", interrupt);
-    process.off("SIGTERM", terminate);
-    restoreTerminal?.();
-  }
-}
-
-function spawnDockerAttach(name: string): ReturnType<typeof Bun.spawn> {
-  return Bun.spawn(["sbx", "run", "--name", name], {
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-}
-
-function attachDockerExec(input: ExecSandboxInput): Promise<number> {
-  return attachDockerSandbox(input.name, {
-    spawn: () =>
-      Bun.spawn(["sbx", "exec", "-i", "--", input.name, ...input.argv], {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      }),
-  });
 }
