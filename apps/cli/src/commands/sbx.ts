@@ -5,6 +5,7 @@ import {
 } from "../../../../src/modules/sandbox/provider";
 import { SandboxError } from "../../../../src/modules/sandbox/errors";
 import { formatMessage } from "../../../../src/modules/cli/format";
+import { deriveSandboxName, findCheckout } from "../../../../src/modules/sandbox/sandbox-checkout";
 
 const create = defineCommand({
   name: "create",
@@ -15,7 +16,10 @@ const create = defineCommand({
       choices: sandboxProviderNames,
       description: "Sandbox provider (overrides profile; defaults to sandbox.default_provider)",
     },
-    name: { type: "string", required: true, description: "Sandbox name" },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to a name derived from the current checkout folder)",
+    },
     profile: {
       type: "string",
       description: "Sandbox profile (defaults to sandbox.default_profile)",
@@ -25,22 +29,25 @@ const create = defineCommand({
   },
 
   async run(ctx, { sandbox, output }) {
+    const name = ctx.values.name ?? deriveSandboxName(await findCheckout(process.cwd()));
+    if (ctx.values.name === undefined && !ctx.extensions.eden.json) {
+      process.stderr.write(`Using sandbox name ${name}, derived from the current checkout.
+`);
+    }
+
     const service = await sandbox({
       provider: ctx.values.provider,
       profile: ctx.values.profile,
       useDefaultProfile: true,
     });
-    const { warnings } = await service.create(
-      { name: ctx.values.name, image: ctx.values.image },
-      ctx.values.path,
-    );
+    const { warnings } = await service.create({ name, image: ctx.values.image }, ctx.values.path);
 
     output.write({
       data: {
-        sandbox: { provider: service.providerName, name: ctx.values.name },
+        sandbox: { provider: service.providerName, name },
         ...(warnings.length ? { warnings } : {}),
       },
-      human: () => formatCreatedSandbox(ctx.values.name, service.providerName),
+      human: () => formatCreatedSandbox(name, service.providerName),
     });
   },
 });

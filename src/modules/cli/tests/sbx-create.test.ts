@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
@@ -62,5 +64,42 @@ test("failed creation preflight never creates", async () => {
       ["ls", "--json"],
       ["policy", "ls", "--json"],
     ]);
+  });
+});
+
+test("create without a name derives it from the checkout folder and says so", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing", "my-project");
+    const checkout = join(directory, "My Project");
+    await mkdir(join(checkout, ".git"), { recursive: true });
+
+    const result = await runCliWith({ ...options, cwd: checkout }, "sbx", "create");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("Using sandbox name my-project, derived from the current");
+    expect(result.stdout).toContain("Created sandbox my-project");
+    expect((await sandboxCommands(directory)).at(-1)).toEqual([
+      "create",
+      "--name",
+      "my-project",
+      "--skills",
+      "off",
+      "shell",
+    ]);
+  });
+});
+
+test("create without a name outside a checkout fails before provider calls", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+
+    const result = await runCliWith(options, "sbx", "create", "--json");
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      code: "SANDBOX_INVALID_INPUT",
+      message: expect.stringContaining("--name"),
+    });
+    expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
   });
 });
