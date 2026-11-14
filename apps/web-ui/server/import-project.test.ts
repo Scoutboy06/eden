@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { importProject, removeProject } from "./import-project";
 
 test("imports existing repositories, canonicalizes worktrees, and preserves global settings", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "eden-import-"));
+  const temporary = realpathSync.native(await mkdtemp(join(tmpdir(), "eden-import-")));
   const previous = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = join(temporary, "config");
 
