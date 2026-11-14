@@ -1,6 +1,6 @@
 import { GitModule } from "../git/git.module";
 import { ScmError } from "./errors";
-import type { PullRequestRef, RepositoryRef } from "./provider";
+import type { PullRequestProvider, PullRequestRef, RepositoryRef } from "./provider";
 import {
   parsePrNumber,
   parsePullRequestUrl,
@@ -26,6 +26,34 @@ export interface GitContext {
 export type ResolvedLookup = {
   repository: RepositoryRef;
 } & ({ kind: "exact"; ref: PullRequestRef } | { kind: "branch"; sourceBranch: string });
+
+export async function resolvePullRequestTarget(
+  lookup: ResolvedLookup,
+  provider: PullRequestProvider,
+): Promise<{ provider: PullRequestProvider; ref: PullRequestRef }> {
+  if (lookup.kind === "exact") return { provider, ref: lookup.ref };
+
+  const candidates = await provider.findOpenPullRequests({
+    repository: lookup.repository,
+    sourceBranch: lookup.sourceBranch,
+  });
+  if (candidates.length === 0)
+    throw new ScmError("SCM_NOT_FOUND", "No open PR was found for the selected source branch.");
+
+  if (candidates.length > 1) {
+    const repositoryBaseUrl = repositoryUrl(lookup.repository);
+    const urls = candidates.map((ref) => {
+      const path = ref.provider === "github" ? `pull/${ref.number}` : `pullrequest/${ref.id}`;
+
+      return `${repositoryBaseUrl}/${path}`;
+    });
+    const candidateUrls = urls.join("\n");
+    const message = `Multiple open PRs match. Supply an exact PR number or URL:\n${candidateUrls}`;
+    throw new ScmError("SCM_AMBIGUOUS_PULL_REQUEST", message);
+  }
+
+  return { provider, ref: candidates[0]! };
+}
 
 export async function resolvePullRequestLookup(
   input: PullRequestInput,
