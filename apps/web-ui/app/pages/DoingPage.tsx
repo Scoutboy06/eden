@@ -258,23 +258,26 @@ function Session({ tab, task }: { tab: SessionTab; task: Task }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
   const terminal = tab.kind === "terminal";
+  const sessionTitle = terminal ? "Terminal" : agentHarnesses[tab.harness!].title;
+  const terminalWorktree = task.worktree?.name ?? task.key;
+  const sessionDescription = terminal
+    ? `Terminal preview for ${terminalWorktree}. Commands entered here are not executed.`
+    : `Agent session for ${task.title}. Messages stay in this local preview; no agent is running.`;
+  const inputLabel = terminal ? "Preview command" : "Message agent";
+  const inputPlaceholder = terminal ? "Enter a preview command…" : "Message agent…";
+  const submitLabel = terminal ? "Enter" : "Send";
+  const sessionClassName = terminal
+    ? "flex min-h-full flex-col bg-muted/15 font-mono"
+    : "mx-auto flex min-h-full max-w-3xl flex-col";
 
   return (
-    <div
-      className={`flex min-h-full flex-col ${terminal ? "bg-muted/15 font-mono" : "mx-auto max-w-3xl"}`}
-    >
+    <div className={sessionClassName}>
       <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-3 text-xs">
-        <span className="font-medium">
-          {terminal ? "Terminal" : agentHarnesses[tab.harness!].title}
-        </span>
+        <span className="font-medium">{sessionTitle}</span>
         <span className="text-muted-foreground">Preview · not connected</span>
       </div>
       <div className="flex-1 space-y-4 p-6 text-sm">
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          {terminal
-            ? `Terminal preview for ${task.worktree?.name ?? task.key}. Commands entered here are not executed.`
-            : `Agent session for ${task.title}. Messages stay in this local preview; no agent is running.`}
-        </p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{sessionDescription}</p>
         {messages.map((message, index) => (
           <div
             key={index}
@@ -305,15 +308,15 @@ function Session({ tab, task }: { tab: SessionTab; task: Task }) {
             </span>
           ) : null}
           <input
-            aria-label={terminal ? "Preview command" : "Message agent"}
+            aria-label={inputLabel}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={terminal ? "Enter a preview command…" : "Message agent…"}
+            placeholder={inputPlaceholder}
             className="w-full bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           />
         </label>
         <Button type="submit" size="sm" variant="secondary" disabled={!draft.trim()}>
-          {terminal ? "Enter" : "Send"}
+          {submitLabel}
         </Button>
       </form>
     </div>

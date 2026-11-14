@@ -22,14 +22,22 @@ let current = readStoredSettings();
 function readStoredSettings(): ThemeSettings {
   try {
     const stored = JSON.parse(localStorage.getItem(storageKey) ?? "{}") as Partial<ThemeSettings>;
+    const mode = isThemeMode(stored.mode) ? stored.mode : defaults.mode;
+    const lightTheme = themeCatalog.find(stored.lightTheme ?? "")?.id ?? defaults.lightTheme;
+    const darkTheme = themeCatalog.find(stored.darkTheme ?? "")?.id ?? defaults.darkTheme;
+
     return {
-      mode: ["system", "light", "dark"].includes(stored.mode ?? "") ? stored.mode! : defaults.mode,
-      lightTheme: themeCatalog.find(stored.lightTheme ?? "")?.id ?? defaults.lightTheme,
-      darkTheme: themeCatalog.find(stored.darkTheme ?? "")?.id ?? defaults.darkTheme,
+      mode,
+      lightTheme,
+      darkTheme,
     };
   } catch {
     return defaults;
   }
+}
+
+function isThemeMode(value: string | undefined): value is ThemeMode {
+  return value === "system" || value === "light" || value === "dark";
 }
 
 export function updateThemeSettings(patch: Partial<ThemeSettings>): void {

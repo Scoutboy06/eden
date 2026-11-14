@@ -18,17 +18,22 @@ export function TaskCard({
   const disabled = task.worktree === null;
   const taskHoverClassName =
     !disabled && !selected && !agentHovered ? "hover:bg-muted/50 dark:hover:bg-background/50" : "";
-  const agentsLabel = task.runningAgents.length
-    ? `${task.runningAgents.length} running ${task.runningAgents.length === 1 ? "agent" : "agents"}: ${task.runningAgents.map((agent) => agentHarnesses[agent.harness].title).join(", ")}`
-    : "No running agents";
+  const runningAgentCount = task.runningAgents.length;
+  const agentNoun = runningAgentCount === 1 ? "agent" : "agents";
+  const runningAgentNames = task.runningAgents
+    .map((agent) => agentHarnesses[agent.harness].title)
+    .join(", ");
+  const agentsLabel =
+    runningAgentCount > 0
+      ? `${runningAgentCount} running ${agentNoun}: ${runningAgentNames}`
+      : "No running agents";
   const pullRequestLabel = task.pullRequest
     ? formatPullRequestReference(task.pullRequest.provider, task.pullRequest.number)
     : null;
-  const stateClassName = disabled
-    ? "border-transparent"
-    : selected
-      ? "border-solid border-muted-foreground/40 bg-sidebar-accent/40"
-      : "border-transparent";
+  let stateClassName = "border-transparent";
+  if (!disabled && selected) {
+    stateClassName = "border-solid border-muted-foreground/40 bg-sidebar-accent/40";
+  }
 
   return (
     <div

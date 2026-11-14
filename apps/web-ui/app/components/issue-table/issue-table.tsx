@@ -108,13 +108,19 @@ export function IssueTable({
           <tr>
             {columns.map((column) => {
               const active = column.key !== null && sort?.key === column.key;
+              let sortOrder: "ascending" | "descending" | undefined;
+              let sortIcon = ArrowUpDownIcon;
+
+              if (active && sort) {
+                sortOrder = sort.direction === "asc" ? "ascending" : "descending";
+                sortIcon = sort.direction === "asc" ? ArrowUp01Icon : ArrowDown01Icon;
+              }
+
               return (
                 <th
                   key={column.label}
                   scope="col"
-                  aria-sort={
-                    active ? (sort.direction === "asc" ? "ascending" : "descending") : undefined
-                  }
+                  aria-sort={sortOrder}
                   className={cn("px-3 py-2 text-left font-medium", column.className)}
                 >
                   {column.key === null ? (
@@ -130,13 +136,7 @@ export function IssueTable({
                     >
                       {column.label}
                       <HugeiconsIcon
-                        icon={
-                          !active
-                            ? ArrowUpDownIcon
-                            : sort.direction === "asc"
-                              ? ArrowUp01Icon
-                              : ArrowDown01Icon
-                        }
+                        icon={sortIcon}
                         strokeWidth={2}
                         className={cn("size-3.5", !active && "opacity-50")}
                       />
