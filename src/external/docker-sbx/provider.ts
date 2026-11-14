@@ -24,7 +24,7 @@ export type DockerCommandRunner = (
     env?: Record<string, string>;
     onOutput?: (text: string) => void;
     sandboxName?: string;
-    operation?: "create" | "stop" | "remove" | "exec";
+    operation?: "create" | "start" | "stop" | "remove" | "exec";
     inheritIO?: boolean;
   },
 ) => Promise<DockerCommandResult>;
@@ -184,6 +184,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     return { host, command: ["ssh", host], setupCommand: ["sbx", "setup", "ssh"] };
   }
 
+  async start(name: string): Promise<void> {
+    await this.execute(["run", "--detach", "--name", name], name, "start");
+  }
+
   async stop(name: string): Promise<void> {
     await this.execute(["stop", "--", name], name, "stop");
   }
@@ -238,7 +242,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   private async execute(
     args: string[],
     sandboxName?: string,
-    operation: "create" | "stop" | "remove" = "create",
+    operation: "create" | "start" | "stop" | "remove" = "create",
     env?: Record<string, string>,
     inheritIO = false,
   ): Promise<void> {
@@ -412,7 +416,7 @@ async function runDockerCommand(
 function dockerCommandResult(
   result: RunResult,
   sandboxName?: string,
-  operation: "create" | "stop" | "remove" | "exec" = "create",
+  operation: "create" | "start" | "stop" | "remove" | "exec" = "create",
 ): DockerCommandResult {
   switch (result.outcome) {
     case "exited":
@@ -433,12 +437,15 @@ function dockerCommandResult(
 
 function cancellationMessage(
   sandboxName: string | undefined,
-  operation: "create" | "stop" | "remove" | "exec",
+  operation: "create" | "start" | "stop" | "remove" | "exec",
 ): string {
   if (sandboxName === undefined) return "Sandbox prerequisite check cancelled.";
   if (operation === "exec") return `Execution in sandbox ${sandboxName} cancelled.`;
   if (operation === "remove") {
     return `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`;
+  }
+  if (operation === "start") {
+    return `Starting sandbox ${sandboxName} cancelled. It may already be running; no stop or cleanup was attempted.`;
   }
   if (operation === "stop") {
     return `Stopping sandbox ${sandboxName} cancelled. It may already be stopped; no removal or cleanup was attempted.`;
@@ -450,7 +457,7 @@ function diagnoseFailure(
   name: string | undefined,
   exitCode: number,
   diagnostics: string,
-  operation: "create" | "stop" | "remove" = "create",
+  operation: "create" | "start" | "stop" | "remove" = "create",
 ): SandboxError {
   if (/unknown (?:flag|option):?\s*["']?--json\b/i.test(diagnostics)) {
     return new SandboxError(
@@ -494,6 +501,13 @@ function diagnoseFailure(
     return new SandboxError(
       "SANDBOX_REMOVE_FAILED",
       `Docker Sandboxes could not remove sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
+    );
+  }
+
+  if (operation === "start") {
+    return new SandboxError(
+      "SANDBOX_START_FAILED",
+      `Docker Sandboxes could not start sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
     );
   }
 

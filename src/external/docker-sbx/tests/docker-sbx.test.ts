@@ -360,3 +360,26 @@ test.each([
   });
   expect(commands).toEqual([]);
 });
+
+test("start runs the sandbox detached by literal name", async () => {
+  const commands: string[][] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args) => {
+      commands.push(args);
+      return success;
+    },
+  });
+
+  await provider.start("example");
+
+  expect(commands).toEqual([["run", "--detach", "--name", "example"]]);
+});
+
+test("start classifies provider failure", async () => {
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async () => ({ exitCode: 7, stdout: "", stderr: "unexpected start failure" }),
+  });
+
+  await expect(provider.start("example")).rejects.toMatchObject({ code: "SANDBOX_START_FAILED" });
+  await expect(provider.start("example")).rejects.toThrow("unexpected start failure");
+});

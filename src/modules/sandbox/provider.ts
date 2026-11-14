@@ -42,6 +42,7 @@ export interface SandboxProvider {
   run(name: string): Promise<number>;
   exec?(input: ExecSandboxInput): Promise<ExecSandboxResult>;
   sshAccess?(name: string): SshAccess;
+  start?(name: string): Promise<void>;
   stop(name: string): Promise<void>;
   remove?(name: string, force: boolean): Promise<void>;
 }

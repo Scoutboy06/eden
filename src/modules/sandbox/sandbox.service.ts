@@ -128,6 +128,32 @@ export class SandboxService {
     return { ...this.provider.sshAccess(name), status: sandbox.status };
   }
 
+  async start(name: string): Promise<{ started: boolean }> {
+    validateSandboxInput(name);
+    const sandbox = await this.requireSandbox(name);
+    const provider = this.provider;
+    if (!provider.start) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Starting sandboxes is unavailable for this provider.",
+      );
+    }
+
+    const started = sandbox.status !== "running";
+    await this.execution.mutate(
+      {
+        type: "sandbox.start",
+        description: `Start sandbox ${name} using ${provider.name}`,
+        input: { provider: provider.name, name },
+      },
+      async () => {
+        if (started) await provider.start!(name);
+      },
+    );
+
+    return { started };
+  }
+
   async stop(name: string): Promise<void> {
     validateSandboxInput(name);
     const sandbox = await this.requireSandbox(name);

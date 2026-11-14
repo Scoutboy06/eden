@@ -319,3 +319,65 @@ test("ssh rejects an empty name before listing", async () => {
     code: "SANDBOX_INVALID_INPUT",
   });
 });
+
+test.each([
+  ["running", false, false],
+  ["stopped", false, true],
+  ["stopped", true, false],
+] as const)("start handles status=%s, dryRun=%s", async (status, dryRun, shouldStart) => {
+  const execution = createExecution({ dryRun });
+  const calls: string[] = [];
+  const provider: SandboxProvider = {
+    name: "docker-sbx",
+    readinessChecks: () => [],
+    preflight: async () => {},
+    list: async () => [{ provider: "docker-sbx", name: "example", status }],
+    run: async () => 0,
+    create: async () => {},
+    start: async (name) => {
+      calls.push(name);
+    },
+    stop: async () => {},
+  };
+
+  const result = await new SandboxService(
+    execution,
+    provider,
+    undefined,
+    undefined,
+    createIsolatedHooks(execution),
+  ).start("example");
+
+  expect(calls).toEqual(shouldStart ? ["example"] : []);
+  expect(result).toEqual({ started: status !== "running" });
+  expect(execution.operations).toEqual([
+    {
+      type: "sandbox.start",
+      description: "Start sandbox example using docker-sbx",
+      input: { provider: "docker-sbx", name: "example" },
+    },
+  ]);
+});
+
+test("start reports a provider without start support", async () => {
+  const execution = createExecution({ dryRun: false });
+  const provider: SandboxProvider = {
+    name: "docker-sbx",
+    readinessChecks: () => [],
+    preflight: async () => {},
+    list: async () => [{ provider: "docker-sbx", name: "example", status: "stopped" }],
+    run: async () => 0,
+    create: async () => {},
+    stop: async () => {},
+  };
+
+  await expect(
+    new SandboxService(
+      execution,
+      provider,
+      undefined,
+      undefined,
+      createIsolatedHooks(execution),
+    ).start("example"),
+  ).rejects.toMatchObject({ code: "SANDBOX_PROVIDER_UNAVAILABLE" });
+});
