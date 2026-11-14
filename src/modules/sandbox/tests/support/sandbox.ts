@@ -10,6 +10,8 @@ import { HookService } from "../../../hook/hook.service";
 import { createSandboxServiceFactory } from "../../sandbox.service";
 import type { SandboxProviderName } from "../../provider";
 import { FileSandboxProfileRegistry, type SandboxProfileRegistry } from "../../profile-registry";
+import type { SandboxSnapshotStore } from "../../snapshot-store";
+import type { TransferSandboxInput, TransferSandboxResult } from "../../provider";
 
 export async function createSandboxHarness(options: {
   directory: string;
@@ -20,6 +22,8 @@ export async function createSandboxHarness(options: {
   useDefaultProfile?: boolean;
   run?: DockerCommandRunner;
   registry?: SandboxProfileRegistry;
+  snapshotStore?: SandboxSnapshotStore;
+  transfer?: (input: TransferSandboxInput) => Promise<TransferSandboxResult>;
 }) {
   const execution = createExecution({ dryRun: options.dryRun ?? false });
   const commands: { args: string[]; options: Parameters<DockerCommandRunner>[1] }[] = [];
@@ -35,6 +39,7 @@ export async function createSandboxHarness(options: {
         ? options.run(args, runOptions)
         : { exitCode: 0, stdout: args[0] === "ls" ? "[]" : "", stderr: "" };
     },
+    transfer: options.transfer,
   });
   const service = await createSandboxServiceFactory(
     execution,
@@ -45,6 +50,7 @@ export async function createSandboxHarness(options: {
     new HookService(execution, { directory: join(options.directory, "hooks") }),
     () => provider,
     options.registry ?? new FileSandboxProfileRegistry(join(options.directory, "profiles.json")),
+    options.snapshotStore,
   )({
     provider: options.provider,
     profile: options.profile,

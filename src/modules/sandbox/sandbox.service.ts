@@ -11,6 +11,18 @@ import {
   type SandboxProfileRecord,
   type SandboxProfileRegistry,
 } from "./profile-registry";
+import {
+  requireSnapshotSettings,
+  restoreSandbox,
+  selectSnapshot,
+  snapshotSandbox,
+  type SnapshotResult,
+} from "./sandbox-snapshot";
+import {
+  FileSandboxSnapshotStore,
+  type SandboxSnapshot,
+  type SandboxSnapshotStore,
+} from "./snapshot-store";
 import { findCheckout } from "./sandbox-checkout";
 import { inferSandbox, type InferredSandbox } from "./sandbox-inference";
 import {
@@ -48,6 +60,7 @@ export class SandboxService {
     private readonly hooks: HookService = new HookService(execution),
     private readonly onHook?: () => void,
     private readonly registry: SandboxProfileRegistry = new FileSandboxProfileRegistry(),
+    private readonly snapshotStore: SandboxSnapshotStore = new FileSandboxSnapshotStore(),
   ) {}
 
   async list(): Promise<SandboxSummary[]> {
@@ -70,6 +83,38 @@ export class SandboxService {
     const sandboxes = await this.list();
 
     return sandboxes.find((sandbox) => sandbox.name === name)?.profile;
+  }
+
+  async snapshots(name: string): Promise<SandboxSnapshot[]> {
+    validateSandboxInput(name);
+
+    return this.snapshotStore.list(this.provider.name, name);
+  }
+
+  async latestSnapshot(name: string): Promise<SandboxSnapshot | undefined> {
+    return (await this.snapshots(name))[0];
+  }
+
+  async snapshot(name: string): Promise<SnapshotResult | undefined> {
+    validateSandboxInput(name);
+    const settings = requireSnapshotSettings(this.profile);
+    this.requireTransfer();
+    await this.requireSandbox(name);
+
+    return snapshotSandbox(this.snapshotContext(), name, settings);
+  }
+
+  async restore(
+    name: string,
+    requested: string = "latest",
+  ): Promise<{ snapshot: SandboxSnapshot }> {
+    validateSandboxInput(name);
+    this.requireTransfer();
+    await this.requireSandbox(name);
+    const snapshot = selectSnapshot(await this.snapshots(name), name, requested);
+    await restoreSandbox(this.snapshotContext(), name, snapshot);
+
+    return { snapshot };
   }
 
   async infer(cwd: string): Promise<InferredSandbox> {
@@ -329,6 +374,24 @@ export class SandboxService {
     return { started };
   }
 
+  private requireTransfer(): void {
+    if (this.provider.transfer && this.provider.exec) return;
+
+    throw new SandboxError(
+      "SANDBOX_PROVIDER_UNAVAILABLE",
+      "Sandbox snapshots are unavailable for this provider.",
+    );
+  }
+
+  private snapshotContext() {
+    return {
+      execution: this.execution,
+      provider: this.provider,
+      store: this.snapshotStore,
+      onWarning: this.onWarning,
+    };
+  }
+
   private async requireSandbox(name: string): Promise<SandboxSummary> {
     const sandboxes = await this.provider.list();
     const sandbox = sandboxes.find((entry) => entry.name === name);
@@ -482,6 +545,7 @@ export function createSandboxServiceFactory(
   hooks: HookService = new HookService(execution),
   providerFactory: typeof createSandboxProvider = createSandboxProvider,
   registry: SandboxProfileRegistry = new FileSandboxProfileRegistry(),
+  snapshotStore: SandboxSnapshotStore = new FileSandboxSnapshotStore(),
 ): (selection?: SandboxSelection) => Promise<SandboxService> {
   return async (selection = {}) => {
     const { provider: providerName, profile: profileName, useDefaultProfile } = selection;
@@ -528,6 +592,7 @@ export function createSandboxServiceFactory(
       hooks,
       presentation.onHook,
       registry,
+      snapshotStore,
     );
   };
 }
