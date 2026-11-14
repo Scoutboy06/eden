@@ -7,7 +7,8 @@ import type { Execution } from "../execution";
 import type { SandboxProfile } from "../config/schema";
 import { SandboxError } from "./errors";
 import { assessTemplateSandboxes, canonicalReference } from "./template-sandbox-status";
-import { registryDigest, templateCommand } from "../../external/docker-sbx/template-commands";
+import { prepareRegistryPull, resolveRegistryDigest } from "./registry-digest";
+import { templateCommand } from "../../external/docker-sbx/template-commands";
 
 export type TemplateEntry = { repository: string; tag: string; id: string };
 export type Receipt = {
@@ -31,7 +32,7 @@ export class TemplateUpdateService {
       throw failure(`Sandbox profile ${JSON.stringify(name)} does not specify a template.`);
     const { repository, tag } = parseReference(reference);
     const platform = sandboxPlatform();
-    const digest = await registryDigest(reference);
+    const digest = await resolveRegistryDigest(reference, profile.registry_auth);
     const entries = parseTemplates(await templateCommand("sbx", ["template", "ls", "--json"]));
     const current = findTemplate(entries, repository, tag);
     const paths = cachePaths(reference, digest, platform);
@@ -73,6 +74,7 @@ export class TemplateUpdateService {
         let archiveHash = receipt?.archiveHash;
         if (!useArchive) {
           const immutable = `${repository}@${digest}`;
+          await prepareRegistryPull(reference, profile.registry_auth);
           await templateCommand("docker", ["image", "pull", "--platform", platform, immutable]);
           const digests = parseJson(
             await templateCommand("docker", [

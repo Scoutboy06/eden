@@ -132,6 +132,7 @@ const profileSchema = v.pipe(
       ),
     ),
     template: v.optional(nonEmptyString),
+    registry_auth: v.optional(v.picklist(["auto", "azure", "docker"])),
     pull: v.optional(v.picklist(["always", "missing", "never"])),
     disk: v.optional(
       v.strictObject({ root: v.optional(nonEmptyString), docker: v.optional(nonEmptyString) }),
