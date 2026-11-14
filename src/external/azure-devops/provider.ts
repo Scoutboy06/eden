@@ -4,13 +4,9 @@ import { GitApi } from "azure-devops-node-api/GitApi";
 import { PolicyApi } from "azure-devops-node-api/PolicyApi";
 import { getBearerHandler, getPersonalAccessTokenHandler } from "azure-devops-node-api";
 import {
-  GitStatusState,
-  CommentThreadStatus,
-  CommentType,
   PullRequestStatus,
   type GitPullRequest,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
-import { PolicyEvaluationStatus } from "azure-devops-node-api/interfaces/PolicyInterfaces";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
 import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
@@ -26,6 +22,16 @@ import type {
   PullRequestReview,
   RepositoryRef,
 } from "../../modules/pull-requests/provider";
+import {
+  assertKnownIdentity,
+  context,
+  normalizeAzurePullRequest,
+  normalizeChecks,
+  normalizeComments,
+  normalizeReviewState,
+  sameAzureIdentity,
+  isSupportedPolicy,
+} from "./normalize";
 
 export type AzureGitClient = Pick<
   IGitApi,
@@ -199,36 +205,7 @@ export class AzureDevOpsApiProvider
       const { repository, project } = context(pr);
       const threads = await this.git.getThreads(repository, id, project);
 
-      return threads.flatMap((thread) => {
-        if (thread.isDeleted) return [];
-
-        return (thread.comments ?? [])
-          .filter((comment) => !comment.isDeleted && comment.commentType === CommentType.Text)
-          .map((comment): PullRequestComment => ({
-            id: `${thread.id ?? invalidResponse()}:${comment.id ?? invalidResponse()}`,
-            body: comment.content ?? "",
-            author: comment.author
-              ? {
-                  id: comment.author.id ?? invalidResponse(),
-                  name:
-                    comment.author.displayName ?? comment.author.uniqueName ?? invalidResponse(),
-                }
-              : null,
-            ...(comment.publishedDate ? { createdAt: comment.publishedDate.toISOString() } : {}),
-            ...(thread.threadContext?.filePath ? { path: thread.threadContext.filePath } : {}),
-            ...(thread.threadContext?.rightFileStart?.line != null
-              ? { line: thread.threadContext.rightFileStart.line }
-              : {}),
-            threadId: String(thread.id),
-            ...(thread.status != null
-              ? {
-                  isResolved:
-                    thread.status !== CommentThreadStatus.Active &&
-                    thread.status !== CommentThreadStatus.Unknown,
-                }
-              : {}),
-          }));
-      });
+      return normalizeComments(threads);
     });
   }
 
@@ -286,36 +263,7 @@ export class AzureDevOpsApiProvider
         options.requiredOnly ? [] : this.git.getPullRequestStatuses(repository, id, project),
         this.checkPolicies(projectId, id),
       ]);
-      const latest = new Map<string, (typeof statuses)[number]>();
-      for (const status of statuses) {
-        const key = JSON.stringify([status.context?.genre, status.context?.name]);
-        const previous = latest.get(key);
-        if (!previous || (status.id ?? 0) > (previous.id ?? 0)) latest.set(key, status);
-      }
-
-      return [
-        ...[...latest.values()].map((status): PullRequestCheck => ({
-          id: `status:${status.id ?? invalidResponse()}`,
-          name: status.context?.name ?? invalidResponse(),
-          ...(status.targetUrl ? { url: status.targetUrl } : {}),
-          state: statusStates[status.state ?? -1] ?? "unknown",
-        })),
-        ...evaluations
-          .filter((evaluation) =>
-            options.requiredOnly
-              ? evaluation.configuration?.isBlocking === true &&
-                evaluation.configuration.isEnabled === true
-              : evaluation.configuration?.type?.id?.toLowerCase() === buildPolicyType,
-          )
-          .map((evaluation): PullRequestCheck => ({
-            id: `${evaluation.configuration?.type?.id?.toLowerCase() === buildPolicyType ? "build" : "policy"}:${evaluation.evaluationId ?? invalidResponse()}`,
-            name:
-              evaluation.configuration?.settings?.displayName ??
-              evaluation.configuration?.settings?.statusName ??
-              "Build validation",
-            state: policyStates[evaluation.status ?? -1] ?? "unknown",
-          })),
-      ];
+      return normalizeChecks(statuses, evaluations, options.requiredOnly);
     });
   }
 
@@ -331,7 +279,7 @@ export class AzureDevOpsApiProvider
           id: reviewer.id ?? invalidResponse(),
           name: reviewer.displayName ?? reviewer.uniqueName ?? invalidResponse(),
         },
-        state: reviewStates[reviewer.vote ?? 0] ?? "unknown",
+        state: normalizeReviewState(reviewer.vote),
       }));
     });
   }
@@ -346,13 +294,7 @@ export class AzureDevOpsApiProvider
         100,
         skip,
       );
-      result.push(
-        ...page.filter((evaluation) =>
-          [buildPolicyType, statusPolicyType].includes(
-            evaluation.configuration?.type?.id?.toLowerCase() ?? "",
-          ),
-        ),
-      );
+      result.push(...page.filter(isSupportedPolicy));
       if (page.length < 100) return result;
     }
   }
@@ -378,41 +320,6 @@ export function createAzureDevOpsApiProvider(
   );
 }
 
-const statusStates: Record<number, PullRequestCheck["state"]> = {
-  [GitStatusState.Succeeded]: "passed",
-  [GitStatusState.Pending]: "pending",
-  [GitStatusState.Failed]: "failed",
-  [GitStatusState.Error]: "failed",
-  [GitStatusState.NotApplicable]: "skipped",
-};
-
-const buildPolicyType = "0609b952-1397-4640-95ec-e00a01b2c241";
-const statusPolicyType = "c2a1889d-b943-4856-b76f-9e46bb6b0df2";
-
-const policyStates: Record<number, PullRequestCheck["state"]> = {
-  [PolicyEvaluationStatus.Approved]: "passed",
-  [PolicyEvaluationStatus.Rejected]: "failed",
-  [PolicyEvaluationStatus.Broken]: "failed",
-  [PolicyEvaluationStatus.Queued]: "pending",
-  [PolicyEvaluationStatus.Running]: "running",
-  [PolicyEvaluationStatus.NotApplicable]: "skipped",
-};
-
-const reviewStates: Record<number, PullRequestReview["state"]> = {
-  10: "approved",
-  5: "approved-with-suggestions",
-  0: "pending",
-  [-5]: "changes-requested",
-  [-10]: "rejected",
-};
-
-function context(pr: GitPullRequest): { repository: string; project: string } {
-  return {
-    repository: pr.repository?.id ?? invalidResponse(),
-    project: pr.repository?.project?.name ?? invalidResponse(),
-  };
-}
-
 function azureRepository(repository: RepositoryRef, organizationUrl: string) {
   if (
     repository.provider !== "azure-devops" ||
@@ -425,49 +332,6 @@ function azureRepository(repository: RepositoryRef, organizationUrl: string) {
   return repository;
 }
 
-function normalizeAzurePullRequest(
-  pr: GitPullRequest,
-  organizationUrl: string,
-  ref: PullRequestRef,
-  identity: { repository: string; project: string },
-  includeRaw = false,
-): PullRequest {
-  const state =
-    pr.status === PullRequestStatus.Active
-      ? "open"
-      : pr.status === PullRequestStatus.Abandoned
-        ? "closed"
-        : pr.status === PullRequestStatus.Completed
-          ? "merged"
-          : invalidResponse();
-  if (!pr.title || !pr.sourceRefName || !pr.targetRefName || !pr.pullRequestId) invalidResponse();
-  return {
-    ref,
-    url: `${organizationUrl}/${encodeURIComponent(identity.project)}/_git/${encodeURIComponent(identity.repository)}/pullrequest/${pr.pullRequestId}`,
-    title: pr.title,
-    body: pr.description ?? "",
-    state,
-    isDraft: pr.isDraft ?? false,
-    sourceBranch: shortBranch(pr.sourceRefName),
-    targetBranch: shortBranch(pr.targetRefName),
-    ...(includeRaw ? { raw: pr } : {}),
-  };
-}
-
-function assertKnownIdentity(
-  pr: GitPullRequest,
-  ref: Extract<PullRequestRef, { provider: "azure-devops" }>,
-  repository: string,
-  project: string,
-) {
-  if (
-    pr.pullRequestId !== ref.id ||
-    !sameAzureIdentity(pr.repository?.id, repository) ||
-    !sameAzureIdentity(pr.repository?.project?.name, project)
-  )
-    invalidResponse();
-}
-
 function fullBranch(branch: string) {
   return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
 }
@@ -477,12 +341,4 @@ function possiblyApplied(error: unknown, message: string): ScmError {
     "SCM_PARTIAL_FAILURE",
     `${message} ${error instanceof ScmError ? `${error.code}: ${error.message}` : "The provider returned an invalid response."}`,
   );
-}
-
-function sameAzureIdentity(left: string | undefined, right: string | undefined): boolean {
-  return left !== undefined && right !== undefined && left.toLowerCase() === right.toLowerCase();
-}
-
-function shortBranch(ref: string): string {
-  return ref.replace(/^refs\/heads\//, "");
 }
