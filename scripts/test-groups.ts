@@ -48,6 +48,7 @@ function isIntegration(file: string): boolean {
     file === "src/external/beads/tests/process.test.ts" ||
     file === "src/modules/pull-requests/tests/resolve.test.ts" ||
     file === "src/modules/config/tests/environment.test.ts" ||
-    file === "src/external/docker-sbx/tests/docker-sbx-lifecycle.test.ts"
+    file === "src/external/docker-sbx/tests/docker-sbx-lifecycle.test.ts" ||
+    file === "src/external/docker-sbx/tests/docker-sbx-transfer.test.ts"
   );
 }

@@ -9,9 +9,12 @@ import type {
   SandboxProvider,
   SandboxSummary,
   SshAccess,
+  TransferSandboxInput,
+  TransferSandboxResult,
 } from "../../modules/sandbox/provider";
 import type { ReadinessCheck, ReadinessResult } from "../../modules/sandbox/readiness";
 import { attachDockerExec, attachDockerSandbox } from "./attach";
+import { transferDockerFiles } from "./transfer";
 
 export { attachDockerSandbox } from "./attach";
 export type { AttachDependencies } from "./attach";
@@ -38,6 +41,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       run?: DockerCommandRunner;
       attach?: (name: string) => Promise<number>;
       attachExec?: (input: ExecSandboxInput) => Promise<number>;
+      transfer?: (input: TransferSandboxInput) => Promise<TransferSandboxResult>;
       isInstalled?: () => boolean;
       interactiveCreate?: boolean;
     } = {},
@@ -182,6 +186,10 @@ export class DockerSandboxProvider implements SandboxProvider {
       );
     }
     return result;
+  }
+
+  transfer(input: TransferSandboxInput): Promise<TransferSandboxResult> {
+    return (this.dependencies.transfer ?? transferDockerFiles)(input);
   }
 
   sshAccess(name: string): SshAccess {

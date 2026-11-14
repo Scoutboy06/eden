@@ -35,6 +35,13 @@ export type ExecSandboxInput = {
   tty?: boolean;
 };
 export type ExecSandboxResult = { exitCode: number; stdout: string; stderr: string };
+export type TransferSandboxInput = {
+  name: string;
+  argv: string[];
+  stdinFile?: string;
+  stdoutFile?: string;
+};
+export type TransferSandboxResult = { exitCode: number; stderr: string };
 export type SshAccess = { host: string; command: string[]; setupCommand: string[] };
 
 export interface SandboxProvider {
@@ -47,6 +54,7 @@ export interface SandboxProvider {
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
   exec?(input: ExecSandboxInput): Promise<ExecSandboxResult>;
+  transfer?(input: TransferSandboxInput): Promise<TransferSandboxResult>;
   sshAccess?(name: string): SshAccess;
   start?(name: string): Promise<void>;
   stop(name: string): Promise<void>;
