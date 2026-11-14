@@ -3,11 +3,14 @@ import { discoverTests, partitionTests } from "../test-groups";
 
 test("fast and integration partition every discovered test exactly once", async () => {
   const files = await discoverTests(new URL("../../", import.meta.url));
+
   const { fast, integration, full } = partitionTests(files);
+  const partitionedFiles = [...fast, ...integration].sort();
+  const uniqueFileCount = new Set(full).size;
 
   expect(full).toEqual(files);
-  expect([...fast, ...integration].sort()).toEqual(full);
-  expect(new Set(full).size).toBe(full.length);
+  expect(partitionedFiles).toEqual(full);
+  expect(uniqueFileCount).toBe(full.length);
   expect(fast.length).toBeGreaterThan(0);
   expect(integration.length).toBeGreaterThan(0);
 });
@@ -23,7 +26,10 @@ test("real CLI, Git, environment and lifecycle suites stay outside the fast loop
     "src/external/docker-sbx/tests/docker-sbx-lifecycle.test.ts",
   ];
 
-  expect(partitionTests(files)).toEqual({ fast: [], integration: files.sort(), full: files });
+  const groups = partitionTests(files);
+  const sortedFiles = [...files].sort();
+
+  expect(groups).toEqual({ fast: [], integration: sortedFiles, full: sortedFiles });
 });
 
 test("in-process output, config and adapter contracts remain fast", () => {
@@ -36,5 +42,8 @@ test("in-process output, config and adapter contracts remain fast", () => {
     "src/external/docker-sbx/tests/docker-sbx.test.ts",
   ];
 
-  expect(partitionTests(files)).toEqual({ fast: files.sort(), integration: [], full: files });
+  const groups = partitionTests(files);
+  const sortedFiles = [...files].sort();
+
+  expect(groups).toEqual({ fast: sortedFiles, integration: [], full: sortedFiles });
 });

@@ -22,5 +22,7 @@ test("removes inherited Git controls without changing unrelated test environment
 });
 
 test("the Bun test preload removes Git hook controls before test modules execute", () => {
-  expect(Object.keys(process.env).filter((key) => key.startsWith("GIT_"))).toEqual([]);
+  const inheritedGitKeys = Object.keys(process.env).filter((key) => key.startsWith("GIT_"));
+
+  expect(inheritedGitKeys).toEqual([]);
 });
