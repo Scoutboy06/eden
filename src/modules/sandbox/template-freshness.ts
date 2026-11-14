@@ -14,15 +14,19 @@ import {
   type TemplateEntry,
   type Receipt,
 } from "./template-update";
-import { registryDigest, templateCommand } from "../../external/docker-sbx/template-commands";
+import { resolveRegistryDigest, usesAzureAuth, type RegistryAuth } from "./registry-digest";
+import { templateCommand } from "../../external/docker-sbx/template-commands";
 
 export type FreshnessState = "current" | "outdated" | "missing" | "unknown";
 export type Freshness = { state: FreshnessState; reason: string; image?: string };
 type ImageMetadata = { image: string; imageId: string };
+export type DigestLookup = (reference: string, auth: RegistryAuth) => Promise<string>;
+type RegistryResult = { digest?: string; failure?: string };
 
 export async function checkSandboxFreshness(
   sandboxes: SandboxSummary[],
   profiles: Record<string, SandboxProfile>,
+  lookup: DigestLookup = resolveRegistryDigest,
 ): Promise<{ sandboxes: (SandboxSummary & { freshness: Freshness })[]; warnings: string[] }> {
   const warnings: string[] = [];
   if (sandboxes.length === 0) return { sandboxes: [], warnings };
@@ -33,7 +37,7 @@ export async function checkSandboxFreshness(
     propagateCancellation(error);
     warnings.push("Docker Sandboxes template metadata could not be read.");
   }
-  const registry = new Map<string, Promise<string | undefined>>();
+  const registry = new Map<string, Promise<RegistryResult>>();
   let receiptList: Promise<Receipt[]> | undefined;
   const previousReceipts = () => (receiptList ??= listReceipts());
   const results = [];
@@ -50,7 +54,8 @@ export async function checkSandboxFreshness(
       metadata,
       templates,
       profiles,
-      registry,
+      registryAuth(metadata.image, profiles, sandbox.profile),
+      { registry, lookup },
       warnings,
       previousReceipts,
     );
@@ -82,7 +87,8 @@ async function checkImage(
   metadata: ImageMetadata,
   templates: TemplateEntry[] | undefined,
   profiles: Record<string, SandboxProfile>,
-  registry: Map<string, Promise<string | undefined>>,
+  auth: RegistryAuth,
+  lookups: { registry: Map<string, Promise<RegistryResult>>; lookup: DigestLookup },
   warnings: string[],
   previousReceipts: () => Promise<Receipt[]>,
 ): Promise<Freshness> {
@@ -107,10 +113,18 @@ async function checkImage(
       reason: "The template is absent from the Docker Sandboxes image store.",
     };
 
-  if (!registry.has(image)) registry.set(image, lookupDigest(image, warnings));
-  const digest = await registry.get(image)!;
+  const key = `${auth}:${image}`;
+  if (!lookups.registry.has(key))
+    lookups.registry.set(key, lookupDigest(image, auth, lookups.lookup, warnings));
+  const { digest, failure } = await lookups.registry.get(key)!;
   if (!digest)
-    return { state: "unknown", image, reason: "The registry digest could not be checked." };
+    return {
+      state: "unknown",
+      image,
+      reason: failure
+        ? `The registry digest could not be checked: ${failure}`
+        : "The registry digest could not be checked.",
+    };
   let platform: string;
   try {
     platform = sandboxPlatform();
@@ -202,14 +216,43 @@ async function listReceipts(): Promise<Receipt[]> {
   return receipts.filter((receipt): receipt is Receipt => receipt !== undefined);
 }
 
-async function lookupDigest(image: string, warnings: string[]): Promise<string | undefined> {
+function registryAuth(
+  image: string,
+  profiles: Record<string, SandboxProfile>,
+  remembered: string | undefined,
+): RegistryAuth {
+  const own = remembered === undefined ? undefined : profiles[remembered];
+  if (own?.registry_auth) return own.registry_auth;
+  const matching = Object.values(profiles).find(
+    (profile) =>
+      profile.registry_auth &&
+      profile.template &&
+      canonicalReference(profile.template) === canonicalReference(image),
+  );
+
+  return matching?.registry_auth ?? "auto";
+}
+
+async function lookupDigest(
+  image: string,
+  auth: RegistryAuth,
+  lookup: DigestLookup,
+  warnings: string[],
+): Promise<RegistryResult> {
   try {
-    return await registryDigest(image);
+    return { digest: await lookup(image, auth) };
   } catch (error) {
     propagateCancellation(error);
+    if (usesAzureAuth(image, auth)) {
+      const failure = error instanceof Error ? error.message : String(error);
+      warnings.push(`Registry lookup failed for ${image}: ${failure}`);
+
+      return { failure };
+    }
     warnings.push(
       `Registry lookup failed for ${image}; check registry access and Docker credentials.`,
     );
-    return undefined;
+
+    return {};
   }
 }

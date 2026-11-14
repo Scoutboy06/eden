@@ -241,3 +241,81 @@ test("an unverified loaded-template mismatch is described without guessing which
     });
   });
 });
+
+test("Azure registry images authenticate through az and report an unknown state when not logged in", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await setup(directory);
+    await installExecutable(
+      new URL("./fixtures/az-freshness.ts", import.meta.url),
+      directory,
+      "az",
+    );
+    options.env.EDEN_FRESHNESS_SANDBOXES = JSON.stringify([{ name: "azure", status: "stopped" }]);
+    options.env.EDEN_FRESHNESS_TEMPLATES = JSON.stringify([
+      { repository: "exampleacr.azurecr.io/app", tag: "latest", id: "b".repeat(12) },
+    ]);
+    options.env.EDEN_FRESHNESS_INSPECT = JSON.stringify({
+      azure: {
+        image: "exampleacr.azurecr.io/app:latest",
+        image_digest: `sha256:${"b".repeat(64)}`,
+      },
+    });
+
+    const result = await runCliWith(options, "sbx", "list", "--check-updates", "--json");
+
+    expect(result.exitCode).toBe(0);
+    const data = JSON.parse(result.stdout);
+    expect(data.sandboxes[0].freshness).toMatchObject({
+      state: "unknown",
+      reason: expect.stringContaining("run az login"),
+    });
+    expect(data.warnings[0]).toContain("run az login");
+    const log = await Bun.file(options.env.EDEN_FRESHNESS_LOG).text();
+    expect(log).toContain('"--expose-token"');
+    expect(log).not.toContain("imagetools");
+  });
+});
+
+test("a profile can opt out of Azure auto-detection and use Docker credentials", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await setup(directory);
+    await installExecutable(
+      new URL("./fixtures/az-freshness.ts", import.meta.url),
+      directory,
+      "az",
+    );
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          default_provider: "docker-sbx",
+          profiles: {
+            work: { template: "exampleacr.azurecr.io/app:latest", registry_auth: "docker" },
+          },
+        },
+      }),
+    );
+    options.env.EDEN_FRESHNESS_SANDBOXES = JSON.stringify([{ name: "azure", status: "stopped" }]);
+    options.env.EDEN_FRESHNESS_TEMPLATES = JSON.stringify([
+      { repository: "exampleacr.azurecr.io/app", tag: "latest", id: "b".repeat(12) },
+    ]);
+    options.env.EDEN_FRESHNESS_INSPECT = JSON.stringify({
+      azure: {
+        image: "exampleacr.azurecr.io/app:latest",
+        image_digest: `sha256:${"b".repeat(64)}`,
+      },
+    });
+    options.env.EDEN_FRESHNESS_DIGESTS = JSON.stringify({
+      "exampleacr.azurecr.io/app:latest": `sha256:${"a".repeat(64)}`,
+    });
+
+    const result = await runCliWith(options, "sbx", "list", "--check-updates", "--json");
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).sandboxes[0].freshness.reason).toContain(
+      "No verified receipt",
+    );
+    const log = await Bun.file(options.env.EDEN_FRESHNESS_LOG).text();
+    expect(log).not.toContain('"az"');
+  });
+});
