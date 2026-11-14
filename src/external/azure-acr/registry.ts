@@ -43,8 +43,9 @@ export async function azureManifestDigest(
     `https://${image.host}/v2/${image.repository}/manifests/${encodeURIComponent(image.tag)}`,
     {
       method: "HEAD",
+      signal: AbortSignal.timeout(15000),
       headers: {
-        authorization: `Bearer ${accessToken}, signal: AbortSignal.timeout(15000)`,
+        authorization: `Bearer ${accessToken}`,
         accept: manifestAccept,
       },
     },

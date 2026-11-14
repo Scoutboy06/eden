@@ -64,7 +64,7 @@ test("exchanges the az token for a pull-scoped bearer token and reads the manife
     url: "https://exampleacr.azurecr.io/v2/team/app/manifests/stable",
     method: "HEAD",
   });
-  expect(JSON.stringify(calls[1]!.headers)).toContain("Bearer bearer-1");
+  expect(JSON.stringify(calls[1]!.headers)).toContain('"Bearer bearer-1"');
 });
 
 test("reports registry rejections and unusable az output", async () => {
