@@ -1,10 +1,10 @@
-import { createInterface } from "node:readline/promises";
 import { defineCommand } from "../../../../src/modules/cli";
 import {
   sandboxProviderNames,
   type SandboxSummary,
 } from "../../../../src/modules/sandbox/provider";
 import { SandboxError } from "../../../../src/modules/sandbox/errors";
+import { confirm } from "../../../../src/modules/cli/confirm";
 import { formatMessage } from "../../../../src/modules/cli/format";
 import type { SandboxService } from "../../../../src/modules/sandbox/sandbox.service";
 import { deriveSandboxName, findCheckout } from "../../../../src/modules/sandbox/sandbox-checkout";
@@ -262,15 +262,8 @@ export default defineCommand({
   subCommands: { create, run, exec, list, stop, ssh, rm: remove },
 });
 
-async function confirmRemoval(name: string): Promise<boolean> {
-  const terminal = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const answer = await terminal.question(`Remove sandbox ${name} and its data? [y/N] `);
-
-    return /^y(es)?$/i.test(answer.trim());
-  } finally {
-    terminal.close();
-  }
+function confirmRemoval(name: string): Promise<boolean> {
+  return confirm(`Remove sandbox ${name} and its data? [y/N] `);
 }
 
 async function selectName(
