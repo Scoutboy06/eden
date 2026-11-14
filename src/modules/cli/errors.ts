@@ -58,12 +58,21 @@ export async function withCliErrors(argv: string[], run: () => Promise<unknown>)
 
 async function reportError(error: unknown, argv: string[]): Promise<void> {
   const { failure, context } = normalizeError(error);
-  const json = context ? context.values.json === true : requestsFlag(argv, "json");
-  const dryRun = context ? context.values["dry-run"] === true : requestsFlag(argv, "dry-run");
+  let json: boolean;
+  let dryRun: boolean;
+  if (context) {
+    json = context.values.json === true;
+    dryRun = context.values["dry-run"] === true;
+  } else {
+    json = requestsFlag(argv, "json");
+    dryRun = requestsFlag(argv, "dry-run");
+  }
+  const destination = json ? "stdout" : "stderr";
+
   await writeOutput(
     {
       json,
-      destination: json ? "stdout" : "stderr",
+      destination,
     },
     {
       data: {

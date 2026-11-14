@@ -30,7 +30,8 @@ export class CommandOutput {
   }
 
   async finish(result: ExecutionResult<unknown>): Promise<void> {
-    const details = this.hooks ? { hooks: this.hooks } : {};
+    const details: { hooks?: HookExecution[] } = {};
+    if (this.hooks) details.hooks = this.hooks;
 
     if (!result.ok) {
       await writeFailure(result, this.options.json, details);
@@ -39,7 +40,8 @@ export class CommandOutput {
 
     if (this.rawWritten) return;
     if ((result.dryRun || !this.presentation) && this.operations.length > 0) {
-      await printOperations(this.operations, { json: this.options.json, ...result });
+      const operationOptions = { json: this.options.json, ok: result.ok, dryRun: result.dryRun };
+      await printOperations(this.operations, operationOptions);
       return;
     }
 
@@ -59,7 +61,12 @@ export async function writeOutput(
   options: { json: boolean; destination: "stdout" | "stderr" },
   presentation: { data: unknown; human: () => string | Promise<string> },
 ): Promise<void> {
-  const text = options.json ? JSON.stringify(presentation.data) : await presentation.human();
+  let text: string;
+  if (options.json) {
+    text = JSON.stringify(presentation.data);
+  } else {
+    text = await presentation.human();
+  }
 
   if (text) process[options.destination].write(`${text}\n`);
 }
@@ -72,12 +79,14 @@ export function printOperations(
     { json: options.json, destination: "stdout" },
     {
       data: { ok: options.ok, dryRun: options.dryRun, operations },
-      human: () =>
-        operations
-          .map((op) => `${options.dryRun ? "[dry-run]" : "[execute]"} ${op.description}`)
-          .join("\n"),
+      human: () => formatOperations(operations, options.dryRun),
     },
   );
+}
+
+function formatOperations(operations: readonly Operation[], dryRun: boolean): string {
+  const action = dryRun ? "[dry-run]" : "[execute]";
+  return operations.map((operation) => `${action} ${operation.description}`).join("\n");
 }
 
 async function writeFailure(
