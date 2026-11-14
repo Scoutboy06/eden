@@ -207,3 +207,36 @@ test("profile agent can be configured through the config command", async () => {
     expect(JSON.parse(get.stdout).value).toBe("claude");
   });
 });
+
+test("sbx create dry-run passes a profile agent kit reference through", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "missing");
+    await writeFile(
+      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+      stringify({
+        sandbox: {
+          profiles: {
+            work: { provider: "docker-sbx", agent: "docker.io/sbx/claude-kit:latest" },
+          },
+        },
+      }),
+    );
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "create",
+      "--name",
+      "example",
+      "--profile",
+      "work",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).operations[0].input.agent).toBe(
+      "docker.io/sbx/claude-kit:latest",
+    );
+  });
+});

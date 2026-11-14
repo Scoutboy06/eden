@@ -53,6 +53,7 @@ test.each([
   [{ unused: { unknown: true } }, "sandbox.profiles.unused.unknown"],
   [{ unused: { provider: "invalid" } }, "sandbox.profiles.unused.provider"],
   [{ unused: { agent: "invalid" } }, "sandbox.profiles.unused.agent"],
+  [{ unused: { agent: "claude-kit latest/x" } }, "sandbox.profiles.unused.agent"],
   [{ unused: { mcp_servers: [""] } }, "sandbox.profiles.unused.mcp_servers.0"],
   [{ unused: { mcp_servers: "notion" } }, "sandbox.profiles.unused.mcp_servers"],
   [{ unused: { shell: { cwd: "" } } }, "sandbox.profiles.unused.shell.cwd"],

@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createSandboxHarness } from "./support/sandbox";
 
@@ -181,6 +183,49 @@ test.each(["claude", "codex", "opencode"] as const)(
     });
   },
 );
+
+test("profile agent kit references reach the Docker adapter unchanged", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const agent = "docker.io/sbx/claude-kit:latest";
+    const { service, commands } = await createSandboxHarness({
+      directory,
+      profile: "work",
+      config: { sandbox: { default_provider: "docker-sbx", profiles: { work: { agent } } } },
+    });
+
+    await service.create({ name: "example" });
+
+    expect(commands.map(({ args }) => args).at(-1)).toEqual([
+      "create",
+      "--name",
+      "example",
+      "--skills",
+      "off",
+      "--no-progress",
+      agent,
+    ]);
+  });
+});
+
+test("profile agent local kit paths expand like kit paths and the dry-run names the kit", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { service, execution } = await createSandboxHarness({
+      directory,
+      dryRun: true,
+      profile: "work",
+      config: {
+        sandbox: { default_provider: "docker-sbx", profiles: { work: { agent: "~/kits/claude" } } },
+      },
+    });
+
+    await service.create({ name: "example" });
+
+    const [operation] = execution.operations;
+    const kit = join(homedir(), "kits", "claude");
+    expect(operation?.input.agent).toBe(kit);
+    expect(operation?.description).toContain(`Agent kit: ${kit}`);
+  });
+});
 
 test.each([false, true])(
   "unsupported profile agent fails before provider calls, dryRun=%s",
