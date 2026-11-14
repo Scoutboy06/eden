@@ -117,6 +117,20 @@ export interface PullRequestCommentThreadLister {
   ): Promise<PullRequestCommentThreads>;
 }
 
+export type PullRequestThreadResolution = {
+  threadId: string;
+  isResolved: boolean;
+  changed: boolean;
+};
+
+export interface PullRequestThreadResolver {
+  setReviewThreadResolution(
+    ref: PullRequestRef,
+    threadId: string,
+    isResolved: boolean,
+  ): Promise<PullRequestThreadResolution>;
+}
+
 export type PullRequestReviewInput = {
   event: "approve" | "request-changes" | "comment";
   body?: string;
@@ -161,6 +175,13 @@ export interface PullRequestLister {
   listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]>;
 }
 
+export interface PullRequestBranchFinder {
+  findPullRequestsBySourceBranch(query: {
+    repository: Extract<RepositoryRef, { provider: "github" }>;
+    sourceBranch: string;
+  }): Promise<PullRequestRef[]>;
+}
+
 export type PullRequestCreateInput = {
   title: string;
   body: string;
@@ -179,6 +200,8 @@ export type PullRequestPatch = {
   body?: string;
   targetBranch?: string;
   isDraft?: boolean;
+  addLabels?: string[];
+  removeLabels?: string[];
 };
 
 export interface PullRequestWriter {

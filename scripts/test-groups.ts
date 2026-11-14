@@ -18,7 +18,10 @@ export async function discoverTests(root: URL): Promise<string[]> {
       const children = await discoverTests(new URL(`${entry.name}/`, root));
       const childPaths = children.map((child) => `${entry.name}/${child}`);
       files.push(...childPaths);
-    } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
+    } else if (
+      entry.isFile() &&
+      (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx"))
+    ) {
       files.push(entry.name);
     }
   }

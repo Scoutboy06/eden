@@ -216,12 +216,22 @@ const edit = defineCommand({
     base: { type: "string", parse: (value) => value, description: "Change the target branch" },
     draft: { type: "boolean", description: "Mark the PR as a draft; excludes --ready" },
     ready: { type: "boolean", description: "Mark the PR ready for review; excludes --draft" },
+    "add-label": {
+      type: "string",
+      description: "Add comma-separated labels without replacing other labels",
+    },
+    "remove-label": {
+      type: "string",
+      description: "Remove comma-separated labels without replacing other labels",
+    },
   },
   async run(ctx, { pullRequests, output }) {
     const patch = await buildPullRequestPatch({
       ...ctx.values,
       bodyFile: ctx.values["body-file"],
       targetBranch: ctx.values.base,
+      addLabels: ctx.values["add-label"]?.split(",").map((label) => label.trim()),
+      removeLabels: ctx.values["remove-label"]?.split(",").map((label) => label.trim()),
     });
     const pr = await pullRequests.editByReference(ctx.values, patch);
 
@@ -315,6 +325,34 @@ const comments = defineCommand({
     });
   },
 });
+
+function threadResolutionCommand(name: "resolve" | "unresolve", isResolved: boolean) {
+  return defineCommand({
+    name,
+    description: `${isResolved ? "Resolve" : "Reopen"} a GitHub inline review thread`,
+    args: {
+      ref: { type: "positional", required: true, description: "Exact PR number or URL" },
+      thread: { type: "positional", required: true, description: "Thread ID from pr comments" },
+      repo: args.repo,
+      remote: args.remote,
+    },
+    async run(ctx, { pullRequests, output }) {
+      const result = await pullRequests.setReviewThreadResolution(
+        { ...ctx.values, threadId: ctx.values.thread },
+        isResolved,
+      );
+      if (result)
+        output.write({
+          data: { thread: result },
+          human: () =>
+            `${result.threadId}\n${result.isResolved ? "resolved" : "unresolved"}${result.changed ? "" : " (unchanged)"}`,
+        });
+    },
+  });
+}
+
+const resolveThread = threadResolutionCommand("resolve", true);
+const unresolveThread = threadResolutionCommand("unresolve", false);
 
 const review = defineCommand({
   name: "review",
@@ -502,6 +540,8 @@ export default defineCommand({
     status,
     comment,
     comments,
+    resolve: resolveThread,
+    unresolve: unresolveThread,
     review,
     merge,
     close,

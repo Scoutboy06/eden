@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import { createFileConfigService } from "../../../src/modules/config/config.service";
 import { createTasksMiddleware } from "./tasks";
+import type { WorktreeProjection } from "./worktrees";
 
 type ReadTasks = NonNullable<Parameters<typeof createTasksMiddleware>[1]>;
 
@@ -25,6 +26,54 @@ test("serves provider tasks from the configured checkout without caching", async
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.json()).toEqual({ tasks: [] });
       expect(calls).toEqual(["/private/repo"]);
+    },
+  );
+});
+
+test("serves sanitized worktree projections for an explicit configured project", async () => {
+  const calls: string[] = [];
+  await withServer(
+    async () => [],
+    async (url) => {
+      const response = await fetch(`${url}/api/worktrees?project=eden`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({
+        worktrees: [{ name: "topic", branch: "feature/topic", state: "available" }],
+        refreshedAt: "2026-11-14T00:00:00.000Z",
+      });
+      expect(calls).toEqual(["/private/repo"]);
+      expect((await fetch(`${url}/api/worktrees?project=missing`)).status).toBe(404);
+      expect((await fetch(`${url}/api/worktrees?project=eden`, { method: "POST" })).status).toBe(
+        405,
+      );
+    },
+    undefined,
+    async (path) => {
+      calls.push(path);
+      return {
+        worktrees: [{ name: "topic", branch: "feature/topic", state: "available" }],
+        refreshedAt: "2026-11-14T00:00:00.000Z",
+      } as { worktrees: WorktreeProjection[]; refreshedAt: string };
+    },
+  );
+});
+
+test("hides project paths and provider diagnostics when worktree refresh fails", async () => {
+  await withServer(
+    async () => [],
+    async (url) => {
+      const response = await fetch(`${url}/api/worktrees?project=eden`);
+      const body = await response.text();
+      expect(response.status).toBe(503);
+      expect(body).toContain("cached sidebar data may be stale");
+      expect(body).not.toContain("/private/repo");
+      expect(body).not.toContain("secret-token");
+    },
+    undefined,
+    async () => {
+      throw new Error("secret-token /private/repo");
     },
   );
 });
@@ -201,8 +250,15 @@ async function withServer(
     eden: { name: "Eden", path: "/private/repo" },
     "Eden & Co": { name: "Encoded", path: "/private/repo" },
   }),
+  readWorktrees?: typeof import("./worktrees").projectWorktrees,
 ) {
-  const middleware = createTasksMiddleware("/checkout", readTasks, readProjects);
+  const middleware = createTasksMiddleware(
+    "/checkout",
+    readTasks,
+    readProjects,
+    undefined,
+    readWorktrees,
+  );
   const server = createServer((request, response) => {
     void middleware(request, response, () => {
       response.statusCode = 404;

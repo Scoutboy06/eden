@@ -102,6 +102,24 @@ describe("GitModule read API", () => {
     expect(branches.find((branch) => branch.name === "topic")?.worktrees).toEqual([]);
   });
 
+  test("lists current worktrees with branch names and detached state", async () => {
+    await writeFile(join(directory, "file"), "content\n");
+    await GitModule.execute(directory, ["add", "."]);
+    await GitModule.execute(directory, ["commit", "-m", "initial"]);
+    const topic = join(directory, "topic worktree");
+    await GitModule.execute(directory, ["worktree", "add", "-b", "topic", topic]);
+    const detached = join(directory, "detached-worktree");
+    await GitModule.execute(directory, ["worktree", "add", "--detach", detached]);
+
+    expect(
+      (await GitModule.worktrees(directory)).sort((a, b) => a.path.localeCompare(b.path)),
+    ).toEqual([
+      { path: directory, branch: "main" },
+      { path: detached, branch: null },
+      { path: topic, branch: "topic" },
+    ]);
+  });
+
   test("reports unmerged paths explicitly", async () => {
     await writeFile(join(directory, "conflict"), "base\n");
     await GitModule.execute(directory, ["add", "."]);

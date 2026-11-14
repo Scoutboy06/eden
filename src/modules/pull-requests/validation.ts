@@ -45,14 +45,40 @@ export function validateEdit(ref: PullRequestRef, patch: PullRequestPatch) {
   validateReference(ref);
 
   const keys = Object.keys(patch);
-  const allowedKeys = ["title", "body", "targetBranch", "isDraft"];
+  const allowedKeys = ["title", "body", "targetBranch", "isDraft", "addLabels", "removeLabels"];
   const hasUnsupportedKey = keys.some((key) => !allowedKeys.includes(key));
-  if (hasUnsupportedKey) invalidInput("Only title, body, targetBranch, and isDraft may be edited.");
+  if (hasUnsupportedKey)
+    invalidInput("Only title, body, targetBranch, draft state, and labels may be edited.");
   if (keys.length === 0) invalidInput("At least one pull request field must be changed.");
   if (patch.title !== undefined && !patch.title.trim())
     invalidInput("A pull request title must not be blank.");
 
   if (patch.targetBranch !== undefined) validateBranch(patch.targetBranch);
+  validateLabelEdits(patch.addLabels ?? [], patch.removeLabels ?? []);
+}
+
+function validateLabelEdits(addLabels: string[], removeLabels: string[]) {
+  const hasValidNames = (labels: string[]) =>
+    labels.every(
+      (label) =>
+        label.trim() === label &&
+        label.length > 0 &&
+        label.length <= 100 &&
+        !/[\r\n\0]/.test(label),
+    );
+  if (!hasValidNames(addLabels) || !hasValidNames(removeLabels))
+    invalidInput("Labels must be nonempty names of at most 100 characters without line breaks.");
+
+  const normalizedAdditions = addLabels.map((label) => label.toLowerCase());
+  const normalizedRemovals = removeLabels.map((label) => label.toLowerCase());
+  const additions = new Set(normalizedAdditions);
+  const removals = new Set(normalizedRemovals);
+  const hasDuplicateLabels =
+    additions.size !== addLabels.length || removals.size !== removeLabels.length;
+  if (hasDuplicateLabels) invalidInput("Duplicate labels are not allowed.");
+
+  const hasConflictingLabels = normalizedRemovals.some((label) => additions.has(label));
+  if (hasConflictingLabels) invalidInput("A label cannot be both added and removed.");
 }
 
 export function validateReference(ref: PullRequestRef) {

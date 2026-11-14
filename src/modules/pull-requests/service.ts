@@ -31,6 +31,7 @@ import type {
   PullRequestCheck,
   PullRequestMerger,
   PullRequestMergeInput,
+  PullRequestThreadResolver,
 } from "./provider";
 import { createExecution } from "../execution/execution";
 import type { Execution } from "../execution/types";
@@ -164,6 +165,13 @@ export class PullRequestService {
 
   async edit(ref: PullRequestRef, patch: PullRequestPatch) {
     validateEdit(ref, patch);
+
+    const hasLabelEdits = patch.addLabels !== undefined || patch.removeLabels !== undefined;
+    if (hasLabelEdits && ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "Label editing currently supports GitHub only; Azure DevOps label editing is unsupported.",
+      );
 
     const provider = await this.createProvider(repositoryForRef(ref));
     const writer = pullRequestWriter(provider);
@@ -307,6 +315,47 @@ export class PullRequestService {
           ref,
           review,
         );
+      },
+    );
+
+    return result;
+  }
+
+  async setReviewThreadResolution(
+    input: PullRequestInput & { ref: string; threadId: string },
+    isResolved: boolean,
+  ) {
+    if (!input.threadId.trim() || input.threadId.length > 256 || /[\r\n\0]/.test(input.threadId))
+      throw new ScmError("SCM_INVALID_OPTIONS", "A valid review thread ID is required.");
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "Review thread resolution currently supports GitHub only; Azure DevOps is unsupported.",
+      );
+    const provider = await this.createProvider(repositoryForRef(ref));
+    if (
+      !("setReviewThreadResolution" in provider) ||
+      typeof provider.setReviewThreadResolution !== "function"
+    )
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        "This provider cannot resolve review threads.",
+      );
+    let result:
+      | Awaited<ReturnType<PullRequestThreadResolver["setReviewThreadResolution"]>>
+      | undefined;
+    await this.execution.mutate(
+      {
+        type: "github-pr-review-thread-resolution",
+        description: `${isResolved ? "Resolve" : "Unresolve"} GitHub PR review thread`,
+        input: { ref, threadId: input.threadId, isResolved },
+      },
+      async () => {
+        result = await (
+          provider as PullRequestProvider & PullRequestThreadResolver
+        ).setReviewThreadResolution(ref, input.threadId, isResolved);
       },
     );
 

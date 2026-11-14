@@ -9,6 +9,7 @@ test("fast and integration partition every discovered test exactly once", async 
   const uniqueFileCount = new Set(full).size;
 
   expect(full).toEqual(files);
+  expect(full).toContain("apps/web-ui/app/components/worktree-card.test.tsx");
   expect(partitionedFiles).toEqual(full);
   expect(uniqueFileCount).toBe(full.length);
   expect(fast.length).toBeGreaterThan(0);

@@ -2,12 +2,7 @@ import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { CIStatus } from "@/components/ci-status";
-import {
-  agentHarnesses,
-  tasks,
-  type AgentHarness,
-  type Task,
-} from "@/components/tasks-sidebar-data";
+import { agentHarnesses, type AgentHarness, type Task } from "@/components/tasks-sidebar-data";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,21 +14,45 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { closeSessionTab, createWorkspaceTabs, type SessionTab } from "@/pages/doing-tabs";
 import { formatPullRequestReference } from "@/pages/prs-data";
+import { createWorktreeDemoTask } from "@/pages/worktree-demo";
+import { worktreeSelectionKey } from "@/pages/worktree-selection";
+import type { WorktreeProjection } from "@/pages/worktrees";
 
 export function DoingPage() {
-  const { selectedTaskKey } = useOutletContext<{ selectedTaskKey: string }>();
+  const { project, worktrees, selectedWorktreeKey } = useOutletContext<{
+    project: string;
+    worktrees: WorktreeProjection[];
+    selectedWorktreeKey: string | null;
+  }>();
+  const selectedWorktree = worktrees.find(
+    (worktree) => worktreeSelectionKey(worktree) === selectedWorktreeKey,
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {tasks.map((task) => (
-        <div
-          key={task.key}
-          hidden={task.key !== selectedTaskKey}
-          className={task.key === selectedTaskKey ? "flex min-h-0 flex-1 flex-col" : "hidden"}
-        >
-          <Workspace task={task} />
+      {selectedWorktree ? (
+        worktrees.map((worktree) => {
+          const task = createWorktreeDemoTask(worktree, project);
+          const selected = worktreeSelectionKey(worktree) === selectedWorktreeKey;
+
+          return (
+            <div
+              key={task.key}
+              hidden={!selected}
+              className={selected ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+            >
+              <Workspace task={task} />
+            </div>
+          );
+        })
+      ) : (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+          <EmptyPanel
+            title="Select a worktree"
+            description="Choose a live local worktree from the sidebar to open its demo details."
+          />
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -57,11 +76,11 @@ function Workspace({ task }: { task: Task }) {
       <header className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-border px-6 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-mono">{task.key}</span>
+            <span>Branch</span>
             <span aria-hidden="true">/</span>
-            <span className="truncate">{task.worktree?.name ?? "No worktree"}</span>
+            <span className="truncate font-mono">{task.worktree?.branch ?? "Detached HEAD"}</span>
           </div>
-          <h1 className="mt-1 truncate text-sm font-semibold">{task.title}</h1>
+          <h1 className="mt-1 truncate text-sm font-semibold">{task.worktree?.name}</h1>
         </div>
         <span className="shrink-0 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground">
           Demo workspace
@@ -247,7 +266,7 @@ function Diff({ task }: { task: Task }) {
       ) : (
         <EmptyPanel
           title="No demo changes"
-          description="Live Git diffs are not connected yet. Select Page title translations to explore an illustrative diff."
+          description="Diff details are illustrative and are not connected to this live worktree."
         />
       )}
     </div>

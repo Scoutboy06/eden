@@ -2,6 +2,38 @@ import { expect, test } from "bun:test";
 import { runCli } from "./support/cli";
 import { runPr, runPrWithEnv } from "./support/pr-runner";
 
+test("PR resolve and unresolve declare commands and render state with dry-run SDK isolation", async () => {
+  const resolveHelp = await runCli("pr", "resolve", "--help");
+  const unresolveHelp = await runCli("pr", "unresolve", "--help");
+  const completion = await runCli("completion", "bash");
+
+  expect(resolveHelp.stdout).toContain("thread");
+  expect(unresolveHelp.stdout).toContain("thread");
+  expect(completion.stdout).toContain("unresolve");
+
+  const target = ["pr", "resolve", "https://github.com/acme/app/pull/12", "thread-node-1"];
+  const human = await runPr(...target);
+  const json = await runPr("pr", "unresolve", ...target.slice(2), "--json");
+  const dry = await runPrWithEnv({ PR_FORBID_REQUESTS: "1" }, ...target, "--dry-run", "--json");
+
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain("thread-node-1\nresolved");
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    ok: true,
+    thread: { threadId: "thread-node-1", isResolved: false },
+  });
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [
+      {
+        type: "github-pr-review-thread-resolution",
+        input: { threadId: "thread-node-1", isResolved: true },
+      },
+    ],
+  });
+});
+
 test("PR comment declares inputs and renders discussion and reply identities", async () => {
   const help = await runCli("pr", "comment", "--help");
   const completion = await runCli("completion", "bash");
