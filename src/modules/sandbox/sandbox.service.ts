@@ -59,6 +59,10 @@ export type RebuildSandboxInput = {
   path?: string;
 };
 
+export type RefreshKitsInput = { name: string; kits?: string[] };
+
+export type RefreshKitsResult = { kits: string[] };
+
 export type RebuildSandboxResult = {
   snapshot?: SandboxSnapshot;
   restored: boolean;
@@ -380,6 +384,41 @@ export class SandboxService {
     }
 
     return { snapshot, restored, warnings };
+  }
+
+  async refreshKits(input: RefreshKitsInput): Promise<RefreshKitsResult> {
+    const { name } = input;
+    validateSandboxInput(name);
+    if (!this.provider.addKit) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "Applying kits to an existing sandbox is unavailable for this provider.",
+      );
+    }
+
+    await this.requireSandbox(name);
+    const resolved = resolveCreateInput({ name, kits: input.kits }, this.profile);
+    const kits = resolved.kits ?? [];
+    if (kits.length === 0) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        `No kits to apply to sandbox ${name}. Pass --kit, or use a profile that lists kits (--profile).`,
+      );
+    }
+
+    await resolveSandboxPaths(resolved);
+    for (const kit of kits) {
+      await this.execution.mutate(
+        {
+          type: "sandbox.kit.add",
+          description: `Add kit ${kit} to sandbox ${name} using ${this.provider.name}`,
+          input: { provider: this.provider.name, name, kit, kitArgs: resolved.kitArgs },
+        },
+        () => this.provider.addKit!({ name, kit, kitArgs: resolved.kitArgs }),
+      );
+    }
+
+    return { kits };
   }
 
   async create(input: CreateSandboxInput, path?: string): Promise<{ warnings: string[] }> {
