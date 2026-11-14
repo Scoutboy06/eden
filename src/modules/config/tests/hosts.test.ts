@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createExecution } from "../../execution";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
+import { rootedPath, rootPrefix } from "./support/root";
 
 async function fixture(directory: string, dryRun = false) {
   const path = join(directory, "config.yaml");
@@ -15,15 +16,14 @@ async function fixture(directory: string, dryRun = false) {
 test("host operations preserve unrelated global YAML, rename, and remove locally", async () => {
   await withTemporaryDirectory(async (directory) => {
     const { path, config } = await fixture(directory);
-    const initial =
-      "agent:\n  default: claude\nprojects:\n  local:\n    name: Local\n    path: /tmp/local\n";
+    const initial = `agent:\n  default: claude\nprojects:\n  local:\n    name: Local\n    path: ${rootPrefix}/tmp/local\n`;
     await writeFile(path, initial);
 
     await config.addHost("work", "https://example.test:8443");
     await config.updateHost("work", { newAlias: "office", url: "http://192.0.2.1" });
     expect(await config.read()).toMatchObject({
       agent: { default: "claude" },
-      projects: { local: { name: "Local", path: "/tmp/local" } },
+      projects: { local: { name: "Local", path: rootedPath("/tmp/local") } },
       hosts: { office: { url: "http://192.0.2.1" } },
     });
     await config.removeHost("office");

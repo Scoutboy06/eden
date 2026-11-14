@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
+import { rootedPath, rootPrefix } from "./support/root";
 import { findRepositoryPath } from "../repository";
 
 const layers = ["global", "repository", "local"] as const;
@@ -11,10 +12,10 @@ test.each([
   [
     "null to mapping",
     null,
-    { eden: { name: "Eden", path: "/work/eden" } },
-    { eden: { name: "Eden", path: "/work/eden" } },
+    { eden: { name: "Eden", path: `${rootPrefix}/work/eden` } },
+    { eden: { name: "Eden", path: rootedPath("/work/eden") } },
   ],
-  ["mapping to null", { eden: { name: "Eden", path: "/work/eden" } }, null, null],
+  ["mapping to null", { eden: { name: "Eden", path: `${rootPrefix}/work/eden` } }, null, null],
 ] as const)(
   "merges project registry layers from %s",
   async (_direction, globalProjects, repositoryProjects, expectedProjects) => {

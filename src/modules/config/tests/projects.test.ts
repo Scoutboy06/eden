@@ -6,13 +6,14 @@ import * as v from "valibot";
 
 import { createFileConfigService } from "../config.service";
 import { ConfigSchema } from "../schema";
+import { rootedPath, rootPrefix } from "./support/root";
 
 test("global project registry accepts stable keys with a display name and repository path", () => {
   expect(
     v.parse(ConfigSchema, {
-      projects: { "Inet.Server": { name: "Inet.Server", path: "/work/inet" } },
+      projects: { "Inet.Server": { name: "Inet.Server", path: `${rootPrefix}/work/inet` } },
     }).projects,
-  ).toEqual({ "Inet.Server": { name: "Inet.Server", path: "/work/inet" } });
+  ).toEqual({ "Inet.Server": { name: "Inet.Server", path: rootedPath("/work/inet") } });
 });
 
 test("global project registry accepts null as an absent registry", () => {
@@ -42,7 +43,7 @@ test("project paths expand home and normalize when global config is read", async
 });
 
 test("project paths reject relative paths and null bytes", () => {
-  for (const path of ["src/eden", "~other/eden", "/work/eden\0repo"]) {
+  for (const path of ["src/eden", "~other/eden", `${rootPrefix}/work/eden\0repo`]) {
     expect(v.safeParse(ConfigSchema, { projects: { eden: { name: "Eden", path } } }).success).toBe(
       false,
     );
@@ -52,13 +53,15 @@ test("project paths reject relative paths and null bytes", () => {
 test("project keys reject URL dot segments while preserving URL-encoded names", () => {
   for (const key of [".", ".."]) {
     expect(
-      v.safeParse(ConfigSchema, { projects: { [key]: { name: key, path: "/work/eden" } } }).success,
+      v.safeParse(ConfigSchema, {
+        projects: { [key]: { name: key, path: `${rootPrefix}/work/eden` } },
+      }).success,
     ).toBe(false);
   }
 
   expect(
     v.parse(ConfigSchema, {
-      projects: { "Eden & Co": { name: "Eden & Co", path: "/work/eden" } },
+      projects: { "Eden & Co": { name: "Eden & Co", path: `${rootPrefix}/work/eden` } },
     }).projects,
-  ).toEqual({ "Eden & Co": { name: "Eden & Co", path: "/work/eden" } });
+  ).toEqual({ "Eden & Co": { name: "Eden & Co", path: rootedPath("/work/eden") } });
 });
