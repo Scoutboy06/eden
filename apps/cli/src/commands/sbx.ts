@@ -132,6 +132,32 @@ const stop = defineCommand({
   },
 });
 
+const ssh = defineCommand({
+  name: "ssh",
+  description: "Print how to connect to a named sandbox over ssh",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: { type: "string", required: true, description: "Sandbox name" },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const service = await sandbox({ provider: ctx.values.provider });
+    const access = await service.ssh(ctx.values.name);
+
+    output.write({
+      data: {
+        sandbox: { provider: service.providerName, name: ctx.values.name, status: access.status },
+        ssh: { host: access.host, command: access.command, setupCommand: access.setupCommand },
+      },
+      human: () => formatSshAccess(ctx.values.name, access),
+    });
+  },
+});
+
 const remove = defineCommand({
   name: "rm",
   description: "Remove one sandbox and its data",
@@ -203,12 +229,36 @@ const list = defineCommand({
 export default defineCommand({
   name: "sbx",
   description: "Manage sandboxes",
-  subCommands: { create, run, exec, list, stop, rm: remove },
+  subCommands: { create, run, exec, list, stop, ssh, rm: remove },
 });
 
 function quoteShellArgument(value: string): string {
   if (/^[a-zA-Z0-9_./-]+$/.test(value)) return value;
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function formatSshAccess(
+  name: string,
+  access: { host: string; command: string[]; setupCommand: string[]; status: string },
+): string {
+  const lines = [
+    `Connect to sandbox ${name} over ssh:`,
+    `  ${access.command.map(quoteShellArgument).join(" ")}`,
+    "",
+    "Editors (for example VS Code Remote-SSH) can connect to the host:",
+    `  ${access.host}`,
+    "",
+    "If the host is not known to your ssh client, run once:",
+    `  ${access.setupCommand.map(quoteShellArgument).join(" ")}`,
+  ];
+  if (access.status !== "running") {
+    lines.push(
+      "",
+      `Sandbox ${name} is ${access.status}; start it with: eden sbx run --name ${quoteShellArgument(name)}`,
+    );
+  }
+
+  return formatMessage(lines.join("\n"), "success", "stdout");
 }
 
 function formatCreatedSandbox(name: string, provider: string): string {

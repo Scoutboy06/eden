@@ -8,6 +8,7 @@ import type {
   ExecSandboxResult,
   SandboxProvider,
   SandboxSummary,
+  SshAccess,
 } from "../../modules/sandbox/provider";
 import type { ReadinessCheck, ReadinessResult } from "../../modules/sandbox/readiness";
 import { attachDockerExec, attachDockerSandbox } from "./attach";
@@ -169,6 +170,12 @@ export class DockerSandboxProvider implements SandboxProvider {
       );
     }
     return result;
+  }
+
+  sshAccess(name: string): SshAccess {
+    const host = `${name}.sbx`;
+
+    return { host, command: ["ssh", host], setupCommand: ["sbx", "setup", "ssh"] };
   }
 
   async stop(name: string): Promise<void> {

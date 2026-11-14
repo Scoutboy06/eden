@@ -338,3 +338,25 @@ test("exec forwards exact arguments and output mode to Docker Sandboxes", async 
     },
   ]);
 });
+
+test.each([
+  ["example", "example.sbx"],
+  ["my.sandbox-1", "my.sandbox-1.sbx"],
+])("ssh access for %s uses the sbx SSH endpoint host without running sbx", (name, host) => {
+  const commands: string[][] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args) => {
+      commands.push(args);
+      return success;
+    },
+  });
+
+  const access = provider.sshAccess(name);
+
+  expect(access).toEqual({
+    host,
+    command: ["ssh", host],
+    setupCommand: ["sbx", "setup", "ssh"],
+  });
+  expect(commands).toEqual([]);
+});
