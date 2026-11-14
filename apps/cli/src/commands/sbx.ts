@@ -474,7 +474,7 @@ const rebuild = defineCommand({
 const refreshKit = defineCommand({
   name: "refresh-kit",
   description:
-    "Add the profile's kits to an existing sandbox again, with freshly resolved arguments",
+    "(Experimental, uses sbx kit add) Add the profile's kits to an existing sandbox; re-adding a present kit may duplicate it",
   args: {
     provider: {
       type: "enum",

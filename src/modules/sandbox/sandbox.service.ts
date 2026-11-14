@@ -60,15 +60,15 @@ export type RebuildSandboxInput = {
   path?: string;
 };
 
-export type RefreshKitsInput = { name: string; kits?: string[] };
-
-export type RefreshKitsResult = { kits: string[] };
-
 export type RebuildSandboxResult = {
   snapshot?: SandboxSnapshot;
   restored: boolean;
   warnings: string[];
 };
+
+export type RefreshKitsInput = { name: string; kits?: string[] };
+
+export type RefreshKitsResult = { kits: string[] };
 
 const defaultShellCommand = ["bash", "-l"];
 const pendingSnapshot: SandboxSnapshot = {
@@ -658,6 +658,7 @@ export class SandboxService {
         hookInput,
         `Sandbox ${name} was created and is left in place.`,
       );
+
     if (!path || hosts.length === 0) return run(input);
 
     const opened = { ...input, sandbox: { ...input.sandbox, setupNetwork: { allow: hosts } } };
