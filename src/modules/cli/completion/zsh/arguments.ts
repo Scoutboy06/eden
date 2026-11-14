@@ -20,31 +20,42 @@ function argumentSyntax(
   state: string,
   position?: number,
 ): ArgumentSyntax {
-  const action = arg.choices ? `->${state}` : "_nothing";
-  const specs =
-    position === undefined
-      ? optionSpecs(key, arg, action)
-      : [quote(`${position}:${specText(arg.description ?? key)}:${action}`)];
+  let action = "_nothing";
+  if (arg.choices) action = `->${state}`;
 
+  let specs: string[];
+  if (position === undefined) {
+    specs = optionSpecs(key, arg, action);
+  } else {
+    const description = specText(arg.description ?? key);
+    specs = [quote(`${position}:${description}:${action}`)];
+  }
+
+  let valueCase: string | undefined;
+  if (arg.choices) {
+    const choices = arg.choices.map(quote).join(" ");
+    valueCase = `${state})
+      local -a values=( ${choices} )
+      compadd -- "\${values[@]}"
+      ;;`;
+  }
   return {
     specs,
-    valueCase: arg.choices
-      ? `${state})
-      local -a values=( ${arg.choices.map(quote).join(" ")} )
-      compadd -- "\${values[@]}"
-      ;;`
-      : undefined,
+    valueCase,
   };
 }
 
 function optionSpecs(key: string, arg: ArgSchema, action: string): string[] {
-  const flags = arg.short ? [`-${arg.short}`, `--${key}`] : [`--${key}`];
+  const flags = [`--${key}`];
+  if (arg.short) flags.unshift(`-${arg.short}`);
   const exclusion = `(${flags.join(" ")})`;
   const description = `[${specText(arg.description ?? "")}]`;
-  const value = arg.type === "boolean" ? "" : `:${specText(key)}:${action}`;
+  let value = "";
+  if (arg.type !== "boolean") value = `:${specText(key)}:${action}`;
 
   return flags.map((flag) => {
-    const attached = arg.type === "boolean" ? "" : flag.startsWith("--") ? "=" : "+";
+    let attached = "";
+    if (arg.type !== "boolean") attached = flag.startsWith("--") ? "=" : "+";
     return quote(`${exclusion}${flag}${attached}${description}${value}`);
   });
 }

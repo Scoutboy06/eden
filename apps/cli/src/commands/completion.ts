@@ -37,16 +37,15 @@ export default defineCommand({
     const globals = Object.fromEntries(
       Object.entries(ctx.args).filter(([name]) => !Object.hasOwn(args, name)),
     );
-    output.raw(
-      generator.generate({
-        name: "eden",
-        args: globals,
-        commands: await Promise.all(
-          [...(ctx.env.subCommands ?? [])]
-            .filter(([name, command]) => !command.internal && name !== ctx.env.name)
-            .map(([name, command]) => completionCommand(name, command, globals)),
-        ),
-      }),
+    const subCommands = [...(ctx.env.subCommands ?? [])];
+    const visibleSubCommands = subCommands.filter(
+      ([name, command]) => !command.internal && name !== ctx.env.name,
     );
+    const commands = await Promise.all(
+      visibleSubCommands.map(([name, command]) => completionCommand(name, command, globals)),
+    );
+    const script = generator.generate({ name: "eden", args: globals, commands });
+
+    output.raw(script);
   },
 });

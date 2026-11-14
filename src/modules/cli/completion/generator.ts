@@ -18,19 +18,22 @@ export async function completionCommand(
   globals: Args,
 ): Promise<CompletionCommand> {
   const resolved = await resolveLazyCommand(command, name, false);
+  const args = Object.fromEntries(
+    Object.entries({ ...globals, ...resolved.args }).map(([key, arg]) => {
+      const visibleKey = resolved.toKebab ? kebabnize(key) : key;
+      return [visibleKey, arg];
+    }),
+  );
+  const commandEntries = [...(getCommandSubCommands(resolved) ?? [])];
+  const visibleCommands = commandEntries.filter(([, child]) => !child.internal);
+  const commands = await Promise.all(
+    visibleCommands.map(([key, child]) => completionCommand(key, child, globals)),
+  );
+
   return {
     name,
     description: resolved.description,
-    args: Object.fromEntries(
-      Object.entries({ ...globals, ...resolved.args }).map(([key, arg]) => [
-        resolved.toKebab ? kebabnize(key) : key,
-        arg,
-      ]),
-    ),
-    commands: await Promise.all(
-      [...(getCommandSubCommands(resolved) ?? [])]
-        .filter(([, child]) => !child.internal)
-        .map(([key, child]) => completionCommand(key, child, globals)),
-    ),
+    args,
+    commands,
   };
 }
