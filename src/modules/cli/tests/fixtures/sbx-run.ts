@@ -119,6 +119,13 @@ if (JSON.stringify(args) === JSON.stringify(["ls", "--json"])) {
   } else {
     process.stdout.write("stopped\n");
   }
+} else if (args[0] === "kit" && args[1] === "add") {
+  if (process.env.EDEN_SBX_KIT_FAILURE) {
+    process.stderr.write(process.env.EDEN_SBX_KIT_FAILURE);
+    process.exit(1);
+  }
+
+  process.stdout.write("added\n");
 } else if (args[0] === "exec" && mode === "snapshot") {
   const separator = args.indexOf("--");
   const script = args[separator + 4]!;

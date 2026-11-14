@@ -471,6 +471,52 @@ const rebuild = defineCommand({
   },
 });
 
+const refreshKit = defineCommand({
+  name: "refresh-kit",
+  description:
+    "Add the profile's kits to an existing sandbox again, with freshly resolved arguments",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
+    profile: {
+      type: "string",
+      description: "Sandbox profile to take kits from (defaults to the profile that created it)",
+    },
+    kit: {
+      type: "string",
+      multiple: true,
+      description: "Kit path or reference to add instead of the profile kits (repeatable)",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const lookup = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, lookup, ctx.extensions.eden.json);
+    const service = await shellService(sandbox, lookup, name, ctx.values.profile);
+    const { kits } = await service.refreshKits({ name, kits: ctx.values.kit });
+
+    output.write({
+      data: { sandbox: { provider: service.providerName, name }, kits },
+      human: () =>
+        formatMessage(
+          [
+            `Added ${kits.length} kit(s) to sandbox ${name}:`,
+            ...kits.map((kit) => `  ${kit}`),
+          ].join("\n"),
+          "success",
+          "stdout",
+        ),
+    });
+  },
+});
+
 const snapshot = defineCommand({
   name: "snapshot",
   description: "Archive a sandbox's profile snapshot paths to the host; --list shows snapshots",
@@ -567,6 +613,7 @@ export default defineCommand({
     stop,
     ssh,
     rebuild,
+    "refresh-kit": refreshKit,
     status,
     snapshot,
     restore,
