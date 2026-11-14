@@ -74,9 +74,7 @@ test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async
     template: "profile:image",
   });
 
-  await expect(service.run({ name: "typo" })).rejects.toMatchObject({
-    code: "SANDBOX_NOT_FOUND",
-  });
+  await expect(service.run({ name: "typo" })).rejects.toMatchObject({ code: "SANDBOX_NOT_FOUND" });
 
   expect(calls).toEqual(["list"]);
   expect(execution.operations).toEqual([]);
@@ -216,11 +214,7 @@ test.each([false, true])(
         return { exitCode: 7, stdout: "out", stderr: "err" };
       },
     };
-    const input = {
-      name: "example",
-      argv: ["echo", "a b", "--"],
-      output: "capture",
-    } as const;
+    const input = { name: "example", argv: ["echo", "a b", "--"], output: "capture" } as const;
     const result = await new SandboxService(execution, provider).exec({
       ...input,
       argv: [...input.argv],

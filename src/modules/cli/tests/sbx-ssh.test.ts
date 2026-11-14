@@ -36,7 +36,7 @@ test("ssh presents the command, editor host and setup hint, and notes a stopped 
     expect(result.stdout).toContain("  ssh example.sbx\n");
     expect(result.stdout).toContain("VS Code Remote-SSH");
     expect(result.stdout).toContain("  sbx setup ssh\n");
-    expect(result.stdout).toContain("eden sbx run --name example");
+    expect(result.stdout).toContain("eden sbx run --provider docker-sbx --name example");
   });
 });
 

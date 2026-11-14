@@ -153,7 +153,7 @@ const ssh = defineCommand({
         sandbox: { provider: service.providerName, name: ctx.values.name, status: access.status },
         ssh: { host: access.host, command: access.command, setupCommand: access.setupCommand },
       },
-      human: () => formatSshAccess(ctx.values.name, access),
+      human: () => formatSshAccess(ctx.values.name, service.providerName, access),
     });
   },
 });
@@ -239,6 +239,7 @@ function quoteShellArgument(value: string): string {
 
 function formatSshAccess(
   name: string,
+  provider: string,
   access: { host: string; command: string[]; setupCommand: string[]; status: string },
 ): string {
   const lines = [
@@ -254,7 +255,7 @@ function formatSshAccess(
   if (access.status !== "running") {
     lines.push(
       "",
-      `Sandbox ${name} is ${access.status}; start it with: eden sbx run --name ${quoteShellArgument(name)}`,
+      `Sandbox ${name} is ${access.status}; start it with: eden sbx run --provider ${provider} --name ${quoteShellArgument(name)}`,
     );
   }
 
