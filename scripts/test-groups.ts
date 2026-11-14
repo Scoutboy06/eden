@@ -10,11 +10,14 @@ export function partitionTests(files: string[]) {
 
 export async function discoverTests(root: URL): Promise<string[]> {
   const files: string[] = [];
-  for (const entry of await readdir(root, { withFileTypes: true })) {
+  const entries = await readdir(root, { withFileTypes: true });
+
+  for (const entry of entries) {
     if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
     if (entry.isDirectory()) {
       const children = await discoverTests(new URL(`${entry.name}/`, root));
-      files.push(...children.map((child) => `${entry.name}/${child}`));
+      const childPaths = children.map((child) => `${entry.name}/${child}`);
+      files.push(...childPaths);
     } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
       files.push(entry.name);
     }

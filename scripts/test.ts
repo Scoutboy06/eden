@@ -7,22 +7,21 @@ if (group !== "fast" && group !== "integration" && group !== "full") {
 }
 
 const root = new URL("../", import.meta.url);
-const groups = partitionTests(await discoverTests(root));
+const discoveredTests = await discoverTests(root);
+const groups = partitionTests(discoveredTests);
 const files = groups[group];
 if (files.length === 0) throw new Error(`No tests found for ${group}`);
 
 if (args.length === 1 && args[0] === "--list") {
   console.log(files.join("\n"));
 } else {
-  const child = Bun.spawn(
-    [process.execPath, "test", ...files.map((file) => `./${file}`), ...args],
-    {
-      cwd: fileURLToPath(root),
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    },
-  );
+  const testPaths = files.map((file) => `./${file}`);
+  const child = Bun.spawn([process.execPath, "test", ...testPaths, ...args], {
+    cwd: fileURLToPath(root),
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
 
   process.exitCode = await child.exited;
 }

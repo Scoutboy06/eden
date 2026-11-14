@@ -9,7 +9,9 @@ const runs = Number(repeats);
 if (!Number.isSafeInteger(runs) || runs < 1) throw new Error("Runs must be a positive integer");
 
 const root = new URL("../", import.meta.url);
-const files = partitionTests(await discoverTests(root))[group];
+const discoveredTests = await discoverTests(root);
+const groups = partitionTests(discoveredTests);
+const files = groups[group];
 const samples: { file: string; wallMs: number[] }[] = files.map((file) => ({ file, wallMs: [] }));
 
 for (let run = 0; run < runs; run++) {
@@ -25,7 +27,9 @@ for (let run = 0; run < runs; run++) {
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
-    sample.wallMs.push(Math.round((performance.now() - start) * 100) / 100);
+    const elapsedMs = performance.now() - start;
+    const roundedElapsedMs = Math.round(elapsedMs * 100) / 100;
+    sample.wallMs.push(roundedElapsedMs);
     if (exitCode !== 0) {
       console.error(sample.file, stdout, stderr);
       process.exit(exitCode);
@@ -33,17 +37,20 @@ for (let run = 0; run < runs; run++) {
   }
 }
 
-console.log(
-  JSON.stringify(
-    {
-      bun: Bun.version,
-      platform: process.platform,
-      arch: process.arch,
-      group,
-      runs,
-      samples: samples.sort((left, right) => Math.max(...right.wallMs) - Math.max(...left.wallMs)),
-    },
-    null,
-    2,
-  ),
-);
+samples.sort((left, right) => {
+  const leftSlowestRun = Math.max(...left.wallMs);
+  const rightSlowestRun = Math.max(...right.wallMs);
+
+  return rightSlowestRun - leftSlowestRun;
+});
+
+const report = {
+  bun: Bun.version,
+  platform: process.platform,
+  arch: process.arch,
+  group,
+  runs,
+  samples,
+};
+
+console.log(JSON.stringify(report, null, 2));
