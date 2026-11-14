@@ -66,12 +66,12 @@ export function createAuditInput(
 
 export function describeCreation(provider: string, input: CreateSandboxInput): string {
   const descriptions = [`Create sandbox ${input.name} using ${provider}`];
+  if (input.workspace?.path) {
+    descriptions.push(` with ${input.workspace.mode} workspace ${input.workspace.path}`);
+  }
   if (input.agent !== undefined && !KNOWN_AGENTS.has(input.agent)) {
     descriptions.push(`
   Agent kit: ${input.agent}`);
-  }
-  if (input.workspace?.path) {
-    descriptions.push(` with ${input.workspace.mode} workspace ${input.workspace.path}`);
   }
   if (input.kits?.length) {
     const kits = input.kits.join(", ");
