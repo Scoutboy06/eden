@@ -20,6 +20,7 @@ import type {
   SandboxProvider,
   SandboxProviderName,
   SandboxSummary,
+  SshAccess,
 } from "./provider";
 import { DockerSandboxProvider } from "../../external/docker-sbx/provider";
 
@@ -79,6 +80,26 @@ export class SandboxService {
       },
     );
     return result;
+  }
+
+  async ssh(name: string): Promise<SshAccess & { status: string }> {
+    validateSandboxInput(name);
+    const sandboxes = await this.provider.list();
+    const sandbox = sandboxes.find((entry) => entry.name === name);
+    if (!sandbox) {
+      throw new SandboxError(
+        "SANDBOX_NOT_FOUND",
+        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
+      );
+    }
+    if (!this.provider.sshAccess) {
+      throw new SandboxError(
+        "SANDBOX_PROVIDER_UNAVAILABLE",
+        "SSH access is unavailable for this provider.",
+      );
+    }
+
+    return { ...this.provider.sshAccess(name), status: sandbox.status };
   }
 
   async stop(name: string): Promise<void> {

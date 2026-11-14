@@ -26,6 +26,7 @@ export type CreateSandboxInput = {
 export type RunSandboxInput = { name: string };
 export type ExecSandboxInput = { name: string; argv: string[]; output: "capture" | "inherit" };
 export type ExecSandboxResult = { exitCode: number; stdout: string; stderr: string };
+export type SshAccess = { host: string; command: string[]; setupCommand: string[] };
 
 export interface SandboxProvider {
   readonly name: SandboxProviderName;
@@ -37,6 +38,7 @@ export interface SandboxProvider {
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
   exec?(input: ExecSandboxInput): Promise<ExecSandboxResult>;
+  sshAccess?(name: string): SshAccess;
   stop(name: string): Promise<void>;
   remove?(name: string, force: boolean): Promise<void>;
 }

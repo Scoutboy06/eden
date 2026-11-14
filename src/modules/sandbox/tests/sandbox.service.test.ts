@@ -74,7 +74,9 @@ test.each([false, true])("run never creates a missing sandbox, dryRun=%s", async
     template: "profile:image",
   });
 
-  await expect(service.run({ name: "typo" })).rejects.toMatchObject({ code: "SANDBOX_NOT_FOUND" });
+  await expect(service.run({ name: "typo" })).rejects.toMatchObject({
+    code: "SANDBOX_NOT_FOUND",
+  });
 
   expect(calls).toEqual(["list"]);
   expect(execution.operations).toEqual([]);
@@ -214,7 +216,11 @@ test.each([false, true])(
         return { exitCode: 7, stdout: "out", stderr: "err" };
       },
     };
-    const input = { name: "example", argv: ["echo", "a b", "--"], output: "capture" } as const;
+    const input = {
+      name: "example",
+      argv: ["echo", "a b", "--"],
+      output: "capture",
+    } as const;
     const result = await new SandboxService(execution, provider).exec({
       ...input,
       argv: [...input.argv],
@@ -228,3 +234,67 @@ test.each([false, true])(
     ]);
   },
 );
+
+function sshProvider(overrides: Partial<SandboxProvider> = {}): SandboxProvider {
+  return {
+    name: "docker-sbx",
+    readinessChecks: () => [],
+    preflight: async () => {},
+    list: async () => [{ provider: "docker-sbx", name: "example", status: "stopped" }],
+    run: async () => 0,
+    create: async () => {},
+    stop: async () => {},
+    sshAccess: (name) => ({
+      host: `${name}.sbx`,
+      command: ["ssh", `${name}.sbx`],
+      setupCommand: ["sbx", "setup", "ssh"],
+    }),
+    ...overrides,
+  };
+}
+
+test.each([false, true])(
+  "ssh reports access for an existing sandbox without mutating, dryRun=%s",
+  async (dryRun) => {
+    const execution = createExecution({ dryRun });
+
+    const access = await new SandboxService(execution, sshProvider()).ssh("example");
+
+    expect(access).toEqual({
+      host: "example.sbx",
+      command: ["ssh", "example.sbx"],
+      setupCommand: ["sbx", "setup", "ssh"],
+      status: "stopped",
+    });
+    expect(execution.operations).toEqual([]);
+  },
+);
+
+test.each([
+  ["a missing sandbox", sshProvider({ list: async () => [] }), "SANDBOX_NOT_FOUND"],
+  [
+    "a provider without ssh support",
+    sshProvider({ sshAccess: undefined }),
+    "SANDBOX_PROVIDER_UNAVAILABLE",
+  ],
+])("ssh rejects %s", async (_label, provider, code) => {
+  await expect(
+    new SandboxService(createExecution({ dryRun: false }), provider).ssh("example"),
+  ).rejects.toMatchObject({
+    code,
+  });
+});
+
+test("ssh rejects an empty name before listing", async () => {
+  const provider = sshProvider({
+    list: async () => {
+      throw new Error("must not list");
+    },
+  });
+
+  await expect(
+    new SandboxService(createExecution({ dryRun: false }), provider).ssh("  "),
+  ).rejects.toMatchObject({
+    code: "SANDBOX_INVALID_INPUT",
+  });
+});
