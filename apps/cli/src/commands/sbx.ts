@@ -372,6 +372,7 @@ async function shellService(
   explicitProfile: string | undefined,
 ): Promise<SandboxService> {
   const provider = lookup.providerName;
+
   if (explicitProfile !== undefined) return sandbox({ provider, profile: explicitProfile });
 
   const remembered = await lookup.profileOf(name);

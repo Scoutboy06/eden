@@ -109,6 +109,8 @@ export class SandboxService {
           name: input.name,
           argv: input.argv,
           output: input.output,
+          ...(input.workdir === undefined ? {} : { workdir: input.workdir }),
+          ...(input.tty ? { tty: true } : {}),
         },
       },
       async () => {
@@ -122,6 +124,7 @@ export class SandboxService {
     validateSandboxInput(input.name);
     const sandbox = await this.requireSandbox(input.name);
     const settings = this.profile?.shell;
+
     if (sandbox.status === "stopped" && this.provider.start) {
       await this.startSandbox(sandbox);
     }

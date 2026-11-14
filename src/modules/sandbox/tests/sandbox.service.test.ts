@@ -389,7 +389,7 @@ test.each<[string, SandboxProfile["shell"], string | undefined, string[]]>([
   ["running", { cwd: "/profile", command: ["zsh", "-l"] }, undefined, ["exec:zsh -l:/profile"]],
   ["running", { cwd: "/profile" }, "/flag", ["exec:bash -l:/flag"]],
 ])(
-  "shell with status=%s and profile shell %j and cwd %p starts then opens a login shell",
+  "shell with status=%s, profile shell %j and cwd %p runs the expected steps",
   async (status, shell, cwd, expected) => {
     const execution = createExecution({ dryRun: false });
     const calls: string[] = [];

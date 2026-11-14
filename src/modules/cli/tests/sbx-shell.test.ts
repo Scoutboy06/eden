@@ -94,3 +94,61 @@ test("shell rejects JSON output without contacting the provider", async () => {
     await expect(sandboxCommands(directory)).rejects.toThrow();
   });
 });
+
+test("shell ignores a remembered profile that is no longer configured", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "running");
+    const configPath = join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml");
+    await writeFile(
+      configPath,
+      stringify({
+        sandbox: {
+          default_provider: "docker-sbx",
+          profiles: { work: { agent: "claude", pull: "never", shell: { cwd: "/work" } } },
+        },
+      }),
+    );
+    options.env.EDEN_SBX_AGENT = "claude";
+    options.env.EDEN_SBX_PULL = "never";
+    await runCliWith(options, "sbx", "create", "--name", "example", "--profile", "work");
+    await writeFile(configPath, stringify({ sandbox: { default_provider: "docker-sbx" } }));
+
+    const result = await runCliWith(options, "sbx", "shell", "--name", "example");
+
+    expect(result.exitCode).toBe(0);
+    expect((await providerCommands(directory)).at(-1)).toEqual([
+      "exec",
+      "-i",
+      "--",
+      "example",
+      "bash",
+      "-l",
+    ]);
+  });
+});
+
+test("shell dry-run previews the start folder without starting or executing", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await prepareSandboxCli(directory, "stopped");
+
+    const result = await runCliWith(
+      options,
+      "sbx",
+      "shell",
+      "--name",
+      "example",
+      "--cwd",
+      "/work",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).operations.map((op: any) => op.type)).toEqual([
+      "sandbox.start",
+      "sandbox.exec",
+    ]);
+    expect(JSON.parse(result.stdout).operations[1].input.workdir).toBe("/work");
+    expect(await providerCommands(directory)).toEqual([]);
+  });
+});
