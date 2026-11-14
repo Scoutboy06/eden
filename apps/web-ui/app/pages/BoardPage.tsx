@@ -1,11 +1,5 @@
-import {
-  KanbanIcon,
-  LeftToRightListBulletIcon,
-  Search01Icon,
-  TableIcon,
-} from "@hugeicons/core-free-icons";
+import { KanbanIcon, LeftToRightListBulletIcon, TableIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useRef, type RefObject } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { IssueTable } from "@/components/issue-table/issue-table";
@@ -14,26 +8,14 @@ import { KanbanBoard } from "@/components/kanban/kanban-board";
 import { useBeadsTasks } from "@/pages/use-beads-tasks";
 import { TaskDetails } from "@/components/issue/task-detail-panel";
 import { CreateTaskPrototypes } from "@/components/issue/create-task-prototypes";
-import { issueTypeLabel } from "@/components/issue/issue";
-import type { IssueGroup } from "@/components/issue/issue";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-} from "@/components/ui/select";
+import { FiltersToolbar, SortToolbar, getIssueTypes } from "@/pages/board-filters-toolbar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  assigneeFilterValue,
   type BoardFilters,
-  type BoardSort,
   filterGroups,
   parseBoardViewOptions,
-  priorities,
   sortGroups,
 } from "@/pages/board-filters";
 
@@ -58,6 +40,7 @@ export function BoardPage() {
   const { filters, sort } = options;
   const filteredGroups = sortGroups(filterGroups(groups, filters), sort);
   const hasResults = filteredGroups.some((group) => group.items.length > 0);
+  const taskCount = groups.reduce((count, group) => count + group.items.length, 0);
 
   function updateParams(update: (params: URLSearchParams) => void, replace = false) {
     setSearchParams(
@@ -125,9 +108,7 @@ export function BoardPage() {
           <CreateTaskPrototypes key={project} groups={groups} />
         </header>
         <Separator />
-        <p className="py-3 text-xs text-muted-foreground">
-          Beads · {groups.reduce((count, group) => count + group.items.length, 0)} tasks
-        </p>
+        <p className="py-3 text-xs text-muted-foreground">Beads · {taskCount} tasks</p>
         {loading && (
           <p role="status" className="py-4 text-sm text-muted-foreground">
             Loading Beads tasks…
@@ -172,179 +153,6 @@ export function BoardPage() {
   );
 }
 
-function FiltersToolbar({
-  groups,
-  filters,
-  onQueryChange,
-  onMultiFilterChange,
-}: {
-  groups: IssueGroup[];
-  filters: BoardFilters;
-  onQueryChange: (value: string) => void;
-  onMultiFilterChange: (
-    key: "status" | "type" | "priority" | "assignee",
-    selected: string[],
-  ) => void;
-}) {
-  const assigneeOptions = getAssigneeOptions(groups);
-  const statusTriggerRef = useRef<HTMLButtonElement>(null);
-  const typeTriggerRef = useRef<HTMLButtonElement>(null);
-  const priorityTriggerRef = useRef<HTMLButtonElement>(null);
-  const assigneeTriggerRef = useRef<HTMLButtonElement>(null);
-
-  return (
-    <>
-      <div className="relative w-64">
-        <label className="sr-only" htmlFor="issue-search">
-          Search tasks by key or title
-        </label>
-        <HugeiconsIcon
-          icon={Search01Icon}
-          aria-hidden="true"
-          strokeWidth={2}
-          className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-        />
-        <input
-          id="issue-search"
-          type="search"
-          value={filters.query}
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
-          placeholder="Search tasks…"
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-        />
-      </div>
-      <Select<string, true>
-        multiple
-        value={filters.statuses}
-        onValueChange={(selected) => onMultiFilterChange("status", selected)}
-      >
-        <SelectTrigger ref={statusTriggerRef} aria-label="Filter by status">
-          Status{filters.statuses.length > 0 ? ` · ${filters.statuses.length}` : ""}
-        </SelectTrigger>
-        <SelectContent
-          align="start"
-          className="w-48"
-          footer={
-            filters.statuses.length > 0 && (
-              <ClearSelectionFooter
-                label="status"
-                onClear={() => onMultiFilterChange("status", [])}
-                returnFocusRef={statusTriggerRef}
-              />
-            )
-          }
-        >
-          <SelectGroup>
-            <SelectLabel>Status</SelectLabel>
-            {groups.map((group) => (
-              <SelectItem key={group.id} value={group.id}>
-                {group.title}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <Select<string, true>
-        multiple
-        value={filters.types}
-        onValueChange={(selected) => onMultiFilterChange("type", selected)}
-      >
-        <SelectTrigger ref={typeTriggerRef} aria-label="Filter by task type">
-          Type{filters.types.length > 0 ? ` · ${filters.types.length}` : ""}
-        </SelectTrigger>
-        <SelectContent
-          align="start"
-          className="w-40"
-          footer={
-            filters.types.length > 0 && (
-              <ClearSelectionFooter
-                label="task type"
-                onClear={() => onMultiFilterChange("type", [])}
-                returnFocusRef={typeTriggerRef}
-              />
-            )
-          }
-        >
-          <SelectGroup>
-            <SelectLabel>Task type</SelectLabel>
-            {getIssueTypes(groups).map((type) => (
-              <SelectItem key={type} value={type}>
-                {issueTypeLabel(type)}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <Select<string, true>
-        multiple
-        value={filters.priorities}
-        onValueChange={(selected) => onMultiFilterChange("priority", selected)}
-      >
-        <SelectTrigger ref={priorityTriggerRef} aria-label="Filter by priority">
-          Priority{filters.priorities.length > 0 ? ` · ${filters.priorities.length}` : ""}
-        </SelectTrigger>
-        <SelectContent
-          align="start"
-          className="w-40"
-          footer={
-            filters.priorities.length > 0 && (
-              <ClearSelectionFooter
-                label="priority"
-                onClear={() => onMultiFilterChange("priority", [])}
-                returnFocusRef={priorityTriggerRef}
-              />
-            )
-          }
-        >
-          <SelectGroup>
-            <SelectLabel>Priority</SelectLabel>
-            {priorities
-              .filter((priority) =>
-                groups.some((group) => group.items.some((issue) => issue.priority === priority)),
-              )
-              .map((priority) => (
-                <SelectItem key={priority} value={priority}>
-                  {priority[0]!.toUpperCase() + priority.slice(1)}
-                </SelectItem>
-              ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <Select<string, true>
-        multiple
-        value={filters.assignees}
-        onValueChange={(selected) => onMultiFilterChange("assignee", selected)}
-      >
-        <SelectTrigger ref={assigneeTriggerRef} aria-label="Filter by assignee">
-          Assignee{filters.assignees.length > 0 ? ` · ${filters.assignees.length}` : ""}
-        </SelectTrigger>
-        <SelectContent
-          align="start"
-          className="w-48"
-          footer={
-            filters.assignees.length > 0 && (
-              <ClearSelectionFooter
-                label="assignee"
-                onClear={() => onMultiFilterChange("assignee", [])}
-                returnFocusRef={assigneeTriggerRef}
-              />
-            )
-          }
-        >
-          <SelectGroup>
-            <SelectLabel>Assignee</SelectLabel>
-            {assigneeOptions.map(({ value, label }) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-    </>
-  );
-}
-
 function ViewSwitcher() {
   return (
     <TabsList aria-label="View">
@@ -358,56 +166,6 @@ function ViewSwitcher() {
   );
 }
 
-function SortToolbar({
-  sort,
-  onSortChange,
-}: {
-  sort: BoardSort;
-  onSortChange: (value: string | null) => void;
-}) {
-  return (
-    <>
-      <Select<string> value={sort} onValueChange={onSortChange}>
-        <SelectTrigger aria-label="Sort issues">{sortLabel(sort)}</SelectTrigger>
-        <SelectContent align="end" className="w-48">
-          <SelectGroup>
-            <SelectLabel>Sort by</SelectLabel>
-            <SelectItem value="manual">Provider order</SelectItem>
-            <SelectItem value="priority">Priority first</SelectItem>
-            <SelectItem value="updated">Recently updated</SelectItem>
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-    </>
-  );
-}
-
-function ClearSelectionFooter({
-  label,
-  onClear,
-  returnFocusRef,
-}: {
-  label: string;
-  onClear: () => void;
-  returnFocusRef: RefObject<HTMLButtonElement | null>;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      className="w-full justify-start"
-      aria-label={`Clear ${label} filter`}
-      onClick={() => {
-        onClear();
-        returnFocusRef.current?.focus();
-      }}
-    >
-      Clear selection
-    </Button>
-  );
-}
-
 function hasActiveFilters(filters: BoardFilters) {
   return (
     filters.query.trim().length > 0 ||
@@ -416,31 +174,6 @@ function hasActiveFilters(filters: BoardFilters) {
     filters.priorities.length > 0 ||
     filters.assignees.length > 0
   );
-}
-
-function getAssigneeOptions(groups: IssueGroup[]) {
-  const names = groups.flatMap((group) =>
-    group.items
-      .map((issue) => issue.assignee?.name)
-      .filter((name): name is string => name !== undefined),
-  );
-
-  return [
-    { value: assigneeFilterValue(), label: "Unassigned" },
-    ...[...new Set(names)]
-      .toSorted((a, b) => a.localeCompare(b))
-      .map((name) => ({ value: assigneeFilterValue(name), label: name })),
-  ];
-}
-
-function sortLabel(sort: BoardSort) {
-  if (sort === "priority") return "Priority first";
-  if (sort === "updated") return "Recently updated";
-  return "Provider order";
-}
-
-function getIssueTypes(groups: IssueGroup[]) {
-  return [...new Set(groups.flatMap((group) => group.items.map((issue) => issue.type)))].sort();
 }
 
 function NoResults({ onClear }: { onClear: () => void }) {
