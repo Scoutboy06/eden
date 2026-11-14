@@ -371,7 +371,7 @@ export class SandboxService {
     const { warnings, postHookFailure } = await this.recreate(input, snapshot);
 
     const restoring = snapshotSettings !== undefined && input.restore;
-    if (restoring) await this.restoreRebuilt(name, snapshot);
+    if (restoring) await this.restoreRebuilt(name, snapshot, warnings, postHookFailure);
     const restored = restoring && snapshot !== undefined;
 
     if (postHookFailure) {
@@ -381,6 +381,7 @@ export class SandboxService {
         postHookFailure,
         restored ? undefined : snapshot,
         restored ? snapshot : undefined,
+        { warnings },
       );
     }
 
@@ -423,6 +424,17 @@ export class SandboxService {
   }
 
   async create(input: CreateSandboxInput, path?: string): Promise<{ warnings: string[] }> {
+    const warnings: string[] = [];
+    await this.createCollectingWarnings(input, warnings, path);
+
+    return { warnings };
+  }
+
+  private async createCollectingWarnings(
+    input: CreateSandboxInput,
+    collected: string[],
+    path?: string,
+  ): Promise<void> {
     const requestedHostWorkspace = input.workspace?.mode === "host";
     const profileAllowsHostWorkspace = this.profile?.workspace?.mode === "host";
     if (requestedHostWorkspace && !profileAllowsHostWorkspace) {
@@ -436,6 +448,7 @@ export class SandboxService {
     validateSandboxInput(resolved.name, resolved.image);
     await resolveSandboxPaths(resolved, path);
     const warnings = workspaceWarnings(resolved);
+    collected.push(...warnings);
     for (const warning of warnings) {
       this.onWarning?.(warning);
     }
@@ -462,8 +475,6 @@ export class SandboxService {
     );
 
     await this.runCreatePostHook(post, hookInput);
-
-    return { warnings };
   }
 
   private async recreate(
@@ -471,20 +482,35 @@ export class SandboxService {
     snapshot: SandboxSnapshot | undefined,
   ): Promise<{ warnings: string[]; postHookFailure?: PostHookFailure }> {
     const { name } = input;
+    const warnings: string[] = [];
     try {
-      const { warnings } = await this.create({ name, image: input.image }, input.path);
+      await this.createCollectingWarnings({ name, image: input.image }, warnings, input.path);
 
       return { warnings };
     } catch (error) {
       if (!(error instanceof PostHookFailure)) {
-        throw rebuildFailure(name, "removed but could not be recreated", error, snapshot);
+        throw rebuildFailure(
+          name,
+          "removed but could not be recreated",
+          error,
+          snapshot,
+          undefined,
+          {
+            warnings,
+          },
+        );
       }
 
-      return { warnings: [], postHookFailure: error };
+      return { warnings, postHookFailure: error };
     }
   }
 
-  private async restoreRebuilt(name: string, snapshot: SandboxSnapshot | undefined): Promise<void> {
+  private async restoreRebuilt(
+    name: string,
+    snapshot: SandboxSnapshot | undefined,
+    warnings: string[],
+    hookFailure: PostHookFailure | undefined,
+  ): Promise<void> {
     try {
       await restoreSandbox(this.snapshotContext(), name, snapshot ?? pendingSnapshot);
     } catch (error) {
@@ -493,6 +519,8 @@ export class SandboxService {
         "recreated but its snapshot could not be restored",
         error,
         snapshot,
+        undefined,
+        { warnings, hookFailure },
       );
     }
   }
@@ -829,6 +857,7 @@ function rebuildFailure(
   error: unknown,
   snapshot: SandboxSnapshot | undefined,
   restoredSnapshot?: SandboxSnapshot,
+  extra: { warnings?: string[]; hookFailure?: unknown } = {},
 ): SandboxError {
   const code =
     error instanceof SandboxError && error.code === "CANCELLED"
@@ -838,11 +867,17 @@ function rebuildFailure(
     ? ` Its snapshot ${snapshot.id} is kept at ${snapshot.path}; restore it with eden sbx restore --name ${name} --snapshot ${snapshot.id}.`
     : "";
 
+  const hook =
+    extra.hookFailure === undefined
+      ? ""
+      : ` Its create post hook had also failed: ${errorMessage(extra.hookFailure)}`;
+  const warned = extra.warnings?.length ? ` Warnings: ${extra.warnings.join("; ")}` : "";
+
   const restored = restoredSnapshot ? ` Its snapshot ${restoredSnapshot.id} was restored.` : "";
 
   return new SandboxError(
     code,
-    `Sandbox ${name} was ${state}: ${errorMessage(error)}${restored}${kept}`,
+    `Sandbox ${name} was ${state}: ${errorMessage(error)}${hook}${warned}${restored}${kept}`,
   );
 }
 

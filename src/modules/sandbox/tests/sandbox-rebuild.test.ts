@@ -11,14 +11,23 @@ const input = { name: "box", force: true, snapshot: true, restore: true };
 
 async function rebuildHarness(
   directory: string,
-  options: { dryRun?: boolean; createFailure?: boolean; snapshotPaths?: boolean } = {},
+  options: {
+    dryRun?: boolean;
+    createFailure?: boolean;
+    snapshotPaths?: boolean;
+    restoreFailure?: boolean;
+    hostWorkspace?: boolean;
+  } = {},
 ) {
   const transfers: TransferSandboxInput[] = [];
   const store = new FileSandboxSnapshotStore(join(directory, "snapshots"));
   const profile =
     options.snapshotPaths === false
       ? { template: "img:1" }
-      : { snapshot: { paths: ["~/.claude"] } };
+      : {
+          snapshot: { paths: ["~/.claude"] },
+          ...(options.hostWorkspace ? { workspace: { mode: "host" as const } } : {}),
+        };
   const harness = await createSandboxHarness({
     directory,
     profile: "keep",
@@ -39,6 +48,7 @@ async function rebuildHarness(
     transfer: async (request) => {
       transfers.push(request);
       if (request.stdoutFile) await Bun.write(request.stdoutFile, archive);
+      if (request.stdinFile && options.restoreFailure) return { exitCode: 1, stderr: "disk full" };
 
       return { exitCode: 0, stderr: "" };
     },
@@ -138,6 +148,26 @@ test("rebuild reports a failing create post hook as recreated, not as lost", asy
     const skippedMessage = (skippedFailure as Error).message;
     expect(skippedMessage).toContain("recreated but its create post hook failed");
     expect(skippedMessage).toContain("restore it with eden sbx restore --name box --snapshot");
+  });
+});
+
+test("rebuild reports both a failing create post hook and a failing restore, with its warnings", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const hooks = join(directory, "hooks");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "sandbox.create.post.ts"), "process.exitCode = 3;\n");
+    const { service } = await rebuildHarness(directory, {
+      restoreFailure: true,
+      hostWorkspace: true,
+    });
+
+    const failure = await service.rebuild(input).catch((error: unknown) => error);
+
+    const message = (failure as Error).message;
+    expect(failure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
+    expect(message).toContain("recreated but its snapshot could not be restored");
+    expect(message).toContain("create post hook had also failed");
+    expect(message).toContain("Host workspace or mount is writable");
   });
 });
 
