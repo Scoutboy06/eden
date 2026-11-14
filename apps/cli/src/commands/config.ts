@@ -13,12 +13,7 @@ const get = defineCommand({
 
     output.write({
       data: { value: value ?? null },
-      human: () =>
-        value === undefined
-          ? ""
-          : typeof value === "object"
-            ? Bun.YAML.stringify(value).trimEnd()
-            : String(value),
+      human: () => formatConfigValue(value),
     });
   },
 });
@@ -43,3 +38,9 @@ export default defineCommand({
   description: "Read effective configuration and manage global settings",
   subCommands: { get, set },
 });
+
+function formatConfigValue(value: unknown): string {
+  if (value === undefined) return "";
+  if (typeof value !== "object") return String(value);
+  return Bun.YAML.stringify(value).trimEnd();
+}

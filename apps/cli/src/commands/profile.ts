@@ -9,15 +9,7 @@ const list = defineCommand({
 
     output.write({
       data: { profiles },
-      human: () =>
-        profiles.length === 0
-          ? "No sandbox profiles configured."
-          : profiles
-              .map(
-                (profile) =>
-                  `${profile.name}  ${profile.provider ?? "(no provider)"}\n  Sources: ${profile.sources.join(", ") || "no recorded fields"}${profile.providerSource?.type === "file" ? `\n  Default provider: ${profile.providerSource.path}` : ""}`,
-              )
-              .join("\n"),
+      human: () => formatProfileList(profiles),
     });
   },
 });
@@ -31,12 +23,7 @@ const show = defineCommand({
 
     output.write({
       data: { profile },
-      human: () =>
-        `${Bun.YAML.stringify({ name: profile.name, provider: profile.provider, settings: profile.profile }).trimEnd()}\nSources:\n${
-          Object.entries(profile.provenance)
-            .map(([key, source]) => `  ${key}: ${source.type === "file" ? source.path : "default"}`)
-            .join("\n") || "  no recorded fields"
-        }${profile.providerSource?.type === "file" ? `\n  sandbox.default_provider: ${profile.providerSource.path}` : ""}`,
+      human: () => formatProfile(profile),
     });
   },
 });
@@ -70,3 +57,42 @@ export default defineCommand({
   description: "Inspect sandbox profiles",
   subCommands: { list, show, "update-template": updateTemplate },
 });
+
+function formatProfileList(profiles: ReturnType<typeof listProfiles>): string {
+  if (profiles.length === 0) return "No sandbox profiles configured.";
+  return profiles.map(formatProfileListItem).join("\n");
+}
+
+function formatProfileListItem(profile: ReturnType<typeof listProfiles>[number]): string {
+  const provider = profile.provider ?? "(no provider)";
+  const sources = profile.sources.join(", ") || "no recorded fields";
+  const providerSource = formatProviderSource(profile.providerSource, "\n  Default provider: ");
+
+  return `${profile.name}  ${provider}\n  Sources: ${sources}${providerSource}`;
+}
+
+function formatProfile(profile: ReturnType<typeof describeProfile>): string {
+  const settings = Bun.YAML.stringify({
+    name: profile.name,
+    provider: profile.provider,
+    settings: profile.profile,
+  }).trimEnd();
+  const sources =
+    Object.entries(profile.provenance)
+      .map(([key, source]) => `  ${key}: ${source.type === "file" ? source.path : "default"}`)
+      .join("\n") || "  no recorded fields";
+  const providerSource = formatProviderSource(
+    profile.providerSource,
+    "\n  sandbox.default_provider: ",
+  );
+
+  return `${settings}\nSources:\n${sources}${providerSource}`;
+}
+
+function formatProviderSource(
+  source: ReturnType<typeof describeProfile>["providerSource"],
+  prefix: string,
+): string {
+  if (source?.type !== "file") return "";
+  return `${prefix}${source.path}`;
+}

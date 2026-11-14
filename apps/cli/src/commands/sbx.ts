@@ -40,12 +40,7 @@ const create = defineCommand({
         sandbox: { provider: service.providerName, name: ctx.values.name },
         ...(warnings.length ? { warnings } : {}),
       },
-      human: () =>
-        formatMessage(
-          `Created sandbox ${ctx.values.name} using ${service.providerName}.\n\nAttach with Eden:\n  eden sbx run --provider ${service.providerName} --name ${quoteShellArgument(ctx.values.name)}`,
-          "success",
-          "stdout",
-        ),
+      human: () => formatCreatedSandbox(ctx.values.name, service.providerName),
     });
   },
 });
@@ -193,8 +188,7 @@ const list = defineCommand({
       const result = await checkSandboxFreshness(sandboxes, config.config.sandbox?.profiles ?? {});
       output.write({
         data: result,
-        human: () =>
-          `${formatSandboxes(result.sandboxes)}${result.sandboxes.map((entry) => `\n  ${entry.name}: ${entry.freshness.state} — ${entry.freshness.reason}`).join("")}${result.warnings.map((warning) => `\nWarning: ${warning}`).join("")}`,
+        human: () => formatFreshSandboxList(result),
       });
       return;
     }
@@ -213,7 +207,28 @@ export default defineCommand({
 });
 
 function quoteShellArgument(value: string): string {
-  return /^[a-zA-Z0-9_./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+  if (/^[a-zA-Z0-9_./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function formatCreatedSandbox(name: string, provider: string): string {
+  const quotedName = quoteShellArgument(name);
+  const message = `Created sandbox ${name} using ${provider}.\n\nAttach with Eden:\n  eden sbx run --provider ${provider} --name ${quotedName}`;
+
+  return formatMessage(message, "success", "stdout");
+}
+
+function formatFreshSandboxList(result: {
+  sandboxes: Array<SandboxSummary & { freshness: { state: string; reason: string } }>;
+  warnings: string[];
+}): string {
+  const table = formatSandboxes(result.sandboxes);
+  const freshness = result.sandboxes
+    .map((entry) => `\n  ${entry.name}: ${entry.freshness.state} — ${entry.freshness.reason}`)
+    .join("");
+  const warnings = result.warnings.map((warning) => `\nWarning: ${warning}`).join("");
+
+  return `${table}${freshness}${warnings}`;
 }
 
 function formatSandboxes(sandboxes: readonly SandboxSummary[]): string {
