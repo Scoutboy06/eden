@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, normalize } from "node:path";
 import { runGit } from "../../external/simple-git/git";
 import { parseRepositoryStatus } from "./status";
 
@@ -78,7 +78,7 @@ export class GitModule {
     const worktrees = new Map<string, string[]>();
     let path = "";
     for (const record of worktreeOutput.split("\0")) {
-      if (record.startsWith("worktree ")) path = record.slice("worktree ".length);
+      if (record.startsWith("worktree ")) path = normalize(record.slice("worktree ".length));
       else if (record.startsWith("branch ")) {
         const ref = record.slice("branch ".length);
         worktrees.set(ref, [...(worktrees.get(ref) ?? []), path]);
@@ -115,7 +115,7 @@ export class GitModule {
     for (const record of output.split("\0")) {
       if (record.startsWith("worktree ")) {
         if (path !== undefined) worktrees.push({ path, branch });
-        path = record.slice("worktree ".length);
+        path = normalize(record.slice("worktree ".length));
         branch = null;
       } else if (record.startsWith("branch ")) {
         branch = displayRef(record.slice("branch ".length));

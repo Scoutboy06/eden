@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -8,7 +9,7 @@ describe("GitModule read API", () => {
   let directory: string;
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), "eden-git-read-"));
+    directory = realpathSync.native(await mkdtemp(join(tmpdir(), "eden-git-read-")));
     await GitModule.execute(directory, ["init", "-b", "main"]);
     await GitModule.execute(directory, ["config", "user.name", "Eden Test"]);
     await GitModule.execute(directory, ["config", "user.email", "eden@example.test"]);
@@ -24,34 +25,37 @@ describe("GitModule read API", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  test("reports unborn, detached, staged, unstaged, untracked, and NUL-delimited rename paths", async () => {
-    const initial = await GitModule.status(directory);
-    expect(initial.head).toEqual({ kind: "unborn", branch: "main" });
+  test.skipIf(process.platform === "win32")(
+    "reports unborn, detached, staged, unstaged, untracked, and NUL-delimited rename paths",
+    async () => {
+      const initial = await GitModule.status(directory);
+      expect(initial.head).toEqual({ kind: "unborn", branch: "main" });
 
-    await writeFile(join(directory, "old name.txt"), "first\n");
-    await GitModule.execute(directory, ["add", "."]);
-    await GitModule.execute(directory, ["commit", "-m", "initial"]);
-    await GitModule.execute(directory, ["mv", "old name.txt", "new name.txt"]);
-    await writeFile(join(directory, "new name.txt"), "changed\n");
-    await writeFile(join(directory, "untracked\nname.txt"), "new\n");
+      await writeFile(join(directory, "old name.txt"), "first\n");
+      await GitModule.execute(directory, ["add", "."]);
+      await GitModule.execute(directory, ["commit", "-m", "initial"]);
+      await GitModule.execute(directory, ["mv", "old name.txt", "new name.txt"]);
+      await writeFile(join(directory, "new name.txt"), "changed\n");
+      await writeFile(join(directory, "untracked\nname.txt"), "new\n");
 
-    const status = await GitModule.status(directory);
-    expect(status.head.kind).toBe("branch");
-    expect(status.staged).toContainEqual(
-      expect.objectContaining({
-        path: "new name.txt",
-        originalPath: "old name.txt",
-        indexStatus: "R",
-      }),
-    );
-    expect(status.unstaged).toContainEqual(
-      expect.objectContaining({ path: "new name.txt", worktreeStatus: "M" }),
-    );
-    expect(status.untracked).toEqual(["untracked\nname.txt"]);
+      const status = await GitModule.status(directory);
+      expect(status.head.kind).toBe("branch");
+      expect(status.staged).toContainEqual(
+        expect.objectContaining({
+          path: "new name.txt",
+          originalPath: "old name.txt",
+          indexStatus: "R",
+        }),
+      );
+      expect(status.unstaged).toContainEqual(
+        expect.objectContaining({ path: "new name.txt", worktreeStatus: "M" }),
+      );
+      expect(status.untracked).toEqual(["untracked\nname.txt"]);
 
-    await GitModule.execute(directory, ["checkout", "--detach"]);
-    expect((await GitModule.status(directory)).head.kind).toBe("detached");
-  });
+      await GitModule.execute(directory, ["checkout", "--detach"]);
+      expect((await GitModule.status(directory)).head.kind).toBe("detached");
+    },
+  );
 
   test("lists local branch commit, upstream counts, and associated worktree paths", async () => {
     await writeFile(join(directory, "file"), "content\n");
