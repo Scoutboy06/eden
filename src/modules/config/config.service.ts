@@ -1,14 +1,18 @@
 import { homedir } from "node:os";
-import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import * as v from "valibot";
+import { join } from "node:path";
 import { Document, parseDocument } from "yaml";
 import type { Execution } from "../execution";
 import { ConfigYamlEditor } from "./edit";
-import { ConfigError } from "./errors";
-import { ConfigSchema, type Config } from "./schema";
+import {
+  readConfigFile,
+  readValidatedConfig,
+  parseConfigYaml,
+  validateConfig,
+  writeConfigFile,
+} from "./file";
+import { mergeConfigLayer, omitHosts } from "./layers";
+import type { Config } from "./schema";
 import { configLeafPath } from "./select";
-import { formatConfigPath } from "./path";
 
 export interface ConfigReader {
   read(): Promise<Config>;
@@ -254,95 +258,6 @@ function editDraft(text: string | undefined, changes: ConfigChanges) {
   return { edited: document.toString(), changed };
 }
 
-function mergeConfigLayer(
-  target: Record<string, unknown>,
-  layer: Record<string, unknown>,
-  provenance: Record<string, ConfigSource>,
-  path: string,
-  prefix: string[] = [],
-): void {
-  for (const [key, value] of Object.entries(layer)) {
-    const keys = [...prefix, key];
-
-    if (isConfigObject(value)) {
-      mergeConfigObject(target, key, value, provenance, path, keys, prefix);
-      continue;
-    }
-
-    setConfigValue(target, key, value);
-    clearConfigProvenance(provenance, keys);
-    provenance[formatConfigPath(keys)] = { type: "file", path };
-  }
-}
-
-function mergeConfigObject(
-  target: Record<string, unknown>,
-  key: string,
-  value: Record<string, unknown>,
-  provenance: Record<string, ConfigSource>,
-  path: string,
-  keys: string[],
-  prefix: string[],
-): void {
-  const wasPresent = Object.hasOwn(target, key);
-  const current = wasPresent ? target[key] : undefined;
-  if (!isConfigObject(current)) {
-    clearConfigProvenance(provenance, keys);
-    setConfigValue(target, key, {});
-  }
-
-  applyProfileProvenance(target, key, value, provenance, path, keys, prefix, wasPresent);
-  mergeConfigLayer(target[key] as Record<string, unknown>, value, provenance, path, keys);
-}
-
-function applyProfileProvenance(
-  target: Record<string, unknown>,
-  key: string,
-  value: Record<string, unknown>,
-  provenance: Record<string, ConfigSource>,
-  path: string,
-  keys: string[],
-  prefix: string[],
-  wasPresent: boolean,
-): void {
-  if (prefix[0] !== "sandbox" || prefix[1] !== "profiles" || prefix.length !== 2) return;
-
-  const profilePath = formatConfigPath(keys);
-  if (Object.keys(value).length === 0 && !wasPresent) {
-    provenance[profilePath] = { type: "file", path };
-  } else if (Object.keys(value).length > 0) {
-    delete provenance[profilePath];
-  }
-}
-
-function isConfigObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function omitHosts(config: Record<string, unknown>): Record<string, unknown> {
-  const { hosts: _hosts, ...localConfig } = config;
-  return localConfig;
-}
-
-function setConfigValue(target: Record<string, unknown>, key: string, value: unknown): void {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    writable: true,
-    configurable: true,
-  });
-}
-
-function clearConfigProvenance(provenance: Record<string, ConfigSource>, keys: string[]): void {
-  const prefix = formatConfigPath(keys);
-
-  for (const key of Object.keys(provenance)) {
-    if (key === prefix || key.startsWith(`${prefix}.`) || key.startsWith(`${prefix}[`)) {
-      delete provenance[key];
-    }
-  }
-}
-
 async function prepareConfigUpdate(path: string, key: string, value: string): Promise<string> {
   const { text } = await readValidatedConfig(path);
   const keys = configLeafPath(key);
@@ -351,100 +266,6 @@ async function prepareConfigUpdate(path: string, key: string, value: string): Pr
   validateConfig(parseConfigYaml(edited, path), path);
 
   return edited;
-}
-
-async function readValidatedConfig(
-  path: string,
-): Promise<{ text: string | undefined; parsed: Record<string, unknown> }> {
-  const text = await readConfigFile(path);
-  const parsed = parseConfigYaml(text ?? "{}", path);
-
-  validateConfig(parsed, path);
-
-  return { text, parsed: parsed as Record<string, unknown> };
-}
-
-async function writeConfigFile(path: string, text: string): Promise<void> {
-  let temporary: string | undefined;
-
-  try {
-    const destination = await realpath(path).catch(async (error: unknown) => {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-
-      const entry = await lstat(path).catch((error: unknown) => {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-
-        throw error;
-      });
-
-      if (entry?.isSymbolicLink()) throw error;
-
-      return path;
-    });
-    await mkdir(dirname(destination), { recursive: true });
-    const mode = await stat(destination)
-      .then((info) => info.mode & 0o777)
-      .catch((error: unknown) => {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") return 0o600;
-
-        throw error;
-      });
-    temporary = join(dirname(destination), `.eden-config-${crypto.randomUUID()}.tmp`);
-    const file = await open(temporary, "wx", mode);
-
-    try {
-      await file.chmod(mode);
-      await file.writeFile(text);
-      await file.sync();
-    } finally {
-      await file.close();
-    }
-
-    await rename(temporary, destination);
-  } catch {
-    throw new ConfigError("CONFIG_WRITE_FAILED", path);
-  } finally {
-    if (temporary) await rm(temporary, { force: true }).catch(() => {});
-  }
-}
-
-async function readConfigFile(path: string): Promise<string | undefined> {
-  try {
-    return await Bun.file(path).text();
-  } catch (error) {
-    const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-
-    if (missing) return undefined;
-
-    throw new ConfigError("CONFIG_READ_FAILED", path);
-  }
-}
-
-function parseConfigYaml(text: string, path: string): unknown {
-  if (/^\s*(?:#[^\r\n]*(?:\r?\n|$)\s*)*$/u.test(text)) {
-    throw new ConfigError("CONFIG_EMPTY", path);
-  }
-
-  try {
-    return Bun.YAML.parse(text);
-  } catch {
-    throw new ConfigError("CONFIG_YAML_INVALID", path);
-  }
-}
-
-function validateConfig(parsed: unknown, path: string): Config {
-  const result = v.safeParse(ConfigSchema, parsed);
-
-  if (!result.success) {
-    const issues = result.issues.map((issue) => ({
-      path: formatConfigPath(issue.path?.map((item) => String(item.key)) ?? []),
-      message: issue.message,
-    }));
-
-    throw new ConfigError("CONFIG_SCHEMA_INVALID", path, issues);
-  }
-
-  return result.output;
 }
 
 async function saveProjectRegistry({
