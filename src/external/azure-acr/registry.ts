@@ -41,7 +41,13 @@ export async function azureManifestDigest(
   const accessToken = await exchangeToken(image, refreshToken, request);
   const response = await request(
     `https://${image.host}/v2/${image.repository}/manifests/${encodeURIComponent(image.tag)}`,
-    { method: "HEAD", headers: { authorization: `Bearer ${accessToken}`, accept: manifestAccept } },
+    {
+      method: "HEAD",
+      headers: {
+        authorization: `Bearer ${accessToken}, signal: AbortSignal.timeout(15000)`,
+        accept: manifestAccept,
+      },
+    },
   ).catch((error: unknown) => {
     throw failure(`Could not reach registry ${image.host}: ${message(error)}`);
   });
@@ -63,6 +69,14 @@ export async function azureDockerLogin(
   await runAz(["acr", "login", "--name", registryName(host), "--only-show-errors"]);
 }
 
+export function azureCliFailure(stderr: string): SandboxError {
+  const detail = stderr.trim().slice(0, 300);
+  if (/az login|AADSTS|not logged in|credentials/i.test(detail))
+    return failure("Azure CLI is not logged in; run az login and retry.");
+
+  return failure(`az failed while authenticating to the registry. ${detail}`.trim());
+}
+
 async function runAzureCli(args: string[]): Promise<string> {
   const result = await ScriptRunner.run("az", null, { args }).catch(() => {
     throw failure("Could not start az; install the Azure CLI and run az login.");
@@ -71,14 +85,6 @@ async function runAzureCli(args: string[]): Promise<string> {
   if (result.outcome !== "exited" || result.exitCode !== 0) throw azureCliFailure(result.stderr);
 
   return result.stdout;
-}
-
-export function azureCliFailure(stderr: string): SandboxError {
-  const detail = stderr.trim();
-  if (/az login|AADSTS|not logged in|credentials/i.test(detail))
-    return failure("Azure CLI is not logged in; run az login and retry.");
-
-  return failure(`az failed while authenticating to the registry. ${detail}`.trim());
 }
 
 async function exposeRefreshToken(host: string, runAz: AzureCliRunner): Promise<string> {
@@ -106,6 +112,7 @@ async function exchangeToken(
 ): Promise<string> {
   const response = await request(`https://${image.host}/oauth2/token`, {
     method: "POST",
+    signal: AbortSignal.timeout(15000),
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",

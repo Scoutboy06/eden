@@ -263,3 +263,55 @@ test("uses provider image ID and reports sandbox attribution without exposing in
     ).toBe(0);
   });
 });
+
+function azLogPath(directory: string) {
+  return join(directory, "az-commands");
+}
+
+async function azureProfile(options: TemplateOptions, directory: string, registryAuth?: string) {
+  await installExecutable(new URL("./fixtures/az-freshness.ts", import.meta.url), directory, "az");
+  const azLog = azLogPath(directory);
+  options.env["EDEN_FRESHNESS_LOG"] = azLog;
+  await writeFile(
+    join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+    stringify({
+      sandbox: {
+        default_provider: "docker-sbx",
+        profiles: {
+          work: {
+            template: "exampleacr.azurecr.io/team/image:latest",
+            ...(registryAuth ? { registry_auth: registryAuth } : {}),
+          },
+        },
+      },
+    }),
+  );
+}
+
+test("an azurecr.io template authenticates through az and stops with a login hint before pulling", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await setup(directory);
+    await azureProfile(options, directory);
+
+    const result = await runCliWith(options, "profile", "update-template", "work", "--json");
+    const azCommands = await Bun.file(azLogPath(directory)).text();
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("run az login");
+    expect(azCommands).toContain('"--expose-token"');
+    expect(await Bun.file(options.env.EDEN_TEMPLATE_LOG).exists()).toBe(false);
+  });
+});
+
+test("registry_auth docker keeps an azurecr.io template on Docker credentials", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const options = await setup(directory);
+    await azureProfile(options, directory, "docker");
+
+    await runCliWith(options, "profile", "update-template", "work", "--json");
+    const log = await commands(options.env.EDEN_TEMPLATE_LOG);
+
+    expect(log[0]!.slice(0, 3)).toEqual(["docker", "buildx", "imagetools"]);
+    expect(await Bun.file(azLogPath(directory)).exists()).toBe(false);
+  });
+});
