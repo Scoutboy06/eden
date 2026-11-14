@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createExecution } from "../../execution";
 import { SandboxService } from "../sandbox.service";
+import type { SandboxProfile } from "../../config/schema";
 import type { SandboxProvider } from "../provider";
 import { createIsolatedHooks } from "./support/hooks";
 
@@ -381,3 +382,45 @@ test("start reports a provider without start support", async () => {
     ).start("example"),
   ).rejects.toMatchObject({ code: "SANDBOX_PROVIDER_UNAVAILABLE" });
 });
+
+test.each<[string, SandboxProfile["shell"], string | undefined, string[]]>([
+  ["stopped", undefined, undefined, ["start", "exec:bash -l:undefined"]],
+  ["running", undefined, undefined, ["exec:bash -l:undefined"]],
+  ["running", { cwd: "/profile", command: ["zsh", "-l"] }, undefined, ["exec:zsh -l:/profile"]],
+  ["running", { cwd: "/profile" }, "/flag", ["exec:bash -l:/flag"]],
+])(
+  "shell with status=%s and profile shell %j and cwd %p starts then opens a login shell",
+  async (status, shell, cwd, expected) => {
+    const execution = createExecution({ dryRun: false });
+    const calls: string[] = [];
+    const provider: SandboxProvider = {
+      name: "docker-sbx",
+      readinessChecks: () => [],
+      preflight: async () => {},
+      list: async () => [{ provider: "docker-sbx", name: "example", status }],
+      run: async () => 0,
+      create: async () => {},
+      start: async () => {
+        calls.push("start");
+      },
+      exec: async (input) => {
+        calls.push(`exec:${input.argv.join(" ")}:${input.workdir}`);
+        expect(input).toMatchObject({ name: "example", output: "inherit", tty: true });
+
+        return { exitCode: 3, stdout: "", stderr: "" };
+      },
+      stop: async () => {},
+    };
+
+    const result = await new SandboxService(
+      execution,
+      provider,
+      shell === undefined ? undefined : { name: "work", shell },
+      undefined,
+      createIsolatedHooks(execution),
+    ).shell({ name: "example", cwd });
+
+    expect(calls).toEqual(expected);
+    expect(result).toEqual({ exitCode: 3, stdout: "", stderr: "" });
+  },
+);

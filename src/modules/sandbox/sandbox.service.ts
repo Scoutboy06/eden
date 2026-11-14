@@ -31,6 +31,10 @@ import type {
 } from "./provider";
 import { DockerSandboxProvider } from "../../external/docker-sbx/provider";
 
+export type ShellSandboxInput = { name: string; cwd?: string };
+
+const defaultShellCommand = ["bash", "-l"];
+
 export class SandboxService {
   get providerName(): SandboxProviderName {
     return this.provider.name;
@@ -112,6 +116,23 @@ export class SandboxService {
       },
     );
     return result;
+  }
+
+  async shell(input: ShellSandboxInput): Promise<ExecSandboxResult | undefined> {
+    validateSandboxInput(input.name);
+    const sandbox = await this.requireSandbox(input.name);
+    const settings = this.profile?.shell;
+    if (sandbox.status === "stopped" && this.provider.start) {
+      await this.startSandbox(sandbox);
+    }
+
+    return this.exec({
+      name: input.name,
+      argv: settings?.command ?? defaultShellCommand,
+      output: "inherit",
+      tty: true,
+      workdir: input.cwd ?? settings?.cwd,
+    });
   }
 
   async ssh(name: string): Promise<SshAccess & { status: string }> {
