@@ -103,14 +103,15 @@ test("opt-in checks use verified receipt to classify sandbox images without writ
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(
-      log.every(
-        (args: string[]) => args[0] === "sbx" || (args[0] === "docker" && args[1] === "buildx"),
-      ),
-    ).toBe(true);
-    expect(log.some((args: string[]) => args.includes("pull") || args.includes("load"))).toBe(
-      false,
+    const commandsAreReadOnly = log.every(
+      (args: string[]) => args[0] === "sbx" || (args[0] === "docker" && args[1] === "buildx"),
     );
+    const fetchedOrLoadedTemplate = log.some(
+      (args: string[]) => args.includes("pull") || args.includes("load"),
+    );
+
+    expect(commandsAreReadOnly).toBe(true);
+    expect(fetchedOrLoadedTemplate).toBe(false);
   });
 });
 
