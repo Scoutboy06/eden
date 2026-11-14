@@ -78,7 +78,9 @@ test("only registered project keys resolve tasks and project metadata omits path
       return [];
     },
     async (url) => {
-      const projects = await fetch(`${url}/api/projects`).then((response) => response.json());
+      const response = await fetch(`${url}/api/projects`);
+      const projects = await response.json();
+
       expect(projects).toEqual({
         projects: [
           { key: "eden", name: "Eden" },
@@ -86,9 +88,14 @@ test("only registered project keys resolve tasks and project metadata omits path
         ],
       });
       expect(JSON.stringify(projects)).not.toContain("/private");
-      expect((await fetch(`${url}/api/tasks?project=missing`)).status).toBe(404);
-      expect((await fetch(`${url}/api/tasks?project=toString`)).status).toBe(404);
-      expect((await fetch(`${url}/api/tasks?project=Eden%20%26%20Co`)).status).toBe(200);
+
+      const missingProject = await fetch(`${url}/api/tasks?project=missing`);
+      const prototypeProject = await fetch(`${url}/api/tasks?project=toString`);
+      const encodedProject = await fetch(`${url}/api/tasks?project=Eden%20%26%20Co`);
+
+      expect(missingProject.status).toBe(404);
+      expect(prototypeProject.status).toBe(404);
+      expect(encodedProject.status).toBe(200);
       expect(calls).toEqual(["/private/repo"]);
     },
   );
@@ -98,7 +105,9 @@ test("empty and unreadable project registries are distinguishable", async () => 
   await withServer(
     async () => [],
     async (url) => {
-      const projects = await fetch(`${url}/api/projects`).then((response) => response.json());
+      const response = await fetch(`${url}/api/projects`);
+      const projects = await response.json();
+
       expect(projects).toEqual({ projects: [] });
     },
     async () => ({}),
@@ -114,6 +123,7 @@ test("empty and unreadable project registries are distinguishable", async () => 
   const server = createServer((request, response) => void middleware(request, response, () => {}));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
+
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/projects`);
     expect(response.status).toBe(503);
