@@ -10,6 +10,7 @@ export type SandboxSummary = {
   provider: SandboxProviderName;
   name: string;
   status: string;
+  workspace?: string;
 };
 export type CreateSandboxInput = {
   name: string;

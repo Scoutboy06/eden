@@ -16,6 +16,11 @@ test.each([
     '{"sandboxes":[{"name":"two","status":"future"}]}',
     [{ provider: "docker-sbx", name: "two", status: "future" }],
   ],
+  [
+    "workspaces",
+    '[{"name":"one","status":"stopped","workspaces":["/work/repo","/cache:ro"]}]',
+    [{ provider: "docker-sbx", name: "one", status: "stopped", workspace: "/work/repo" }],
+  ],
   ["empty", "[]", []],
 ] as const)("normalizes Docker listing %s", async (_label, stdout, expected) => {
   const provider = new DockerSandboxProvider(undefined, {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith, withRunningCli } from "./support/cli";
@@ -154,3 +155,23 @@ test.skipIf(process.platform === "win32" || !Bun.which("script"))(
     });
   },
 );
+
+test("exec infers the sandbox from the current checkout", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const checkout = join(directory, "My Project");
+    await mkdir(join(checkout, ".git"), { recursive: true });
+    const options = await prepareSandboxCli(directory, "running", "my-project");
+
+    const result = await runCliWith(
+      { ...options, cwd: checkout },
+      "sbx",
+      "exec",
+      "--json",
+      "--",
+      "ls",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect((await sandboxCommands(directory)).at(-1)).toEqual(["exec", "--", "my-project", "ls"]);
+  });
+});

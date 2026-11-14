@@ -6,6 +6,8 @@ import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
 import { SandboxError } from "./errors";
+import { findCheckout } from "./sandbox-checkout";
+import { inferSandbox, type InferredSandbox } from "./sandbox-inference";
 import {
   createAuditInput,
   describeCreation,
@@ -40,6 +42,12 @@ export class SandboxService {
 
   list(): Promise<SandboxSummary[]> {
     return this.provider.list();
+  }
+
+  async infer(cwd: string): Promise<InferredSandbox> {
+    const checkout = await findCheckout(cwd);
+
+    return inferSandbox(await this.provider.list(), checkout, this.provider.name);
   }
 
   async exec(input: ExecSandboxInput): Promise<ExecSandboxResult | undefined> {

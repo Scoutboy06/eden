@@ -254,3 +254,58 @@ test("unknown sandbox status requires force", async () => {
     expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
   });
 });
+
+test("inferred removal rejects force before provider calls", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const checkout = join(directory, "My Project");
+    await mkdir(join(checkout, ".git"), { recursive: true });
+    const options = await prepareSandboxCli(directory, "stopped", "my-project");
+
+    const result = await runCliWith(
+      { ...options, cwd: checkout },
+      "sbx",
+      "rm",
+      "--force",
+      "--json",
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      code: "SANDBOX_INVALID_INPUT",
+      message: expect.stringContaining("inferred"),
+    });
+    expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
+  });
+});
+
+test("inferred removal still requires a terminal to confirm", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const checkout = join(directory, "My Project");
+    await mkdir(join(checkout, ".git"), { recursive: true });
+    const options = await prepareSandboxCli(directory, "stopped", "my-project");
+
+    const result = await runCliWith({ ...options, cwd: checkout }, "sbx", "rm", "--json");
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("SANDBOX_REMOVE_REQUIRES_FORCE");
+    expect(await Bun.file(join(directory, "commands")).exists()).toBe(false);
+  });
+});
+
+test("inferred dry-run removal names the inferred sandbox and removes nothing", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const checkout = join(directory, "My Project");
+    await mkdir(join(checkout, ".git"), { recursive: true });
+    const options = await prepareSandboxCli(directory, "stopped", "my-project");
+
+    const result = await runCliWith({ ...options, cwd: checkout }, "sbx", "rm", "--dry-run");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("Using sandbox my-project because");
+    expect(result.stdout).toContain("Remove sandbox my-project");
+    expect(await sandboxCommands(directory)).toEqual([
+      ["ls", "--json"],
+      ["ls", "--json"],
+    ]);
+  });
+});

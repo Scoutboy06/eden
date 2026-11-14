@@ -135,11 +135,16 @@ export class DockerSandboxProvider implements SandboxProvider {
 
     const entries = Array.isArray(parsed.output) ? parsed.output : parsed.output.sandboxes;
 
-    return entries.map((entry) => ({
-      provider: this.name,
-      name: entry.name,
-      status: entry.status,
-    }));
+    return entries.map((entry) => {
+      const workspace = entry.workspaces?.[0];
+
+      return {
+        provider: this.name,
+        name: entry.name,
+        status: entry.status,
+        ...(workspace === undefined ? {} : { workspace }),
+      };
+    });
   }
 
   run(name: string): Promise<number> {
@@ -320,6 +325,7 @@ const DockerSandboxEntriesSchema = v.array(
   v.object({
     name: v.string(),
     status: v.string(),
+    workspaces: v.optional(v.array(v.string())),
   }),
 );
 const DockerSandboxListSchema = v.union([

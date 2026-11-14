@@ -1,0 +1,81 @@
+import { expect, test } from "bun:test";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import type { SandboxSummary } from "../provider";
+import { inferSandbox } from "../sandbox-inference";
+
+function summary(name: string, workspace?: string): SandboxSummary {
+  return { provider: "docker-sbx", name, status: "running", ...(workspace ? { workspace } : {}) };
+}
+
+async function withCheckout<T>(action: (checkout: string) => Promise<T>) {
+  return withTemporaryDirectory(async (directory) => {
+    const checkout = join(directory, "My Project");
+    await mkdir(checkout);
+
+    return action(checkout);
+  });
+}
+
+test("prefers the sandbox whose workspace is the checkout", async () => {
+  await withCheckout(async (checkout) => {
+    const sandboxes = [summary("my-project"), summary("other", `${checkout}/`)];
+
+    expect(await inferSandbox(sandboxes, checkout, "docker-sbx")).toEqual({
+      name: "other",
+      source: "workspace",
+      checkout,
+    });
+  });
+});
+
+test("ignores the read-only suffix on a workspace", async () => {
+  await withCheckout(async (checkout) => {
+    const result = await inferSandbox([summary("one", `${checkout}:ro`)], checkout, "docker-sbx");
+
+    expect(result.name).toBe("one");
+  });
+});
+
+test.skipIf(process.platform !== "win32")(
+  "matches Windows workspaces by case and separators",
+  async () => {
+    await withCheckout(async (checkout) => {
+      const alternate = checkout.toUpperCase().replaceAll("\\", "/");
+      const result = await inferSandbox([summary("one", alternate)], checkout, "docker-sbx");
+
+      expect(result.name).toBe("one");
+    });
+  },
+);
+
+test("falls back to the derived name when no workspace matches", async () => {
+  await withCheckout(async (checkout) => {
+    const sandboxes = [summary("my-project", join(checkout, "elsewhere")), summary("other")];
+
+    expect(await inferSandbox(sandboxes, checkout, "docker-sbx")).toEqual({
+      name: "my-project",
+      source: "folder",
+      checkout,
+    });
+  });
+});
+
+test("reports every sandbox when several use the checkout", async () => {
+  await withCheckout(async (checkout) => {
+    const sandboxes = [summary("a", checkout), summary("b", checkout), summary("c")];
+
+    await expect(inferSandbox(sandboxes, checkout, "docker-sbx")).rejects.toThrow(
+      /Several sandboxes.*: a, b\. Pass --name/,
+    );
+  });
+});
+
+test("names the checkout and derived name when nothing matches", async () => {
+  await withCheckout(async (checkout) => {
+    await expect(inferSandbox([summary("other")], checkout, "docker-sbx")).rejects.toThrow(
+      /No sandbox found.*my-project.*--name/,
+    );
+  });
+});

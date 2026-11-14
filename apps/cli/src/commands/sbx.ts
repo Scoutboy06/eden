@@ -5,6 +5,7 @@ import {
 } from "../../../../src/modules/sandbox/provider";
 import { SandboxError } from "../../../../src/modules/sandbox/errors";
 import { formatMessage } from "../../../../src/modules/cli/format";
+import type { SandboxService } from "../../../../src/modules/sandbox/sandbox.service";
 import { deriveSandboxName, findCheckout } from "../../../../src/modules/sandbox/sandbox-checkout";
 
 const create = defineCommand({
@@ -61,7 +62,10 @@ const run = defineCommand({
       choices: sandboxProviderNames,
       description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
-    name: { type: "string", required: true, description: "Sandbox name" },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
   },
 
   async run(ctx, { sandbox, output }) {
@@ -75,7 +79,8 @@ const run = defineCommand({
     }
 
     const service = await sandbox({ provider: ctx.values.provider });
-    const exitCode = await service.run({ name: ctx.values.name });
+    const name = await selectName(ctx.values.name, service, json);
+    const exitCode = await service.run({ name });
 
     if (!dryRun) {
       process.exitCode = exitCode;
@@ -93,13 +98,17 @@ const exec = defineCommand({
       choices: sandboxProviderNames,
       description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
-    name: { type: "string", required: true, description: "Sandbox name" },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
   },
   async run(ctx, { sandbox, output }) {
     const { json } = ctx.extensions.eden;
     const service = await sandbox({ provider: ctx.values.provider });
+    const name = await selectName(ctx.values.name, service, json);
     const result = await service.exec({
-      name: ctx.values.name,
+      name,
       argv: ctx.rest,
       output: json ? "capture" : "inherit",
     });
@@ -174,7 +183,10 @@ const remove = defineCommand({
       choices: sandboxProviderNames,
       description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
-    name: { type: "string", required: true, description: "Sandbox name" },
+    name: {
+      type: "string",
+      description: "Sandbox name (defaults to the sandbox for the current checkout)",
+    },
     force: {
       type: "boolean",
       description: "Skip removal hook and confirmation; allow running sandbox removal",
@@ -182,6 +194,12 @@ const remove = defineCommand({
   },
   async run(ctx, { sandbox, output }) {
     const { json, dryRun } = ctx.extensions.eden;
+    if (ctx.values.name === undefined && ctx.values.force) {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "Removing an inferred sandbox cannot use --force. Pass --name to remove a sandbox without confirmation.",
+      );
+    }
     if (
       !ctx.values.force &&
       !dryRun &&
@@ -193,10 +211,11 @@ const remove = defineCommand({
       );
     }
     const service = await sandbox({ provider: ctx.values.provider });
-    await service.remove(ctx.values.name, ctx.values.force ?? false);
+    const name = await selectName(ctx.values.name, service, json);
+    await service.remove(name, ctx.values.force ?? false);
     output.write({
-      data: { sandbox: { provider: service.providerName, name: ctx.values.name } },
-      human: () => `Removed sandbox ${ctx.values.name} using ${service.providerName}.`,
+      data: { sandbox: { provider: service.providerName, name } },
+      human: () => `Removed sandbox ${name} using ${service.providerName}.`,
     });
   },
 });
@@ -238,6 +257,25 @@ export default defineCommand({
   description: "Manage sandboxes",
   subCommands: { create, run, exec, list, stop, ssh, rm: remove },
 });
+
+async function selectName(
+  explicit: string | undefined,
+  service: SandboxService,
+  json: boolean,
+): Promise<string> {
+  if (explicit !== undefined) return explicit;
+
+  const inferred = await service.infer(process.cwd());
+  if (!json) {
+    const reason =
+      inferred.source === "workspace"
+        ? "its workspace is the current checkout"
+        : "its name matches the current checkout folder";
+    process.stderr.write(`Using sandbox ${inferred.name} because ${reason}.\n`);
+  }
+
+  return inferred.name;
+}
 
 function quoteShellArgument(value: string): string {
   if (/^[a-zA-Z0-9_./-]+$/.test(value)) return value;

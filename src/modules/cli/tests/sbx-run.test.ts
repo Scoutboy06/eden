@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
@@ -130,3 +131,71 @@ test.skipIf(process.platform === "win32").each(["interrupt", "ignore"])(
     });
   },
 );
+
+async function prepareInference(directory: string, mode: string, sandboxName: string) {
+  const checkout = join(directory, "My Project");
+  await mkdir(join(checkout, ".git"), { recursive: true });
+  const options = await prepareSandboxCli(directory, mode, sandboxName);
+
+  return { checkout, options: { ...options, cwd: checkout } };
+}
+
+test("run infers the sandbox from the workspace of the current checkout", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { checkout, options } = await prepareInference(directory, "running", "custom-name");
+    options.env.EDEN_SBX_LIST_RESULT = JSON.stringify([
+      { name: "custom-name", status: "running", workspaces: [checkout] },
+      { name: "my-project", status: "running", workspaces: [join(directory, "elsewhere")] },
+    ]);
+
+    const result = await runCliWith(options, "sbx", "run");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("Using sandbox custom-name because its workspace");
+    expect(await sandboxCommands(directory)).toEqual([
+      ["ls", "--json"],
+      ["ls", "--json"],
+      ["run", "--name", "custom-name"],
+    ]);
+  });
+});
+
+test("run infers the sandbox from the derived checkout name", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { options } = await prepareInference(directory, "running", "my-project");
+
+    const result = await runCliWith(options, "sbx", "run");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("Using sandbox my-project because its name matches");
+    expect((await sandboxCommands(directory)).at(-1)).toEqual(["run", "--name", "my-project"]);
+  });
+});
+
+test("run without a matching sandbox fails without attaching", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { options } = await prepareInference(directory, "missing", "my-project");
+
+    const result = await runCliWith(options, "sbx", "run", "--dry-run", "--json");
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("SANDBOX_NOT_FOUND");
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
+  });
+});
+
+test("run with several matching sandboxes fails without attaching", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { checkout, options } = await prepareInference(directory, "running", "a");
+    options.env.EDEN_SBX_LIST_RESULT = JSON.stringify([
+      { name: "a", status: "running", workspaces: [checkout] },
+      { name: "b", status: "running", workspaces: [checkout] },
+    ]);
+
+    const result = await runCliWith(options, "sbx", "run", "--dry-run", "--json");
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error.message).toContain("a, b");
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
+  });
+});
