@@ -20,7 +20,7 @@ import { transferDockerFiles } from "./transfer";
 export { attachDockerSandbox } from "./attach";
 export type { AttachDependencies } from "./attach";
 
-type DockerOperation = "create" | "start" | "stop" | "remove" | "exec" | "kit";
+type DockerOperation = "create" | "start" | "stop" | "remove" | "exec" | "kit" | "network";
 
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
 export type DockerCommandRunner = (
@@ -235,6 +235,32 @@ export class DockerSandboxProvider implements SandboxProvider {
       input.name,
       "kit",
     );
+  }
+
+  async allowNetwork(name: string, hosts: string[]): Promise<void> {
+    await this.execute(
+      ["policy", "allow", "network", "--sandbox", name, "--", hosts.join(",")],
+      name,
+      "network",
+    );
+  }
+
+  async revokeNetwork(name: string, hosts: string[]): Promise<void> {
+    const resources = hosts.join(",");
+    try {
+      await this.execute(
+        ["policy", "rm", "network", "--sandbox", name, "--resource", resources, "--force"],
+        name,
+        "network",
+      );
+    } catch (error) {
+      if (!(error instanceof SandboxError)) throw error;
+
+      throw new SandboxError(
+        error.code,
+        `${error.message} Remove the rules by hand: sbx policy rm network --sandbox ${name} --resource ${resources}`,
+      );
+    }
   }
 
   async create(input: CreateSandboxInput): Promise<void> {
@@ -475,6 +501,9 @@ function cancellationMessage(sandboxName: string | undefined, operation: DockerO
   if (operation === "kit") {
     return `Applying a kit to sandbox ${sandboxName} cancelled. The sandbox may already have been recreated with the kit; no cleanup was attempted.`;
   }
+  if (operation === "network") {
+    return `Changing the network rules of sandbox ${sandboxName} cancelled. A rule may have been added or removed; check with sbx policy ls --wide ${sandboxName}.`;
+  }
   if (operation === "exec") return `Execution in sandbox ${sandboxName} cancelled.`;
   if (operation === "remove") {
     return `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`;
@@ -529,6 +558,13 @@ function diagnoseFailure(
     return new SandboxError(
       "SANDBOX_PREFLIGHT_FAILED",
       `Could not check Docker Sandboxes prerequisites (exit ${exitCode}).${providerDetails}`,
+    );
+  }
+
+  if (operation === "network") {
+    return new SandboxError(
+      "SANDBOX_NETWORK_RULE_FAILED",
+      `Docker Sandboxes could not change the network rules of sandbox ${name} (exit ${exitCode}).${providerDetails}`,
     );
   }
 

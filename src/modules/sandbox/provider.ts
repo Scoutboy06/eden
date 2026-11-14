@@ -57,6 +57,8 @@ export interface SandboxProvider {
 
   create(input: CreateSandboxInput): Promise<void>;
   addKit?(input: AddKitInput): Promise<void>;
+  allowNetwork?(name: string, hosts: string[]): Promise<void>;
+  revokeNetwork?(name: string, hosts: string[]): Promise<void>;
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
   exec?(input: ExecSandboxInput): Promise<ExecSandboxResult>;

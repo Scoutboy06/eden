@@ -440,3 +440,23 @@ test("kit add passes literal arguments and explains the v3 and v1/v2 kit mix", a
     message: expect.stringContaining("cannot mix v3 kits with v1/v2 kits"),
   });
 });
+
+test("network rules are scoped to the sandbox and a failed removal names the manual command", async () => {
+  const commands: string[][] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args) => {
+      commands.push(args);
+      return args[1] === "rm" ? { exitCode: 1, stdout: "", stderr: "denied" } : success;
+    },
+  });
+
+  await provider.allowNetwork("box", ["a.com", "b.com"]);
+
+  expect(commands).toEqual([
+    ["policy", "allow", "network", "--sandbox", "box", "--", "a.com,b.com"],
+  ]);
+  await expect(provider.revokeNetwork("box", ["a.com", "b.com"])).rejects.toMatchObject({
+    code: "SANDBOX_NETWORK_RULE_FAILED",
+    message: expect.stringContaining("sbx policy rm network --sandbox box --resource a.com,b.com"),
+  });
+});
