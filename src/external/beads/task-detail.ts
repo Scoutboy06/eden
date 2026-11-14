@@ -31,6 +31,10 @@ const patchSchema = v.strictObject({
     ),
   ),
 });
+const statusesSchema = v.object({
+  built_in_statuses: v.array(v.object({ name: v.string() })),
+  custom_statuses: v.optional(v.array(v.object({ name: v.string() })), []),
+});
 const execute = promisify(execFile);
 
 export type BeadsTaskDetail = v.InferOutput<typeof detailSchema>;
@@ -56,10 +60,9 @@ export function taskUpdateArguments(id: string, input: unknown): string[] {
   const args = ["update", id];
   for (const [key, value] of Object.entries(patch.output)) {
     if (value === undefined) continue;
-    args.push(
-      `--${key === "labels" ? "set-labels" : key}`,
-      Array.isArray(value) ? [...new Set(value)].join(",") : String(value),
-    );
+    const option = key === "labels" ? "set-labels" : key;
+    const argument = Array.isArray(value) ? [...new Set(value)].join(",") : String(value);
+    args.push(`--${option}`, argument);
   }
   return args;
 }
@@ -79,12 +82,9 @@ export async function updateBeadsTask(cwd: string, id: string, input: unknown) {
 export async function getBeadsStatuses(cwd: string): Promise<string[]> {
   const output = await run(cwd, ["--readonly", "statuses", "--json"]);
   try {
-    const schema = v.object({
-      built_in_statuses: v.array(v.object({ name: v.string() })),
-      custom_statuses: v.optional(v.array(v.object({ name: v.string() })), []),
-    });
-    const parsed = v.parse(schema, JSON.parse(output));
-    return [...parsed.built_in_statuses, ...parsed.custom_statuses].map((status) => status.name);
+    const parsed = v.parse(statusesSchema, JSON.parse(output));
+    const statuses = [...parsed.built_in_statuses, ...parsed.custom_statuses];
+    return statuses.map((status) => status.name);
   } catch {
     throw new Error("Could not read configured Beads statuses.");
   }
