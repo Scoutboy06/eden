@@ -91,6 +91,8 @@ function createValueResolver(
     let result: string;
     if (key === "sandbox.name") result = sandboxName;
     else if (key === "workspace.mode") result = mode;
+    else if (key === "workspace.sandboxPath" && mode !== "none")
+      result = sandboxPath(value("workspace.path"));
     else if (key === "workspace.path" && mode !== "none")
       result = hostPath(interpolate(workspacePath!, value), "Workspace");
     else {

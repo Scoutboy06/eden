@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SandboxProfile } from "../../config/schema";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { sandboxPath } from "../sandbox-paths";
 import { createSandboxHarness } from "./support/sandbox";
 
 const invalidProfiles: ((directory: string) => SandboxProfile)[] = [
@@ -129,3 +130,28 @@ test.each([false, true])(
     });
   },
 );
+
+test("kit arguments can use the sandbox path of the workspace", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { service, commands } = await createSandboxHarness({
+      directory,
+      profile: "work",
+      config: {
+        sandbox: {
+          default_provider: "docker-sbx",
+          profiles: {
+            work: {
+              workspace: { mode: "clone", path: directory },
+              kit_args: { "kit.repoPath": "${{ workspace.sandboxPath }}" },
+            },
+          },
+        },
+      },
+    });
+
+    await service.create({ name: "example" });
+
+    const create = commands.find(({ args }) => args[0] === "create");
+    expect(create?.args).toContain(`kit.repoPath=${sandboxPath(directory)}`);
+  });
+});
