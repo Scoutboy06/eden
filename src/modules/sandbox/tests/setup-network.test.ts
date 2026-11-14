@@ -14,6 +14,7 @@ async function networkHarness(
     fail?: "allow" | "revoke";
     hosts?: string[];
     dryRun?: boolean;
+    existing?: string[];
   } = {},
 ) {
   const seen = join(directory, "seen.json");
@@ -47,6 +48,14 @@ async function networkHarness(
       const failing = options.fail === "allow" ? "allow" : "rm";
       if (options.fail && args[0] === "policy" && args[1] === failing) {
         return { exitCode: 1, stdout: "", stderr: "rule refused" };
+      }
+
+      if (args[0] === "policy" && args[1] === "ls") {
+        const rules = [
+          { resource_type: "network", decision: "allow", resources: options.existing ?? [] },
+        ];
+
+        return { exitCode: 0, stdout: JSON.stringify({ rules }), stderr: "" };
       }
 
       return { exitCode: 0, stdout: args[0] === "ls" ? "[]" : "", stderr: "" };
@@ -94,6 +103,29 @@ test("setup hosts are opened for the sandbox before the create post hook and clo
       "--force",
     ]);
     expect(JSON.parse(await readFile(seen, "utf8")).sandbox.setupNetwork).toEqual({ allow: hosts });
+  });
+});
+
+test("only the hosts Eden opened are removed when a rule already existed", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { service, commands } = await networkHarness(directory, { existing: ["github.com"] });
+
+    await service.create({ name: "box" });
+
+    const allow = commands.find(({ args }) => args[1] === "allow")!.args;
+    expect(allow.at(-1)).toBe("*.npmjs.org");
+    const revoke = commands.find(({ args }) => args[1] === "rm")!.args;
+    expect(revoke).toContain("*.npmjs.org");
+  });
+});
+
+test("no rule is added or removed when every setup host already exists", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { service, commands } = await networkHarness(directory, { existing: hosts });
+
+    await service.create({ name: "box" });
+
+    expect(steps(commands)).toEqual(["create"]);
   });
 });
 

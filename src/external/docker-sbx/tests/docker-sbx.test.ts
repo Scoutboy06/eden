@@ -446,15 +446,24 @@ test("network rules are scoped to the sandbox and a failed removal names the man
   const provider = new DockerSandboxProvider(undefined, {
     run: async (args) => {
       commands.push(args);
+      if (args[1] === "ls") {
+        const rules = [{ resource_type: "network", decision: "allow", resources: ["c.com"] }];
+
+        return { exitCode: 0, stdout: JSON.stringify({ rules }), stderr: "" };
+      }
+
       return args[1] === "rm" ? { exitCode: 1, stdout: "", stderr: "denied" } : success;
     },
   });
 
-  await provider.allowNetwork("box", ["a.com", "b.com"]);
+  const added = await provider.allowNetwork("box", ["a.com", "b.com"]);
 
+  expect(added).toEqual(["a.com", "b.com"]);
   expect(commands).toEqual([
+    ["policy", "ls", "box", "--json"],
     ["policy", "allow", "network", "--sandbox", "box", "--", "a.com,b.com"],
   ]);
+  expect(await provider.allowNetwork("box", ["c.com"])).toEqual([]);
   await expect(provider.revokeNetwork("box", ["a.com", "b.com"])).rejects.toMatchObject({
     code: "SANDBOX_NETWORK_RULE_FAILED",
     message: expect.stringContaining("sbx policy rm network --sandbox box --resource a.com,b.com"),

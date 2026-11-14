@@ -237,12 +237,18 @@ export class DockerSandboxProvider implements SandboxProvider {
     );
   }
 
-  async allowNetwork(name: string, hosts: string[]): Promise<void> {
+  async allowNetwork(name: string, hosts: string[]): Promise<string[]> {
+    const present = await this.allowedNetworkResources(name);
+    const added = hosts.filter((host) => !present.has(host));
+    if (added.length === 0) return [];
+
     await this.execute(
-      ["policy", "allow", "network", "--sandbox", name, "--", hosts.join(",")],
+      ["policy", "allow", "network", "--sandbox", name, "--", added.join(",")],
       name,
       "network",
     );
+
+    return added;
   }
 
   async revokeNetwork(name: string, hosts: string[]): Promise<void> {
@@ -298,6 +304,50 @@ export class DockerSandboxProvider implements SandboxProvider {
       },
       this.dependencies.interactiveCreate ?? false,
     );
+  }
+
+  private async allowedNetworkResources(name: string): Promise<Set<string>> {
+    const result = await (this.dependencies.run ?? runDockerCommand)(
+      ["policy", "ls", name, "--json"],
+      { sandboxName: name, operation: "network" },
+    );
+    if (result.exitCode !== 0) {
+      throw diagnoseFailure(
+        name,
+        result.exitCode,
+        `${result.stdout}
+${result.stderr}`,
+        "network",
+      );
+    }
+
+    const resources = new Set<string>();
+    if (result.stdout.trim() === "") return resources;
+
+    let listing: unknown;
+    try {
+      listing = JSON.parse(result.stdout);
+    } catch {
+      throw new SandboxError(
+        "SANDBOX_NETWORK_RULE_FAILED",
+        `Docker Sandboxes returned invalid policy JSON for sandbox ${name}.`,
+      );
+    }
+
+    const parsed = v.safeParse(DockerPolicyListSchema, listing);
+    if (!parsed.success) {
+      throw new SandboxError(
+        "SANDBOX_NETWORK_RULE_FAILED",
+        `Docker Sandboxes returned an invalid policy listing for sandbox ${name}.`,
+      );
+    }
+
+    for (const rule of parsed.output.rules ?? []) {
+      if (rule.resource_type !== "network" || rule.decision !== "allow") continue;
+      for (const resource of rule.resources ?? []) resources.add(resource);
+    }
+
+    return resources;
   }
 
   private async execute(
@@ -386,6 +436,18 @@ function dockerAgent(agent: CreateSandboxInput["agent"]): string {
       );
   }
 }
+
+const DockerPolicyListSchema = v.object({
+  rules: v.optional(
+    v.array(
+      v.object({
+        resource_type: v.optional(v.string()),
+        decision: v.optional(v.string()),
+        resources: v.optional(v.array(v.string())),
+      }),
+    ),
+  ),
+});
 
 const DockerSandboxEntriesSchema = v.array(
   v.object({
