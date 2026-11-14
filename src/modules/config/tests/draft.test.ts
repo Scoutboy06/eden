@@ -139,15 +139,16 @@ test.each([false, true])(
         return overwrite;
       });
       const contents = Bun.YAML.parse(await Bun.file(path).text());
+      const expectedStatus = overwrite ? "saved" : "cancelled";
+      const expectedContents = overwrite
+        ? { agent: { default: "claude" }, worktree_root: "~/.worktrees" }
+        : { agent: { default: "codex" } };
+      const expectedOperationCount = overwrite ? 1 : 0;
 
       expect(confirmations).toBe(1);
-      expect(status).toBe(overwrite ? "saved" : "cancelled");
-      expect(contents).toEqual(
-        overwrite
-          ? { agent: { default: "claude" }, worktree_root: "~/.worktrees" }
-          : { agent: { default: "codex" } },
-      );
-      expect(execution.operations).toHaveLength(overwrite ? 1 : 0);
+      expect(status).toBe(expectedStatus);
+      expect(contents).toEqual(expectedContents);
+      expect(execution.operations).toHaveLength(expectedOperationCount);
     });
   },
 );
@@ -227,7 +228,8 @@ for (const absolute of [false, true]) {
                 });
 
           if (dryRun) {
-            expect(await write).toBe(method === "set" ? undefined : "previewed");
+            const expectedStatus = method === "set" ? undefined : "previewed";
+            expect(await write).toBe(expectedStatus);
           } else {
             await expect(write).rejects.toMatchObject({ code: "CONFIG_WRITE_FAILED", path });
           }

@@ -116,7 +116,9 @@ test.each(["!!!", "..", "bad..ref", "name.lock"])(
       const { repo, execution, service } = await createFixture(directory);
 
       await expect(service.create({ name }, repo)).rejects.toThrow();
-      expect(execution.operations).toHaveLength(["!!!", ".."].includes(name) ? 0 : 1);
+      const nameWasRejectedBeforeMutation = ["!!!", ".."].includes(name);
+      const expectedOperationCount = nameWasRejectedBeforeMutation ? 0 : 1;
+      expect(execution.operations).toHaveLength(expectedOperationCount);
     });
   },
 );
