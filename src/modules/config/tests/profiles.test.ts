@@ -32,6 +32,7 @@ test("reads profiles without interpreting references or injecting profile defaul
         kit_args: { "inetsbx.workspace": "clone", enabled: true, count: 3, empty: "" },
         shell: { cwd: "/home/agent/project", command: ["zsh", "-l"] },
         snapshot: { paths: ["~/.claude", "~/.config/tool/"], keep: 3 },
+        setup: { network: { allow: ["github.com", "*.npmjs.org", "registry.example:443"] } },
       },
       empty: {},
       "work.profile": { kits: [], kit_args: {} },
@@ -67,6 +68,22 @@ test.each([
   [
     { unused: { snapshot: { paths: ["~/a"], keep: 1.5 } } },
     "sandbox.profiles.unused.snapshot.keep",
+  ],
+  [
+    { unused: { setup: { network: { allow: [] } } } },
+    "sandbox.profiles.unused.setup.network.allow",
+  ],
+  [
+    { unused: { setup: { network: { allow: ["a,b"] } } } },
+    "sandbox.profiles.unused.setup.network.allow.0",
+  ],
+  [
+    { unused: { setup: { network: { allow: ["--all"] } } } },
+    "sandbox.profiles.unused.setup.network.allow.0",
+  ],
+  [
+    { unused: { setup: { network: { allow: ["a b"] } } } },
+    "sandbox.profiles.unused.setup.network.allow.0",
   ],
   [{ unused: { shell: { command: [] } } }, "sandbox.profiles.unused.shell.command"],
   [{ unused: { shell: { shell: "bash" } } }, "sandbox.profiles.unused.shell.shell"],

@@ -117,6 +117,10 @@ const snapshotPathSchema = v.pipe(
     "Expected a sandbox path inside the home folder, like ~/.claude",
   ),
 );
+const setupHostSchema = v.pipe(
+  v.string(),
+  v.regex(/^[^\s,-][^\s,]*$/, "Expected a host pattern without spaces or commas, like github.com"),
+);
 const kitArgumentSchema = v.union([v.string(), v.number(), v.boolean()]);
 const profileSchema = v.pipe(
   mapping,
@@ -151,6 +155,13 @@ const profileSchema = v.pipe(
       v.strictObject({
         paths: v.pipe(v.array(snapshotPathSchema), v.nonEmpty()),
         keep: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+      }),
+    ),
+    setup: v.optional(
+      v.strictObject({
+        network: v.optional(
+          v.strictObject({ allow: v.pipe(v.array(setupHostSchema), v.nonEmpty()) }),
+        ),
       }),
     ),
     shell: v.optional(
