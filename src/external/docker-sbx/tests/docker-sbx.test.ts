@@ -418,3 +418,25 @@ test("list maps the provider creation time", async () => {
     },
   ]);
 });
+
+test("kit add passes literal arguments and explains the v3 and v1/v2 kit mix", async () => {
+  const commands: string[][] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args) => {
+      commands.push(args);
+      return args.includes("mixed")
+        ? { exitCode: 1, stdout: "", stderr: "error: cannot mix v3 kits with v1/v2 kits" }
+        : success;
+    },
+  });
+
+  await provider.addKit({ name: "box", kit: "./kit", kitArgs: { who: "box", on: true } });
+
+  expect(commands).toEqual([
+    ["kit", "add", "--kit-arg", "who=box", "--kit-arg", "on=true", "--", "box", "./kit"],
+  ]);
+  await expect(provider.addKit({ name: "box", kit: "mixed" })).rejects.toMatchObject({
+    code: "SANDBOX_KIT_FAILED",
+    message: expect.stringContaining("cannot mix v3 kits with v1/v2 kits"),
+  });
+});

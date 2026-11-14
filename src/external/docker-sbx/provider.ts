@@ -3,6 +3,7 @@ import * as v from "valibot";
 import { ScriptRunner, type RunResult } from "../../modules/script";
 import { SandboxError } from "../../modules/sandbox/errors";
 import type {
+  AddKitInput,
   CreateSandboxInput,
   ExecSandboxInput,
   ExecSandboxResult,
@@ -19,6 +20,8 @@ import { transferDockerFiles } from "./transfer";
 export { attachDockerSandbox } from "./attach";
 export type { AttachDependencies } from "./attach";
 
+type DockerOperation = "create" | "start" | "stop" | "remove" | "exec" | "kit";
+
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
 export type DockerCommandRunner = (
   args: string[],
@@ -27,7 +30,7 @@ export type DockerCommandRunner = (
     env?: Record<string, string>;
     onOutput?: (text: string) => void;
     sandboxName?: string;
-    operation?: "create" | "start" | "stop" | "remove" | "exec";
+    operation?: DockerOperation;
     inheritIO?: boolean;
   },
 ) => Promise<DockerCommandResult>;
@@ -216,6 +219,24 @@ export class DockerSandboxProvider implements SandboxProvider {
     );
   }
 
+  async addKit(input: AddKitInput): Promise<void> {
+    await this.execute(
+      [
+        "kit",
+        "add",
+        ...Object.entries(input.kitArgs ?? {}).flatMap(([key, value]) => [
+          "--kit-arg",
+          `${key}=${String(value)}`,
+        ]),
+        "--",
+        input.name,
+        input.kit,
+      ],
+      input.name,
+      "kit",
+    );
+  }
+
   async create(input: CreateSandboxInput): Promise<void> {
     validateWorkspace(input.workspace, input.mounts);
     await this.execute(
@@ -256,7 +277,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   private async execute(
     args: string[],
     sandboxName?: string,
-    operation: "create" | "start" | "stop" | "remove" = "create",
+    operation: DockerOperation = "create",
     env?: Record<string, string>,
     inheritIO = false,
   ): Promise<void> {
@@ -430,7 +451,7 @@ async function runDockerCommand(
 function dockerCommandResult(
   result: RunResult,
   sandboxName?: string,
-  operation: "create" | "start" | "stop" | "remove" | "exec" = "create",
+  operation: DockerOperation = "create",
 ): DockerCommandResult {
   switch (result.outcome) {
     case "exited":
@@ -449,11 +470,11 @@ function dockerCommandResult(
   throw new SandboxError("CANCELLED", cancellationMessage(sandboxName, operation));
 }
 
-function cancellationMessage(
-  sandboxName: string | undefined,
-  operation: "create" | "start" | "stop" | "remove" | "exec",
-): string {
+function cancellationMessage(sandboxName: string | undefined, operation: DockerOperation): string {
   if (sandboxName === undefined) return "Sandbox prerequisite check cancelled.";
+  if (operation === "kit") {
+    return `Applying a kit to sandbox ${sandboxName} cancelled. The sandbox may already have been recreated with the kit; no cleanup was attempted.`;
+  }
   if (operation === "exec") return `Execution in sandbox ${sandboxName} cancelled.`;
   if (operation === "remove") {
     return `Removing sandbox ${sandboxName} cancelled. It may already have been removed; no retry was attempted.`;
@@ -471,7 +492,7 @@ function diagnoseFailure(
   name: string | undefined,
   exitCode: number,
   diagnostics: string,
-  operation: "create" | "start" | "stop" | "remove" = "create",
+  operation: DockerOperation = "create",
 ): SandboxError {
   if (/unknown (?:flag|option):?\s*["']?--json\b/i.test(diagnostics)) {
     return new SandboxError(
@@ -511,6 +532,10 @@ function diagnoseFailure(
     );
   }
 
+  if (operation === "kit") {
+    return kitFailure(name, exitCode, details, providerDetails);
+  }
+
   if (operation === "remove") {
     return new SandboxError(
       "SANDBOX_REMOVE_FAILED",
@@ -535,5 +560,24 @@ function diagnoseFailure(
   return new SandboxError(
     "SANDBOX_CREATE_FAILED",
     `Docker Sandboxes could not create sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
+  );
+}
+
+function kitFailure(
+  name: string,
+  exitCode: number,
+  details: string,
+  providerDetails: string,
+): SandboxError {
+  if (/cannot mix v3 kits with v1.v2 kits/i.test(details)) {
+    return new SandboxError(
+      "SANDBOX_KIT_FAILED",
+      `Docker Sandboxes cannot mix v3 kits with v1/v2 kits in one sandbox, so the kit could not be added to ${name}. Use a kit with the same schemaVersion as the sandbox's agent kit.${providerDetails}`,
+    );
+  }
+
+  return new SandboxError(
+    "SANDBOX_KIT_FAILED",
+    `Docker Sandboxes could not add the kit to sandbox ${name} (exit ${exitCode}). No retry or cleanup was attempted.${providerDetails}`,
   );
 }

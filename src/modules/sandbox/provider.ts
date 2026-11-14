@@ -26,6 +26,11 @@ export type CreateSandboxInput = {
   mcpServers?: string[];
   kitArgs?: Record<string, string | number | boolean>;
 };
+export type AddKitInput = {
+  name: string;
+  kit: string;
+  kitArgs?: Record<string, string | number | boolean>;
+};
 export type RunSandboxInput = { name: string };
 export type ExecSandboxInput = {
   name: string;
@@ -51,6 +56,7 @@ export interface SandboxProvider {
   readinessChecks(): readonly ReadinessCheck[];
 
   create(input: CreateSandboxInput): Promise<void>;
+  addKit?(input: AddKitInput): Promise<void>;
   list(): Promise<SandboxSummary[]>;
   run(name: string): Promise<number>;
   exec?(input: ExecSandboxInput): Promise<ExecSandboxResult>;
