@@ -75,11 +75,16 @@ async function savePreferences(
   confirmOverwrite: () => Promise<boolean>,
 ): Promise<SetupResult> {
   const changes: Record<string, string | undefined> = {};
+  const providerChanged = preferences.provider !== draft.config.sandbox?.default_provider;
+  const worktreeRootChanged = preferences.worktreeRoot !== draft.get("worktree_root");
 
-  if (preferences.provider !== draft.config.sandbox?.default_provider)
+  if (providerChanged) {
     changes["sandbox.default_provider"] = preferences.provider;
-  if (preferences.worktreeRoot !== draft.get("worktree_root"))
+  }
+
+  if (worktreeRootChanged) {
     changes.worktree_root = preferences.worktreeRoot;
+  }
 
   const pathError = await validateWorktreeRoot(preferences.worktreeRoot);
   if (pathError) throw new Error(pathError);

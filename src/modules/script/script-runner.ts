@@ -63,14 +63,21 @@ export class ScriptRunner {
     signal?.addEventListener("abort", cancel, { once: true });
 
     try {
+      let stdoutPromise: Promise<string>;
+      let stderrPromise: Promise<string>;
+
+      if (inheritIO) {
+        stdoutPromise = Promise.resolve("");
+        stderrPromise = Promise.resolve("");
+      } else {
+        stdoutPromise = captureOutput(child.stdout as ReadableStream<Uint8Array>, onStdout);
+        stderrPromise = captureOutput(child.stderr as ReadableStream<Uint8Array>, onStderr);
+      }
+
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited,
-        inheritIO
-          ? Promise.resolve("")
-          : captureOutput(child.stdout as ReadableStream<Uint8Array>, onStdout),
-        inheritIO
-          ? Promise.resolve("")
-          : captureOutput(child.stderr as ReadableStream<Uint8Array>, onStderr),
+        stdoutPromise,
+        stderrPromise,
       ]);
 
       if (termination) await termination;

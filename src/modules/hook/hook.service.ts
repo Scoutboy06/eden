@@ -78,11 +78,15 @@ export class HookService {
     preOutput: "overwrites" | "empty" = "overwrites",
   ) {
     let output: PreHookOutput = {};
+    const hasUnknownPreHookOverwrites = phase === "pre" && preOutput === "overwrites";
+    const overwriteNotice = hasUnknownPreHookOverwrites
+      ? " (overwrites unknown until executed)"
+      : "";
 
     await this.execution.mutate(
       {
         type: "hook.run",
-        description: `Run ${name}${phase === "pre" && preOutput === "overwrites" ? " (overwrites unknown until executed)" : ""}`,
+        description: `Run ${name}${overwriteNotice}`,
         input: { name, path, cwd, input },
       },
       async () => {
