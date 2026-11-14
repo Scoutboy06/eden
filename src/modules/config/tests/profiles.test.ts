@@ -60,6 +60,8 @@ test.each([
   [{ unused: { snapshot: { paths: ["/etc"] } } }, "sandbox.profiles.unused.snapshot.paths.0"],
   [{ unused: { snapshot: { paths: ["~"] } } }, "sandbox.profiles.unused.snapshot.paths.0"],
   [{ unused: { snapshot: { paths: ["~/"] } } }, "sandbox.profiles.unused.snapshot.paths.0"],
+  [{ unused: { snapshot: { paths: ["~//etc"] } } }, "sandbox.profiles.unused.snapshot.paths.0"],
+  [{ unused: { snapshot: { paths: ["~/."] } } }, "sandbox.profiles.unused.snapshot.paths.0"],
   [{ unused: { snapshot: { paths: ["~/a/../.."] } } }, "sandbox.profiles.unused.snapshot.paths.0"],
   [{ unused: { snapshot: { paths: ["~/a"], keep: 0 } } }, "sandbox.profiles.unused.snapshot.keep"],
   [

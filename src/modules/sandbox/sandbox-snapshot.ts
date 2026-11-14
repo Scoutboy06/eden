@@ -18,13 +18,13 @@ type SnapshotContext = {
   onWarning?: (warning: string) => void;
 };
 
+export type SnapshotSettings = NonNullable<SandboxProfile["snapshot"]>;
+
 const defaultKeep = 5;
 const probeScript =
   'cd "$HOME" && for p in "$@"; do [ -e "$p" ] && printf \'%s\n\' "$p"; done; true';
 const archiveScript = 'tar -C "$HOME" -czf - -- "$@"';
 const extractScript = 'tar -C "$HOME" -xzf -';
-
-export type SnapshotSettings = NonNullable<SandboxProfile["snapshot"]>;
 
 export function requireSnapshotSettings(
   profile: (SandboxProfile & { name: string }) | undefined,
@@ -63,6 +63,7 @@ export async function snapshotSandbox(
       );
       const archived = requested.filter(({ relative }) => present.has(relative));
       const skipped = requested.filter(({ relative }) => !present.has(relative));
+
       if (archived.length === 0) {
         throw new SandboxError(
           "SANDBOX_SNAPSHOT_FAILED",
@@ -71,21 +72,27 @@ export async function snapshotSandbox(
       }
 
       const draft = await store.begin(provider.name, name);
+      let snapshot: SandboxSnapshot;
+
       try {
         const { exitCode, stderr } = await provider.transfer!({
           name,
           argv: ["sh", "-c", archiveScript, "sh", ...archived.map(({ relative }) => relative)],
           stdoutFile: draft.partialPath,
         });
+
+        const tarFinished = exitCode === 0 || exitCode === 1;
+        const produced = tarFinished && (await Bun.file(draft.partialPath).exists());
+        const hasContent = produced && Bun.file(draft.partialPath).size > 0;
+        if (!hasContent) throw transferFailure("snapshot", name, exitCode, stderr);
+
         if (exitCode === 1 && stderr.trim()) context.onWarning?.(stderr.trim());
-        if (exitCode !== 0 && exitCode !== 1)
-          throw transferFailure("snapshot", name, exitCode, stderr);
+        snapshot = await draft.commit();
       } catch (error) {
         await draft.discard();
         throw error;
       }
 
-      const snapshot = await draft.commit();
       const pruned = await store.prune(provider.name, name, keep);
       result = {
         snapshot,

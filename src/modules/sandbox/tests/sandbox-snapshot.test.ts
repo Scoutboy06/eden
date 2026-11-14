@@ -14,6 +14,7 @@ async function snapshotHarness(
     present?: string[];
     dryRun?: boolean;
     transferExit?: number;
+    emptyArchive?: boolean;
   } = {},
 ) {
   const transfers: TransferSandboxInput[] = [];
@@ -42,7 +43,7 @@ async function snapshotHarness(
     },
     transfer: async (input) => {
       transfers.push(input);
-      if (input.stdoutFile) await Bun.write(input.stdoutFile, archive);
+      if (input.stdoutFile) await Bun.write(input.stdoutFile, options.emptyArchive ? "" : archive);
 
       return { exitCode: options.transferExit ?? 0, stderr: "tar: boom" };
     },
@@ -87,6 +88,22 @@ test("snapshot fails without leaving a file when no path exists or tar fails", a
     await expect(failing.service.snapshot("box")).rejects.toThrow("tar: boom");
 
     expect(await failing.store.list("docker-sbx", "box")).toEqual([]);
+  });
+});
+
+test("snapshot rejects an empty archive even when the command exits with 0 or 1", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    for (const transferExit of [0, 1]) {
+      const { service, store } = await snapshotHarness(directory, {
+        transferExit,
+        emptyArchive: true,
+      });
+
+      await expect(service.snapshot("box")).rejects.toMatchObject({
+        code: "SANDBOX_SNAPSHOT_FAILED",
+      });
+      expect(await store.list("docker-sbx", "box")).toEqual([]);
+    }
   });
 });
 
