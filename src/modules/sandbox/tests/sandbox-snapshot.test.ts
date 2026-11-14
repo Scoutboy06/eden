@@ -234,3 +234,19 @@ test("snapshots of a sandbox name that looks like a path stay inside the store",
     }
   });
 });
+
+test("status reports the sandbox, its remembered profile and the latest snapshot", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { service } = await snapshotHarness(directory);
+
+    expect(await service.status("box")).toEqual({
+      sandbox: { provider: "docker-sbx", name: "box", status: "running" },
+      latestSnapshot: undefined,
+    });
+
+    const taken = await service.snapshot("box");
+
+    expect((await service.status("box")).latestSnapshot).toEqual(taken!.snapshot);
+    await expect(service.status("other")).rejects.toMatchObject({ code: "SANDBOX_NOT_FOUND" });
+  });
+});

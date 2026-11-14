@@ -95,6 +95,16 @@ export class SandboxService {
     return (await this.snapshots(name))[0];
   }
 
+  async status(
+    name: string,
+  ): Promise<{ sandbox: SandboxSummary; latestSnapshot: SandboxSnapshot | undefined }> {
+    validateSandboxInput(name);
+    const sandbox = (await this.list()).find((entry) => entry.name === name);
+    if (!sandbox) throw this.notFound(name);
+
+    return { sandbox, latestSnapshot: await this.latestSnapshot(name) };
+  }
+
   async snapshot(name: string): Promise<SnapshotResult | undefined> {
     validateSandboxInput(name);
     const settings = requireSnapshotSettings(this.profile);
@@ -395,14 +405,16 @@ export class SandboxService {
   private async requireSandbox(name: string): Promise<SandboxSummary> {
     const sandboxes = await this.provider.list();
     const sandbox = sandboxes.find((entry) => entry.name === name);
-    if (!sandbox) {
-      throw new SandboxError(
-        "SANDBOX_NOT_FOUND",
-        `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
-      );
-    }
+    if (!sandbox) throw this.notFound(name);
 
     return sandbox;
+  }
+
+  private notFound(name: string): SandboxError {
+    return new SandboxError(
+      "SANDBOX_NOT_FOUND",
+      `Sandbox ${name} was not found using ${this.provider.name}. If it belongs to another provider, specify --provider.`,
+    );
   }
 
   private async recordProfile(name: string): Promise<void> {
