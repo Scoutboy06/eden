@@ -36,17 +36,17 @@ async function saveProject(input: unknown) {
   const service = createConfigService(createExecution({ dryRun: false }));
   const projects = (await service.read()).projects ?? {};
   for (const project of Object.values(projects)) {
-    if (
-      await realpath(project.path).then(
-        (existing) => existing === repository,
-        () => false,
-      )
-    )
+    const existingPath = await realpath(project.path).catch(() => null);
+    const isSameRepository = existingPath === repository;
+    if (isSameRepository) {
       throw new Error("This repository is already imported.");
+    }
   }
   const base = name.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^\.+$|^-+|-+$/g, "") || "project";
   let key = base;
-  for (let suffix = 2; Object.hasOwn(projects, key); suffix++) key = `${base}-${suffix}`;
+  for (let suffix = 2; Object.hasOwn(projects, key); suffix++) {
+    key = `${base}-${suffix}`;
+  }
   await service.addProject(key, { name, path: repository });
   return { key, name };
 }
@@ -87,11 +87,18 @@ export async function handleProjectImport(request: IncomingMessage, response: Se
 }
 
 async function resolveRepository(input: unknown) {
-  if (!input || typeof input !== "object" || !("path" in input) || typeof input.path !== "string")
+  if (!input || typeof input !== "object" || !("path" in input) || typeof input.path !== "string") {
     throw new Error("Enter a local repository path.");
-  const path = input.path.startsWith("~/") ? resolve(homedir(), input.path.slice(2)) : input.path;
-  if (!isAbsolute(path) || path.includes("\0"))
+  }
+
+  const inputPath = input.path;
+  const path = inputPath.startsWith("~/") ? resolve(homedir(), inputPath.slice(2)) : inputPath;
+  const isAbsolutePath = isAbsolute(path);
+  const containsNullByte = path.includes("\0");
+  if (!isAbsolutePath || containsNullByte) {
     throw new Error("Enter an absolute repository path.");
+  }
+
   const directory = await realpath(path).catch(() => {
     throw new Error("Repository directory does not exist.");
   });
@@ -113,20 +120,30 @@ async function resolveRepository(input: unknown) {
     new Response(git.stderr).text(),
     git.exited,
   ]);
-  if (exit !== 0) throw new Error("Path must be inside an existing Git working repository.");
+  if (exit !== 0) {
+    throw new Error("Path must be inside an existing Git working repository.");
+  }
+
   const [root, common] = output.trim().split("\n");
-  if (!root || !common) throw new Error("Could not resolve repository.");
+  if (!root || !common) {
+    throw new Error("Could not resolve repository.");
+  }
+
   const commonPath = await realpath(resolve(directory, common));
   const repository = basename(commonPath) === ".git" ? dirname(commonPath) : root;
   return repository;
 }
 
 function projectName(input: unknown, repository: string) {
-  const name =
+  const providedName =
     input !== null && typeof input === "object" && "name" in input && typeof input.name === "string"
       ? input.name.trim()
-      : basename(repository);
-  if (!name || name.length > 120)
+      : null;
+  const name = providedName ?? basename(repository);
+
+  if (!name || name.length > 120) {
     throw new Error("Enter a project name of at most 120 characters.");
+  }
+
   return name;
 }

@@ -31,11 +31,12 @@ export async function handleTaskDetail(
       response.end(JSON.stringify({ error: "Method not allowed." }));
       return;
     }
-    if (
-      !request.headers.origin ||
-      request.headers["sec-fetch-site"] === "cross-site" ||
-      request.headers["content-type"]?.split(";")[0] !== "application/json"
-    ) {
+    const hasOrigin = Boolean(request.headers.origin);
+    const isCrossSite = request.headers["sec-fetch-site"] === "cross-site";
+    const contentType = request.headers["content-type"]?.split(";")[0];
+    const isJsonRequest = contentType === "application/json";
+
+    if (!hasOrigin || isCrossSite || !isJsonRequest) {
       response.statusCode = 403;
       response.end(JSON.stringify({ error: "Same-origin JSON requests are required." }));
       return;
