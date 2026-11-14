@@ -164,7 +164,13 @@ export class DockerSandboxProvider implements SandboxProvider {
       return { exitCode, stdout: "", stderr: "" };
     }
     const result = await (this.dependencies.run ?? runDockerCommand)(
-      ["exec", "--", input.name, ...input.argv],
+      [
+        "exec",
+        ...(input.workdir === undefined ? [] : ["-w", input.workdir]),
+        "--",
+        input.name,
+        ...input.argv,
+      ],
       { sandboxName: input.name, operation: "exec", inheritIO: false },
     );
     if (result.exitCode === 125) {

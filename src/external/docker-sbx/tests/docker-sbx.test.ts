@@ -339,6 +339,20 @@ test("exec forwards exact arguments and output mode to Docker Sandboxes", async 
   ]);
 });
 
+test("exec passes the working directory to captured Docker Sandboxes commands", async () => {
+  const calls: string[][] = [];
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async (args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    },
+  });
+
+  await provider.exec({ name: "example", argv: ["pwd"], output: "capture", workdir: "/tmp" });
+
+  expect(calls).toEqual([["exec", "-w", "/tmp", "--", "example", "pwd"]]);
+});
+
 test.each([
   ["example", "example.sbx"],
   ["my.sandbox-1", "my.sandbox-1.sbx"],

@@ -30,6 +30,7 @@ test("reads profiles without interpreting references or injecting profile defaul
           "https://example.com/kit.git",
         ],
         kit_args: { "inetsbx.workspace": "clone", enabled: true, count: 3, empty: "" },
+        shell: { cwd: "/home/agent/project", command: ["zsh", "-l"] },
       },
       empty: {},
       "work.profile": { kits: [], kit_args: {} },
@@ -52,6 +53,9 @@ test.each([
   [{ unused: { agent: "invalid" } }, "sandbox.profiles.unused.agent"],
   [{ unused: { mcp_servers: [""] } }, "sandbox.profiles.unused.mcp_servers.0"],
   [{ unused: { mcp_servers: "notion" } }, "sandbox.profiles.unused.mcp_servers"],
+  [{ unused: { shell: { cwd: "" } } }, "sandbox.profiles.unused.shell.cwd"],
+  [{ unused: { shell: { command: [] } } }, "sandbox.profiles.unused.shell.command"],
+  [{ unused: { shell: { shell: "bash" } } }, "sandbox.profiles.unused.shell.shell"],
   [
     { unused: { mounts: { x: { path: "", readonly: true } } } },
     "sandbox.profiles.unused.mounts.x.path",

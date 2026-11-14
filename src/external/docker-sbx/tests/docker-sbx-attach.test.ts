@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { dockerExecArguments } from "../attach";
 import { attachDockerSandbox, type AttachDependencies } from "../provider";
 
 function fakeChild() {
@@ -152,4 +153,19 @@ test("attach on windows kills a provider that ignores SIGINT after the grace per
 
   expect(await result).toBe(130);
   expect(kills).toEqual(["SIGKILL"]);
+});
+
+test.each([
+  [{}, true, ["sbx", "exec", "-i", "--", "example", "bash"]],
+  [{ tty: true }, true, ["sbx", "exec", "-i", "-t", "--", "example", "bash"]],
+  [{ tty: true }, false, ["sbx", "exec", "-i", "--", "example", "bash"]],
+  [
+    { tty: true, workdir: "/home/agent" },
+    true,
+    ["sbx", "exec", "-i", "-t", "-w", "/home/agent", "--", "example", "bash"],
+  ],
+])("exec arguments for %j with terminal %p", (extra, isTerminal, expected) => {
+  const input = { name: "example", argv: ["bash"], output: "inherit" as const, ...extra };
+
+  expect(dockerExecArguments(input, isTerminal)).toEqual(expected);
 });

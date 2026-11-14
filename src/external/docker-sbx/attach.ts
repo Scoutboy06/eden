@@ -72,13 +72,29 @@ function spawnDockerAttach(name: string): ReturnType<typeof Bun.spawn> {
   });
 }
 
-export function attachDockerExec(input: ExecSandboxInput): Promise<number> {
+export function attachDockerExec(
+  input: ExecSandboxInput,
+  isTerminal: boolean = process.stdin.isTTY,
+): Promise<number> {
   return attachDockerSandbox(input.name, {
     spawn: () =>
-      Bun.spawn(["sbx", "exec", "-i", "--", input.name, ...input.argv], {
+      Bun.spawn(dockerExecArguments(input, isTerminal), {
         stdin: "inherit",
         stdout: "inherit",
         stderr: "inherit",
       }),
   });
+}
+
+export function dockerExecArguments(input: ExecSandboxInput, isTerminal: boolean): string[] {
+  return [
+    "sbx",
+    "exec",
+    "-i",
+    ...(input.tty && isTerminal ? ["-t"] : []),
+    ...(input.workdir === undefined ? [] : ["-w", input.workdir]),
+    "--",
+    input.name,
+    ...input.argv,
+  ];
 }

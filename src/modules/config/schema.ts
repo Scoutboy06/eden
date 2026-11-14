@@ -139,6 +139,12 @@ const profileSchema = v.pipe(
     kits: v.optional(v.array(nonEmptyString)),
     mcp_servers: v.optional(v.array(nonEmptyString)),
     kit_args: v.optional(configMap(kitArgumentSchema)),
+    shell: v.optional(
+      v.strictObject({
+        cwd: v.optional(nonEmptyString),
+        command: v.optional(v.pipe(v.array(nonEmptyString), v.nonEmpty())),
+      }),
+    ),
   }),
 );
 

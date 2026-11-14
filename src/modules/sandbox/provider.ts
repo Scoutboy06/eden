@@ -27,7 +27,13 @@ export type CreateSandboxInput = {
   kitArgs?: Record<string, string | number | boolean>;
 };
 export type RunSandboxInput = { name: string };
-export type ExecSandboxInput = { name: string; argv: string[]; output: "capture" | "inherit" };
+export type ExecSandboxInput = {
+  name: string;
+  argv: string[];
+  output: "capture" | "inherit";
+  workdir?: string;
+  tty?: boolean;
+};
 export type ExecSandboxResult = { exitCode: number; stdout: string; stderr: string };
 export type SshAccess = { host: string; command: string[]; setupCommand: string[] };
 
