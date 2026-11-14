@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline/promises";
 import { defineCommand } from "../../../../src/modules/cli";
 import {
   sandboxProviderNames,
@@ -212,6 +213,9 @@ const remove = defineCommand({
     }
     const service = await sandbox({ provider: ctx.values.provider });
     const name = await selectName(ctx.values.name, service, json);
+    if (ctx.values.name === undefined && !dryRun && !(await confirmRemoval(name))) {
+      throw new SandboxError("CANCELLED", `Removal of sandbox ${name} was not confirmed.`);
+    }
     await service.remove(name, ctx.values.force ?? false);
     output.write({
       data: { sandbox: { provider: service.providerName, name } },
@@ -257,6 +261,17 @@ export default defineCommand({
   description: "Manage sandboxes",
   subCommands: { create, run, exec, list, stop, ssh, rm: remove },
 });
+
+async function confirmRemoval(name: string): Promise<boolean> {
+  const terminal = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await terminal.question(`Remove sandbox ${name} and its data? [y/N] `);
+
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    terminal.close();
+  }
+}
 
 async function selectName(
   explicit: string | undefined,

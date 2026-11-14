@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { findRepositoryPath } from "../config/repository";
 import { SandboxError } from "./errors";
@@ -43,7 +43,11 @@ export async function pathKey(path: string): Promise<string> {
 async function resolveRealPath(path: string): Promise<string> {
   const absolute = resolve(path);
 
-  return realpath(absolute).catch(() => absolute);
+  try {
+    return realpathSync.native(absolute);
+  } catch {
+    return absolute;
+  }
 }
 
 function sanitizeSandboxName(value: string): string {

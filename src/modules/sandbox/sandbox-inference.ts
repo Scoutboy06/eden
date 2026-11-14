@@ -25,7 +25,7 @@ export async function inferSandbox(
   if (workspaceMatches.length > 1) {
     throw new SandboxError(
       "SANDBOX_INVALID_INPUT",
-      `Several sandboxes use the checkout ${checkout} using ${provider}: ${workspaceMatches.join(", ")}. Pass --name.`,
+      `Several ${provider} sandboxes use the checkout ${checkout}: ${workspaceMatches.join(", ")}. Pass --name.`,
     );
   }
   if (workspaceMatches.length === 1) {
@@ -33,12 +33,13 @@ export async function inferSandbox(
   }
 
   const derived = deriveSandboxName(checkout);
-  if (sandboxes.some((sandbox) => sandbox.name === derived)) {
+  const sameName = sandboxes.find((sandbox) => sandbox.name === derived);
+  if (sameName !== undefined && sameName.workspace === undefined) {
     return { name: derived, source: "folder", checkout };
   }
 
   throw new SandboxError(
     "SANDBOX_NOT_FOUND",
-    `No sandbox found for the checkout ${checkout} using ${provider} (looked for a matching workspace and the name ${derived}). Pass --name or create one with eden sbx create. If it belongs to another provider, specify --provider.`,
+    `No sandbox found for the checkout ${checkout} using ${provider} (looked for a matching workspace and a workspace-less sandbox named ${derived}). Pass --name or create one with eden sbx create. If it belongs to another provider, specify --provider.`,
   );
 }

@@ -52,7 +52,7 @@ test.skipIf(process.platform !== "win32")(
 
 test("falls back to the derived name when no workspace matches", async () => {
   await withCheckout(async (checkout) => {
-    const sandboxes = [summary("my-project", join(checkout, "elsewhere")), summary("other")];
+    const sandboxes = [summary("my-project"), summary("other", join(checkout, "elsewhere"))];
 
     expect(await inferSandbox(sandboxes, checkout, "docker-sbx")).toEqual({
       name: "my-project",
@@ -62,12 +62,22 @@ test("falls back to the derived name when no workspace matches", async () => {
   });
 });
 
+test("does not fall back to a same-named sandbox that belongs to another workspace", async () => {
+  await withCheckout(async (checkout) => {
+    const sandboxes = [summary("my-project", join(checkout, "elsewhere"))];
+
+    await expect(inferSandbox(sandboxes, checkout, "docker-sbx")).rejects.toThrow(
+      "No sandbox found",
+    );
+  });
+});
+
 test("reports every sandbox when several use the checkout", async () => {
   await withCheckout(async (checkout) => {
     const sandboxes = [summary("a", checkout), summary("b", checkout), summary("c")];
 
     await expect(inferSandbox(sandboxes, checkout, "docker-sbx")).rejects.toThrow(
-      /Several sandboxes.*: a, b\. Pass --name/,
+      /Several docker-sbx sandboxes.*: a, b\. Pass --name/,
     );
   });
 });
