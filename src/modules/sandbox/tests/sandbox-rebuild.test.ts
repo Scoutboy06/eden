@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import type { TransferSandboxInput } from "../provider";
@@ -110,6 +111,33 @@ test("rebuild reports the removed sandbox and the kept snapshot when create fail
     );
     expect((failure as Error).message).toContain(stored!.path);
     expect(commands.map(({ args }) => args[0])).toContain("rm");
+  });
+});
+
+test("rebuild reports a failing create post hook as recreated, not as lost", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const hooks = join(directory, "hooks");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "sandbox.create.post.ts"), "process.exitCode = 3;\n");
+    const { service, store, transfers } = await rebuildHarness(directory);
+
+    const restoredFailure = await service.rebuild(input).catch((error: unknown) => error);
+
+    const [stored] = await store.list("docker-sbx", "box");
+    const restoredMessage = (restoredFailure as Error).message;
+    expect(restoredFailure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
+    expect(restoredMessage).toContain("Sandbox box was recreated but its create post hook failed");
+    expect(restoredMessage).not.toContain("could not be recreated");
+    expect(restoredMessage).toContain(`Its snapshot ${stored!.id} was restored.`);
+    expect(transfers).toHaveLength(2);
+
+    const skippedFailure = await service
+      .rebuild({ ...input, restore: false })
+      .catch((error: unknown) => error);
+
+    const skippedMessage = (skippedFailure as Error).message;
+    expect(skippedMessage).toContain("recreated but its create post hook failed");
+    expect(skippedMessage).toContain("restore it with eden sbx restore --name box --snapshot");
   });
 });
 

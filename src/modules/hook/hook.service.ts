@@ -157,6 +157,8 @@ export class HookFailure extends Error {
   }
 }
 
+export class PostHookFailure extends HookFailure {}
+
 function assertSucceeded(name: string, result: RunResult): void {
   if (result.outcome === "exited" && result.exitCode === 0) return;
 

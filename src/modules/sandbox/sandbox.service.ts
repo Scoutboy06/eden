@@ -1,7 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import { resolveSandboxPaths } from "./sandbox-paths";
 import type { Execution } from "../execution";
-import { HookFailure, HookService, type SandboxHookInput } from "../hook/hook.service";
+import {
+  HookFailure,
+  HookService,
+  PostHookFailure,
+  type SandboxHookInput,
+} from "../hook/hook.service";
 import type { ConfigReader } from "../config/config.service";
 import type { Config, SandboxProfile } from "../config/schema";
 import { assertUnreachable } from "../../utils/assert-unreachable";
@@ -358,28 +363,23 @@ export class SandboxService {
     const snapshot = taken?.snapshot;
     await this.remove(name, input.force);
 
-    let warnings: string[];
-    try {
-      ({ warnings } = await this.create({ name, image: input.image }, input.path));
-    } catch (error) {
-      throw rebuildFailure(name, "removed but could not be recreated", error, snapshot);
-    }
+    const { warnings, postHookFailure } = await this.recreate(input, snapshot);
 
     const restoring = snapshotSettings !== undefined && input.restore;
-    if (!restoring) return { snapshot, restored: false, warnings };
+    if (restoring) await this.restoreRebuilt(name, snapshot);
+    const restored = restoring && snapshot !== undefined;
 
-    try {
-      await restoreSandbox(this.snapshotContext(), name, snapshot ?? pendingSnapshot);
-    } catch (error) {
+    if (postHookFailure) {
       throw rebuildFailure(
         name,
-        "recreated but its snapshot could not be restored",
-        error,
-        snapshot,
+        "recreated but its create post hook failed",
+        postHookFailure,
+        restored ? undefined : snapshot,
+        restored ? snapshot : undefined,
       );
     }
 
-    return { snapshot, restored: snapshot !== undefined, warnings };
+    return { snapshot, restored, warnings };
   }
 
   async create(input: CreateSandboxInput, path?: string): Promise<{ warnings: string[] }> {
@@ -424,6 +424,37 @@ export class SandboxService {
     await this.runCreatePostHook(post, hookInput);
 
     return { warnings };
+  }
+
+  private async recreate(
+    input: RebuildSandboxInput,
+    snapshot: SandboxSnapshot | undefined,
+  ): Promise<{ warnings: string[]; postHookFailure?: PostHookFailure }> {
+    const { name } = input;
+    try {
+      const { warnings } = await this.create({ name, image: input.image }, input.path);
+
+      return { warnings };
+    } catch (error) {
+      if (!(error instanceof PostHookFailure)) {
+        throw rebuildFailure(name, "removed but could not be recreated", error, snapshot);
+      }
+
+      return { warnings: [], postHookFailure: error };
+    }
+  }
+
+  private async restoreRebuilt(name: string, snapshot: SandboxSnapshot | undefined): Promise<void> {
+    try {
+      await restoreSandbox(this.snapshotContext(), name, snapshot ?? pendingSnapshot);
+    } catch (error) {
+      throw rebuildFailure(
+        name,
+        "recreated but its snapshot could not be restored",
+        error,
+        snapshot,
+      );
+    }
   }
 
   private async startSandbox(sandbox: SandboxSummary): Promise<{ started: boolean }> {
@@ -616,7 +647,7 @@ export class SandboxService {
       await this.hooks.run(hook, path, input, input.context.cwd, "post");
     } catch (error) {
       if (error instanceof HookFailure) {
-        throw new HookFailure({ ...error.detail, message: `${error.message}. ${outcome}` });
+        throw new PostHookFailure({ ...error.detail, message: `${error.message}. ${outcome}` });
       }
       throw error;
     }
@@ -745,6 +776,7 @@ function rebuildFailure(
   state: string,
   error: unknown,
   snapshot: SandboxSnapshot | undefined,
+  restoredSnapshot?: SandboxSnapshot,
 ): SandboxError {
   const code =
     error instanceof SandboxError && error.code === "CANCELLED"
@@ -754,7 +786,12 @@ function rebuildFailure(
     ? ` Its snapshot ${snapshot.id} is kept at ${snapshot.path}; restore it with eden sbx restore --name ${name} --snapshot ${snapshot.id}.`
     : "";
 
-  return new SandboxError(code, `Sandbox ${name} was ${state}: ${errorMessage(error)}${kept}`);
+  const restored = restoredSnapshot ? ` Its snapshot ${restoredSnapshot.id} was restored.` : "";
+
+  return new SandboxError(
+    code,
+    `Sandbox ${name} was ${state}: ${errorMessage(error)}${restored}${kept}`,
+  );
 }
 
 function isCurrentRecord(record: SandboxProfileRecord, createdAt: string | undefined): boolean {
