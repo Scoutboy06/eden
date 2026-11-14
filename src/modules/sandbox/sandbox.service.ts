@@ -338,13 +338,16 @@ export class SandboxService {
         `Sandbox ${name} has no remembered or configured profile to rebuild from. Pass --profile.`,
       );
     }
+
     this.assertRemovable(await this.requireSandbox(name), input.force);
+
     if (!this.provider.remove) {
       throw new SandboxError(
         "SANDBOX_PROVIDER_UNAVAILABLE",
         "Sandbox removal is unavailable for this provider.",
       );
     }
+
     const snapshotSettings = input.snapshot ? profile.snapshot : undefined;
     if (snapshotSettings) this.requireTransfer();
     await this.assertRecreatable(input);

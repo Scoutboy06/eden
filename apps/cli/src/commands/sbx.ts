@@ -364,6 +364,7 @@ const status = defineCommand({
 
     let freshness: Freshness = { state: "unknown", reason: "Not checked (--no-check-updates)." };
     let warnings: string[] = [];
+
     if (ctx.values["check-updates"]) {
       const config = await readResolvedConfig();
       const result = await checkSandboxFreshness([summary], config.config.sandbox?.profiles ?? {});
@@ -422,12 +423,14 @@ const rebuild = defineCommand({
 
   async run(ctx, { sandbox, output }) {
     const { json, dryRun } = ctx.extensions.eden;
+
     if (ctx.values.name === undefined && ctx.values.force) {
       throw new SandboxError(
         "SANDBOX_INVALID_INPUT",
         "Rebuilding an inferred sandbox cannot use --force. Pass --name to rebuild a sandbox without confirmation.",
       );
     }
+
     if (
       !ctx.values.force &&
       !dryRun &&
@@ -438,11 +441,14 @@ const rebuild = defineCommand({
         "Noninteractive sandbox rebuilds require --force; without it, run in a terminal to confirm removal.",
       );
     }
+
     const lookup = await sandbox({ provider: ctx.values.provider });
     const name = await selectName(ctx.values.name, lookup, json);
+
     if (ctx.values.name === undefined && !dryRun && !(await confirmRebuild(name))) {
       throw new SandboxError("CANCELLED", `Rebuild of sandbox ${name} was not confirmed.`);
     }
+
     const service = await shellService(sandbox, lookup, name, ctx.values.profile);
     const result = await service.rebuild({
       name,
