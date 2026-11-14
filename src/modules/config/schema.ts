@@ -3,13 +3,13 @@ import { homedir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { sandboxProviderNames } from "../sandbox/provider";
 
-const AGENTS = ["codex", "claude", "opencode", "omp"] as const;
+export const AGENTS = ["codex", "claude", "opencode", "omp"] as const;
 export type Agent = (typeof AGENTS)[number];
 
 const agentReferenceSchema = v.pipe(
   v.string(),
   v.regex(
-    /^\S*[\\/]\S*$/,
+    /^(?!-)\S*[\\/]\S*$/,
     "Expected codex, claude, opencode, omp, or a sandbox kit reference containing a slash, like docker.io/sbx/claude-kit:latest or ./my-agent-kit",
   ),
 );

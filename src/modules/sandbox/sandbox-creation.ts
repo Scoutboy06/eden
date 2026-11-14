@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { SandboxProfile } from "../config/schema";
+import { AGENTS, type SandboxProfile } from "../config/schema";
 import type { CreateSandboxInput, SandboxProviderName } from "./provider";
 
-const KNOWN_AGENTS: ReadonlySet<string> = new Set(["codex", "claude", "opencode", "omp"]);
+const KNOWN_AGENTS: ReadonlySet<string> = new Set(AGENTS);
 
 export function resolveCreateInput(
   input: CreateSandboxInput,
@@ -70,8 +70,7 @@ export function describeCreation(provider: string, input: CreateSandboxInput): s
     descriptions.push(` with ${input.workspace.mode} workspace ${input.workspace.path}`);
   }
   if (input.agent !== undefined && !KNOWN_AGENTS.has(input.agent)) {
-    descriptions.push(`
-  Agent kit: ${input.agent}`);
+    descriptions.push(`\n  Agent kit: ${input.agent}`);
   }
   if (input.kits?.length) {
     const kits = input.kits.join(", ");

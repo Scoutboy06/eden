@@ -47,12 +47,27 @@ test("reads profiles without interpreting references or injecting profile defaul
   });
 });
 
+test.each(["docker.io/sbx/claude-kit:latest", "~/kits/claude", "./kit", "C:\\kits\\claude"])(
+  "accepts the agent kit reference %s",
+  async (agent) => {
+    await withTemporaryDirectory(async (directory) => {
+      const path = join(directory, "config.yaml");
+      await writeFile(path, stringify({ sandbox: { profiles: { work: { agent } } } }));
+
+      const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
+
+      expect(selectConfig(config, "sandbox.profiles.work.agent")).toBe(agent);
+    });
+  },
+);
+
 test.each([
   [[], "sandbox.profiles"],
   [{ "": {} }, 'sandbox.profiles[""]'],
   [{ unused: { unknown: true } }, "sandbox.profiles.unused.unknown"],
   [{ unused: { provider: "invalid" } }, "sandbox.profiles.unused.provider"],
   [{ unused: { agent: "invalid" } }, "sandbox.profiles.unused.agent"],
+  [{ unused: { agent: "--flag/x" } }, "sandbox.profiles.unused.agent"],
   [{ unused: { agent: "claude-kit latest/x" } }, "sandbox.profiles.unused.agent"],
   [{ unused: { mcp_servers: [""] } }, "sandbox.profiles.unused.mcp_servers.0"],
   [{ unused: { mcp_servers: "notion" } }, "sandbox.profiles.unused.mcp_servers"],

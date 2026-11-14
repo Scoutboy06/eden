@@ -249,3 +249,20 @@ test.each([false, true])(
     });
   },
 );
+
+test("known profile agents do not add an agent kit line to the dry-run plan", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const { service, execution } = await createSandboxHarness({
+      directory,
+      dryRun: true,
+      profile: "work",
+      config: {
+        sandbox: { default_provider: "docker-sbx", profiles: { work: { agent: "claude" } } },
+      },
+    });
+
+    await service.create({ name: "example" });
+
+    expect(execution.operations[0]?.description).not.toContain("Agent kit");
+  });
+});
