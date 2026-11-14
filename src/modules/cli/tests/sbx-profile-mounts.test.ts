@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify } from "yaml";
+import { sandboxPath } from "../../sandbox/sandbox-paths";
 import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
@@ -14,6 +15,7 @@ test.each([false, true])(
       const workspace = join(directory, "example-repo");
       const packages = join(directory, "packages");
       const local = join(directory, "example-local");
+      const sandboxPackages = sandboxPath(packages);
       await Promise.all([mkdir(workspace), mkdir(packages), mkdir(local)]);
       options.env.EDEN_SBX_WORKSPACE_MODE = "clone";
       options.env.EDEN_SBX_WORKSPACE_PATH = workspace;
@@ -22,7 +24,7 @@ test.each([false, true])(
         "--kit-arg",
         "name=example",
         "--kit-arg",
-        `cache=${packages}`,
+        `cache=${sandboxPackages}`,
         "--kit-arg",
         `dir=${workspace}`,
         "--kit-arg",
@@ -73,7 +75,7 @@ test.each([false, true])(
         });
         expect(input.kitArgs).toEqual({
           name: "example",
-          cache: packages,
+          cache: sandboxPackages,
           dir: workspace,
           mode: "clone",
         });
@@ -87,7 +89,7 @@ test.each([false, true])(
           "--kit-arg",
           "name=example",
           "--kit-arg",
-          `cache=${packages}`,
+          `cache=${sandboxPackages}`,
           "--kit-arg",
           `dir=${workspace}`,
           "--kit-arg",
