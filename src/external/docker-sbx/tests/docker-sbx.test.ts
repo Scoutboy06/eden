@@ -469,3 +469,25 @@ test("network rules are scoped to the sandbox and a failed removal names the man
     message: expect.stringContaining("sbx policy rm network --sandbox box --resource a.com,b.com"),
   });
 });
+
+test("only network allow rules count as already open and an unreadable policy fails loudly", async () => {
+  const listing = (stdout: string) =>
+    new DockerSandboxProvider(undefined, {
+      run: async (args) => ({ exitCode: 0, stdout: args[1] === "ls" ? stdout : "", stderr: "" }),
+    });
+  const rules = [
+    { resource_type: "network", decision: "deny", resources: ["a.com"] },
+    { resource_type: "filesystem", decision: "allow", resources: ["b.com"] },
+  ];
+
+  expect(await listing(JSON.stringify({ rules })).allowNetwork("box", ["a.com", "b.com"])).toEqual([
+    "a.com",
+    "b.com",
+  ]);
+  await expect(listing("[]").allowNetwork("box", ["a.com"])).rejects.toMatchObject({
+    code: "SANDBOX_NETWORK_RULE_FAILED",
+  });
+  await expect(listing("not json").allowNetwork("box", ["a.com"])).rejects.toMatchObject({
+    code: "SANDBOX_NETWORK_RULE_FAILED",
+  });
+});

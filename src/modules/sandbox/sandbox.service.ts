@@ -870,8 +870,8 @@ function rebuildFailure(
   const hook =
     extra.hookFailure === undefined
       ? ""
-      : ` Its create post hook had also failed: ${errorMessage(extra.hookFailure)}`;
-  const warned = extra.warnings?.length ? ` Warnings: ${extra.warnings.join("; ")}` : "";
+      : ` Its create post hook had also failed: ${errorMessage(extra.hookFailure)}.`;
+  const warned = extra.warnings?.length ? ` Warnings: ${extra.warnings.join("; ")}.` : "";
 
   const restored = restoredSnapshot ? ` Its snapshot ${restoredSnapshot.id} was restored.` : "";
 

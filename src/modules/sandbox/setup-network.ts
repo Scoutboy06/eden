@@ -49,7 +49,7 @@ export async function withSetupNetwork(
   try {
     await run();
   } finally {
-    await closeSetupNetwork(context, name, added);
+    if (added.length > 0) await closeSetupNetwork(context, name, added);
   }
 }
 
@@ -66,9 +66,7 @@ async function closeSetupNetwork(
         description: `Remove ${hosts.join(", ")} for sandbox ${name} after setup using ${provider.name}`,
         input: { provider: provider.name, name, hosts },
       },
-      async () => {
-        if (hosts.length > 0) await provider.revokeNetwork!(name, hosts);
-      },
+      () => provider.revokeNetwork!(name, hosts),
     );
   } catch (error) {
     onWarning?.(

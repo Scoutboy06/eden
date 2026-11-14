@@ -16,7 +16,8 @@ if (args.length === 1 && args[0] === "--list") {
   console.log(files.join("\n"));
 } else {
   const testPaths = files.map((file) => `./${file}`);
-  const child = Bun.spawn([process.execPath, "test", ...testPaths, ...args], {
+  const timeoutArgs = process.platform === "win32" ? ["--timeout", "30000"] : [];
+  const child = Bun.spawn([process.execPath, "test", ...testPaths, ...timeoutArgs, ...args], {
     cwd: fileURLToPath(root),
     stdin: "inherit",
     stdout: "inherit",

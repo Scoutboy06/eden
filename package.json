@@ -13,7 +13,7 @@
     "test": "bun test",
     "test:fast": "bun run scripts/test.ts fast",
     "test:integration": "bun run scripts/test.ts integration",
-    "test:full": "bun test",
+    "test:full": "bun run scripts/test.ts full",
     "test:profile": "bun run scripts/profile-tests.ts",
     "lint": "oxlint",
     "fmt": "oxfmt",

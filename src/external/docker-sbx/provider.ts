@@ -342,7 +342,7 @@ ${result.stderr}`,
       );
     }
 
-    for (const rule of parsed.output.rules ?? []) {
+    for (const rule of parsed.output.rules) {
       if (rule.resource_type !== "network" || rule.decision !== "allow") continue;
       for (const resource of rule.resources ?? []) resources.add(resource);
     }
@@ -438,14 +438,12 @@ function dockerAgent(agent: CreateSandboxInput["agent"]): string {
 }
 
 const DockerPolicyListSchema = v.object({
-  rules: v.optional(
-    v.array(
-      v.object({
-        resource_type: v.optional(v.string()),
-        decision: v.optional(v.string()),
-        resources: v.optional(v.array(v.string())),
-      }),
-    ),
+  rules: v.array(
+    v.object({
+      resource_type: v.optional(v.string()),
+      decision: v.optional(v.string()),
+      resources: v.optional(v.array(v.string())),
+    }),
   ),
 });
 
