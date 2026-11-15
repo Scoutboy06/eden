@@ -14,7 +14,7 @@ async function withCheckout<T>(action: (checkout: string) => Promise<T>) {
   const checkout = join(directory.path, "My Project");
   await mkdir(checkout);
 
-  return action(checkout);
+  return await action(checkout);
 }
 
 test("prefers the sandbox whose workspace is the checkout", async () => {
