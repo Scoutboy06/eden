@@ -29,11 +29,26 @@ function platform(overrides: Partial<HookPlatform> & { head?: string; files?: st
 }
 
 describe("resolveHookCommand", () => {
-  test("runs the path directly on non-Windows platforms", async () => {
-    const command = await resolveHookCommand("/h/pre.cmd", platform({ platform: "linux" }));
+  test("runs non-script extensions directly on non-Windows platforms", async () => {
+    const command = await resolveHookCommand(
+      "/h/pre.cmd",
+      platform({ platform: "linux", bun: "/usr/bin/bun" }),
+    );
 
     expect(command).toEqual({ executable: "/h/pre.cmd", args: [] });
   });
+
+  test.each([".ts", ".js"])(
+    "runs %s hooks with Bun on non-Windows platforms",
+    async (extension) => {
+      const command = await resolveHookCommand(
+        `/h/pre${extension}`,
+        platform({ platform: "linux", bun: "/usr/bin/bun" }),
+      );
+
+      expect(command).toEqual({ executable: "/usr/bin/bun", args: [`/h/pre${extension}`] });
+    },
+  );
 
   test.each([
     ["C:/h/pre.exe", { executable: "C:/h/pre.exe", args: [] }],
@@ -114,17 +129,41 @@ describe("resolveHookCommand", () => {
 });
 
 describe("findHookFile", () => {
-  test("uses the exact name on non-Windows platforms without listing", async () => {
+  test("uses the exact name on non-Windows platforms when it exists", async () => {
     const system = platform({
       platform: "linux",
-      listDirectory: async () => {
-        throw new Error("unexpected");
-      },
+      files: ["worktree.create.pre", "worktree.create.pre.ts"],
     });
 
     expect(await findHookFile("/h", "worktree.create.pre", system)).toBe(
       join("/h", "worktree.create.pre"),
     );
+  });
+
+  test("finds supported extensions on non-Windows platforms", async () => {
+    const system = platform({ platform: "linux", files: ["worktree.create.pre.ts"] });
+
+    expect(await findHookFile("/h", "worktree.create.pre", system)).toBe(
+      join("/h", "worktree.create.pre.ts"),
+    );
+  });
+
+  test("rejects ambiguous supported extensions on non-Windows platforms", async () => {
+    const system = platform({
+      platform: "linux",
+      files: ["worktree.create.pre.ts", "worktree.create.pre.js"],
+    });
+
+    expect(findHookFile("/h", "worktree.create.pre", system)).rejects.toMatchObject({
+      code: "HOOK_AMBIGUOUS",
+      message: expect.stringMatching(/worktree\.create\.pre\.ts and .*worktree\.create\.pre\.js/),
+    });
+  });
+
+  test("ignores unsupported extensions on non-Windows platforms", async () => {
+    const system = platform({ platform: "linux", files: ["worktree.create.pre.bak"] });
+
+    expect(await findHookFile("/h", "worktree.create.pre", system)).toBeUndefined();
   });
 
   test.each(["worktree.create.pre", "worktree.create.pre.ps1", "worktree.create.pre.CMD"])(

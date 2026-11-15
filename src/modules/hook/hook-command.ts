@@ -21,7 +21,7 @@ export class HookResolutionError extends Error {
   }
 }
 
-const WINDOWS_EXTENSIONS = [".exe", ".cmd", ".bat", ".ps1", ".ts", ".js"];
+const SUPPORTED_EXTENSIONS = [".exe", ".cmd", ".bat", ".ps1", ".ts", ".js"];
 
 const systemHookPlatform: HookPlatform = {
   get platform() {
@@ -47,12 +47,13 @@ export async function findHookFile(
   name: string,
   system: HookPlatform = systemHookPlatform,
 ): Promise<string | undefined> {
-  if (system.platform !== "win32") return join(directory, name);
+  const entries = await system.listDirectory(directory);
+  if (system.platform !== "win32" && entries.includes(name)) return join(directory, name);
 
-  const matches = (await system.listDirectory(directory)).filter(
+  const matches = entries.filter(
     (entry) =>
       entry === name ||
-      (entry.startsWith(`${name}.`) && WINDOWS_EXTENSIONS.includes(extname(entry).toLowerCase())),
+      (entry.startsWith(`${name}.`) && SUPPORTED_EXTENSIONS.includes(extname(entry).toLowerCase())),
   );
 
   if (matches.length > 1) {
@@ -71,7 +72,13 @@ export async function resolveHookCommand(
   path: string,
   system: HookPlatform = systemHookPlatform,
 ): Promise<HookCommand> {
-  if (system.platform !== "win32") return { executable: path, args: [] };
+  if (system.platform !== "win32") {
+    if ([".ts", ".js"].includes(extname(path).toLowerCase())) {
+      return { executable: system.bun, args: [path] };
+    }
+
+    return { executable: path, args: [] };
+  }
 
   switch (extname(path).toLowerCase()) {
     case ".exe":
