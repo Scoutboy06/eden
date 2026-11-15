@@ -42,6 +42,7 @@ export class HookService {
     private readonly options: {
       directory?: string;
       onStderr?: (text: string) => void;
+      onPostStdout?: (text: string) => void;
     } = {},
   ) {}
 
@@ -108,6 +109,8 @@ export class HookService {
 
           stdout = result.stdout;
           stderr = result.stderr;
+
+          if (phase === "post") this.options.onPostStdout?.(stdout);
 
           assertSucceeded(name, result);
 

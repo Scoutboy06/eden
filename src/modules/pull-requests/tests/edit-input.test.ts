@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { buildPullRequestPatch } from "../edit-input";
 
 test("edit options preserve omitted fields, empty bodies and ready state", async () => {
@@ -28,18 +28,17 @@ test("edit rejects conflicting body and draft options before trying to read a fi
 });
 
 test("edit reads UTF-8 body files exactly, including an empty file", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "body.md");
-    const body = "Å description\n\nKeep trailing whitespace.  \n";
-    await Bun.write(path, body);
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "body.md");
+  const body = "Å description\n\nKeep trailing whitespace.  \n";
+  await Bun.write(path, body);
 
-    expect(await buildPullRequestPatch({ bodyFile: path })).toEqual({ body });
+  expect(await buildPullRequestPatch({ bodyFile: path })).toEqual({ body });
 
-    await Bun.write(path, "");
+  await Bun.write(path, "");
 
-    expect(await buildPullRequestPatch({ bodyFile: path })).toEqual({ body: "" });
-    await expect(
-      buildPullRequestPatch({ bodyFile: join(directory, "absent") }),
-    ).rejects.toMatchObject({ code: "SCM_BODY_FILE_FAILED" });
-  });
+  expect(await buildPullRequestPatch({ bodyFile: path })).toEqual({ body: "" });
+  await expect(
+    buildPullRequestPatch({ bodyFile: join(directory.path, "absent") }),
+  ).rejects.toMatchObject({ code: "SCM_BODY_FILE_FAILED" });
 });

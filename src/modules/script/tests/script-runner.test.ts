@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import { basename, dirname, join, sep } from "node:path";
 import { installExecutable, pathWith, runnableExecutable } from "../../fs/tests/support/executable";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { ScriptRunner, type RunOptions, type RunResult } from "../index";
 import { isRunning, waitForExit, waitForPid } from "./support/process";
 
@@ -60,15 +60,14 @@ test("resolves relative executables against cwd and merges environment overrides
 });
 
 test("searches bare executable names using the effective PATH", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    await installExecutable(join(fixtures, "inspect.ts"), directory, "eden-test-hook");
-    const path = pathWith(directory);
+  await using directory = await createTemporaryDirectory();
+  await installExecutable(join(fixtures, "inspect.ts"), directory.path, "eden-test-hook");
+  const path = pathWith(directory.path);
 
-    const result = await ScriptRunner.run("eden-test-hook", null, { env: { PATH: path } });
+  const result = await ScriptRunner.run("eden-test-hook", null, { env: { PATH: path } });
 
-    expect(result).toMatchObject({ outcome: "exited", exitCode: 0 });
-    expect(JSON.parse(result.stdout).path).toBe(path);
-  });
+  expect(result).toMatchObject({ outcome: "exited", exitCode: 0 });
+  expect(JSON.parse(result.stdout).path).toBe(path);
 });
 
 test("captures stdout and stderr concurrently without truncating and returns nonzero exits", async () => {
@@ -161,118 +160,114 @@ test("removes the abort listener after normal completion", async () => {
 });
 
 test("cancels a running process", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const ready = join(directory, "ready");
-    const controller = new AbortController();
-    const run = ScriptRunner.run(await fixture("wait"), null, {
-      env: { EDEN_READY_FILE: ready },
-      signal: controller.signal,
-      timeoutMs: 4000,
-      killGraceMs: 20,
-    });
-
-    try {
-      const pid = await waitForPid(ready);
-      controller.abort();
-      const result = await run;
-
-      expect(result).toEqual({ outcome: "cancelled", stdout: "ready\n", stderr: "" });
-      expect(await isRunning(pid)).toBe(false);
-      expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
-    } finally {
-      controller.abort();
-      await run;
-    }
+  await using directory = await createTemporaryDirectory();
+  const ready = join(directory.path, "ready");
+  const controller = new AbortController();
+  const run = ScriptRunner.run(await fixture("wait"), null, {
+    env: { EDEN_READY_FILE: ready },
+    signal: controller.signal,
+    timeoutMs: 4000,
+    killGraceMs: 20,
   });
+
+  try {
+    const pid = await waitForPid(ready);
+    controller.abort();
+    const result = await run;
+
+    expect(result).toEqual({ outcome: "cancelled", stdout: "ready\n", stderr: "" });
+    expect(await isRunning(pid)).toBe(false);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  } finally {
+    controller.abort();
+    await run;
+  }
 });
 
 test.skipIf(process.platform === "win32")(
   "allows SIGTERM cleanup to finish during the grace period",
   async () => {
-    await withTemporaryDirectory(async (directory) => {
-      const ready = join(directory, "ready");
-      const controller = new AbortController();
-      const run = ScriptRunner.run(await fixture("cleanup"), null, {
-        env: { EDEN_READY_FILE: ready },
-        signal: controller.signal,
-        timeoutMs: 4000,
-        killGraceMs: 500,
-      });
-
-      try {
-        await waitForPid(ready);
-        controller.abort();
-        const result = await run;
-
-        expect(result).toEqual({ outcome: "cancelled", stdout: "cleaned up\n", stderr: "" });
-      } finally {
-        controller.abort();
-        await run;
-      }
+    await using directory = await createTemporaryDirectory();
+    const ready = join(directory.path, "ready");
+    const controller = new AbortController();
+    const run = ScriptRunner.run(await fixture("cleanup"), null, {
+      env: { EDEN_READY_FILE: ready },
+      signal: controller.signal,
+      timeoutMs: 4000,
+      killGraceMs: 500,
     });
+
+    try {
+      await waitForPid(ready);
+      controller.abort();
+      const result = await run;
+
+      expect(result).toEqual({ outcome: "cancelled", stdout: "cleaned up\n", stderr: "" });
+    } finally {
+      controller.abort();
+      await run;
+    }
   },
 );
 
 test.each([false, true])(
   "terminates descendants after their parent exits with SIGTERM ignored: %p",
   async (ignoreTerm) => {
-    await withTemporaryDirectory(async (directory) => {
-      const ready = join(directory, "ready");
-      const controller = new AbortController();
-      const run = ScriptRunner.run(await fixture("tree"), null, {
-        env: { EDEN_READY_FILE: ready, EDEN_IGNORE_TERM: ignoreTerm ? "1" : "0" },
-        signal: controller.signal,
-        timeoutMs: 4000,
-        killGraceMs: 50,
-      });
-      let pid: number | undefined;
-
-      try {
-        pid = await waitForPid(ready);
-        controller.abort();
-        const result = await run;
-        await waitForExit(pid);
-
-        expect(result).toMatchObject({ outcome: "cancelled" });
-        expect(await isRunning(pid)).toBe(false);
-      } finally {
-        controller.abort();
-        await run;
-        if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
-      }
+    await using directory = await createTemporaryDirectory();
+    const ready = join(directory.path, "ready");
+    const controller = new AbortController();
+    const run = ScriptRunner.run(await fixture("tree"), null, {
+      env: { EDEN_READY_FILE: ready, EDEN_IGNORE_TERM: ignoreTerm ? "1" : "0" },
+      signal: controller.signal,
+      timeoutMs: 4000,
+      killGraceMs: 50,
     });
+    let pid: number | undefined;
+
+    try {
+      pid = await waitForPid(ready);
+      controller.abort();
+      const result = await run;
+      await waitForExit(pid);
+
+      expect(result).toMatchObject({ outcome: "cancelled" });
+      expect(await isRunning(pid)).toBe(false);
+    } finally {
+      controller.abort();
+      await run;
+      if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
+    }
   },
 );
 
 test.each(["cancelled", "timeout"] as const)(
   "terminates a process and its descendant promptly on %p",
   async (reason) => {
-    await withTemporaryDirectory(async (directory) => {
-      const ready = join(directory, "ready");
-      const controller = new AbortController();
-      const run = ScriptRunner.run(await fixture("tree"), null, {
-        env: { EDEN_READY_FILE: ready },
-        signal: controller.signal,
-        timeoutMs: reason === "timeout" ? 1500 : 30_000,
-        killGraceMs: 50,
-      });
-      let pid: number | undefined;
-
-      try {
-        pid = await waitForPid(ready);
-        const startedAt = Date.now();
-        if (reason === "cancelled") controller.abort();
-        const result = await run;
-        await waitForExit(pid);
-
-        expect(result).toMatchObject({ outcome: reason });
-        expect(Date.now() - startedAt).toBeLessThan(5000);
-        expect(await isRunning(pid)).toBe(false);
-      } finally {
-        controller.abort();
-        await run;
-        if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
-      }
+    await using directory = await createTemporaryDirectory();
+    const ready = join(directory.path, "ready");
+    const controller = new AbortController();
+    const run = ScriptRunner.run(await fixture("tree"), null, {
+      env: { EDEN_READY_FILE: ready },
+      signal: controller.signal,
+      timeoutMs: reason === "timeout" ? 1500 : 30_000,
+      killGraceMs: 50,
     });
+    let pid: number | undefined;
+
+    try {
+      pid = await waitForPid(ready);
+      const startedAt = Date.now();
+      if (reason === "cancelled") controller.abort();
+      const result = await run;
+      await waitForExit(pid);
+
+      expect(result).toMatchObject({ outcome: reason });
+      expect(Date.now() - startedAt).toBeLessThan(5000);
+      expect(await isRunning(pid)).toBe(false);
+    } finally {
+      controller.abort();
+      await run;
+      if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
+    }
   },
 );

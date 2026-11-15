@@ -3,131 +3,129 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { stringify } from "yaml";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
 
 test("sbx create forwards profile kits and literal arguments to Docker", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, "missing");
-    const flags = [
-      "--kit",
-      join(homedir(), "missing kit"),
-      "--kit",
-      "C:\\work\\kit",
-      "--kit",
-      "oci://example.com/team:latest",
-      "--kit-arg",
-      "team.name=${sandbox.name}",
-      "--kit-arg",
-      "text=a=b with 'quotes' and $(literal)",
-      "--kit-arg",
-      "enabled=true",
-      "--kit-arg",
-      "disabled=false",
-      "--kit-arg",
-      "count=3",
-      "--kit-arg",
-      "empty=",
-      "--kit-arg",
-      "identifier=00123",
-    ];
-    options.env.EDEN_SBX_RUN_KIT_FLAGS = JSON.stringify(flags);
-    options.env.EDEN_SBX_RUN_IMAGE = "profile:image";
-    await writeFile(
-      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-      stringify({
-        sandbox: {
-          profiles: {
-            work: {
-              provider: "docker-sbx",
-              template: "profile:image",
-              kits: ["~/missing kit", "C:\\work\\kit", "oci://example.com/team:latest"],
-              kit_args: {
-                "team.name": "${sandbox.name}",
-                text: "a=b with 'quotes' and $(literal)",
-                enabled: true,
-                disabled: false,
-                count: 3,
-                empty: "",
-                identifier: "00123",
-              },
+  await using directory = await createTemporaryDirectory();
+  const options = await prepareSandboxCli(directory.path, "missing");
+  const flags = [
+    "--kit",
+    join(homedir(), "missing kit"),
+    "--kit",
+    "C:\\work\\kit",
+    "--kit",
+    "oci://example.com/team:latest",
+    "--kit-arg",
+    "team.name=${sandbox.name}",
+    "--kit-arg",
+    "text=a=b with 'quotes' and $(literal)",
+    "--kit-arg",
+    "enabled=true",
+    "--kit-arg",
+    "disabled=false",
+    "--kit-arg",
+    "count=3",
+    "--kit-arg",
+    "empty=",
+    "--kit-arg",
+    "identifier=00123",
+  ];
+  options.env.EDEN_SBX_RUN_KIT_FLAGS = JSON.stringify(flags);
+  options.env.EDEN_SBX_RUN_IMAGE = "profile:image";
+  await writeFile(
+    join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+    stringify({
+      sandbox: {
+        profiles: {
+          work: {
+            provider: "docker-sbx",
+            template: "profile:image",
+            kits: ["~/missing kit", "C:\\work\\kit", "oci://example.com/team:latest"],
+            kit_args: {
+              "team.name": "${sandbox.name}",
+              text: "a=b with 'quotes' and $(literal)",
+              enabled: true,
+              disabled: false,
+              count: 3,
+              empty: "",
+              identifier: "00123",
             },
           },
         },
-      }),
-    );
+      },
+    }),
+  );
 
-    const result = await runCliWith(
-      options,
-      "sbx",
+  const result = await runCliWith(
+    options,
+    "sbx",
+    "create",
+    "--name",
+    "example",
+    "--profile",
+    "work",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(await sandboxCommands(directory.path)).toEqual([
+    ["ls", "--json"],
+    ["policy", "ls", "--json"],
+    [
       "create",
       "--name",
       "example",
-      "--profile",
-      "work",
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--json"],
-      ["policy", "ls", "--json"],
-      [
-        "create",
-        "--name",
-        "example",
-        "--template",
-        "profile:image",
-        ...flags,
-        "--skills",
-        "off",
-        "shell",
-      ],
-    ]);
-  });
+      "--template",
+      "profile:image",
+      ...flags,
+      "--skills",
+      "off",
+      "shell",
+    ],
+  ]);
 });
 
 test("sbx create dry-run reports kit references and typed arguments without creating", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await prepareSandboxCli(directory, "missing");
-    const kits = ["./does-not-exist", "~/team kit"];
-    const kitArgs = { "team.name": "${sandbox.name}", enabled: true, count: 3, empty: "" };
-    await writeFile(
-      join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
-      stringify({
-        sandbox: {
-          profiles: { work: { provider: "docker-sbx", kits, kit_args: kitArgs } },
-        },
-      }),
-    );
-
-    const result = await runCliWith(
-      options,
-      "sbx",
-      "create",
-      "--name",
-      "example",
-      "--profile",
-      "work",
-      "--dry-run",
-      "--json",
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
-      type: "sandbox.create",
-      input: {
-        provider: "docker-sbx",
-        name: "example",
-        profile: "work",
-        kits: [join(directory, "does-not-exist"), join(homedir(), "team kit")],
-        kitArgs,
+  await using directory = await createTemporaryDirectory();
+  const options = await prepareSandboxCli(directory.path, "missing");
+  const kits = ["./does-not-exist", "~/team kit"];
+  const kitArgs = { "team.name": "${sandbox.name}", enabled: true, count: 3, empty: "" };
+  await writeFile(
+    join(options.env.XDG_CONFIG_HOME!, "eden", "config.yaml"),
+    stringify({
+      sandbox: {
+        profiles: { work: { provider: "docker-sbx", kits, kit_args: kitArgs } },
       },
-    });
-    expect(await sandboxCommands(directory)).toEqual([
-      ["ls", "--json"],
-      ["policy", "ls", "--json"],
-    ]);
+    }),
+  );
+
+  const result = await runCliWith(
+    options,
+    "sbx",
+    "create",
+    "--name",
+    "example",
+    "--profile",
+    "work",
+    "--dry-run",
+    "--json",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
+    type: "sandbox.create",
+    input: {
+      provider: "docker-sbx",
+      name: "example",
+      profile: "work",
+      kits: [join(directory.path, "does-not-exist"), join(homedir(), "team kit")],
+      kitArgs,
+    },
   });
+  expect(await sandboxCommands(directory.path)).toEqual([
+    ["ls", "--json"],
+    ["policy", "ls", "--json"],
+  ]);
 });

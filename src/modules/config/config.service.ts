@@ -26,8 +26,6 @@ export type ConfigSource = { type: "file"; path: string } | { type: "default" };
 export type ResolvedConfig = { config: Config; provenance: Record<string, ConfigSource> };
 
 export interface ConfigService extends ResolvedConfigReader {
-  removeProject(key: string): Promise<void>;
-  addProject(key: string, project: { name: string; path: string }): Promise<void>;
   set(key: string, value: string): Promise<void>;
   editGlobal(): Promise<ConfigDraft>;
   readHosts(): Promise<NonNullable<Config["hosts"]>>;
@@ -118,26 +116,9 @@ export function createFileConfigService(
 
   const service: ConfigService = {
     ...reader,
-    async removeProject(key) {
-      const { text, parsed } = await readValidatedConfig(path);
-      const config = validateConfig(parsed, path);
-      if (!Object.hasOwn(config.projects ?? {}, key)) throw new Error("Project not found.");
-      const document = parseDocument(text ?? "{}");
-      document.deleteIn(["projects", key]);
-      await saveProjectRegistry({ path, text, document, execution });
-    },
     async readHosts() {
       const { parsed } = await readValidatedConfig(path);
       return validateConfig(parsed, path).hosts ?? {};
-    },
-    async addProject(key, project) {
-      const { text, parsed } = await readValidatedConfig(path);
-      const config = validateConfig(parsed, path);
-      if (Object.hasOwn(config.projects ?? {}, key)) throw new Error("Project key already exists.");
-      const document = parseDocument(text ?? "{}");
-      if (!config.projects) document.set("projects", document.createNode({}));
-      document.setIn(["projects", key], project);
-      await saveProjectRegistry({ path, text, document, execution });
     },
     async addHost(alias, url) {
       const { text, parsed } = await readValidatedConfig(path);
@@ -268,36 +249,20 @@ async function prepareConfigUpdate(path: string, key: string, value: string): Pr
   return edited;
 }
 
-async function saveProjectRegistry({
-  path,
-  text,
-  document,
-  execution,
-}: {
-  path: string;
-  text: string | undefined;
-  document: ReturnType<typeof parseDocument>;
-  execution: Execution;
-}) {
-  await saveConfigMutation({ path, text, document, execution, checkDuringDryRun: true });
-}
-
 async function saveConfigMutation({
   path,
   text,
   document,
   execution,
-  checkDuringDryRun = false,
 }: {
   path: string;
   text: string | undefined;
   document: ReturnType<typeof parseDocument>;
   execution: Execution;
-  checkDuringDryRun?: boolean;
 }) {
   const edited = document.toString();
   validateConfig(parseConfigYaml(edited, path), path);
-  if ((!execution.dryRun || checkDuringDryRun) && (await readConfigFile(path)) !== text)
+  if (!execution.dryRun && (await readConfigFile(path)) !== text)
     throw new Error("Configuration changed. Try again.");
   await execution.mutate(
     {

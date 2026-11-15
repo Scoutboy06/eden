@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, normalize } from "node:path";
 import * as v from "valibot";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createFileConfigService } from "../config.service";
 import { createWorktreeRootSchema } from "../schema";
 import { rootPrefix } from "./support/root";
@@ -11,32 +11,28 @@ import { rootPrefix } from "./support/root";
 const absolute = `${rootPrefix}/var/worktrees`;
 
 test.each(["~", "~/trees", absolute])("resolves worktree_root %s", async (root) => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "config.yaml");
-    await writeFile(path, `worktree_root: ${JSON.stringify(root)}\n`);
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "config.yaml");
+  await writeFile(path, `worktree_root: ${JSON.stringify(root)}\n`);
 
-    const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
+  const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
 
-    expect(config.worktree_root).toBe(
-      root === "~" ? homedir() : root === "~/trees" ? join(homedir(), "trees") : normalize(root),
-    );
-    expect(config.agent).toBeUndefined();
-  });
+  expect(config.worktree_root).toBe(
+    root === "~" ? homedir() : root === "~/trees" ? join(homedir(), "trees") : normalize(root),
+  );
+  expect(config.agent).toBeUndefined();
 });
 
 test.each(["", "relative/path", "~someone/trees", "/trees\0", null, 123])(
   "rejects invalid worktree_root %j",
   async (root) => {
-    await withTemporaryDirectory(async (directory) => {
-      const path = join(directory, "config.yaml");
-      await writeFile(path, `worktree_root: ${JSON.stringify(root)}\n`);
+    await using directory = await createTemporaryDirectory();
+    const path = join(directory.path, "config.yaml");
+    await writeFile(path, `worktree_root: ${JSON.stringify(root)}\n`);
 
-      await expect(
-        createFileConfigService({ pathsLowToHigh: [path] }).read(),
-      ).rejects.toMatchObject({
-        code: "CONFIG_SCHEMA_INVALID",
-        issues: [{ path: "worktree_root" }],
-      });
+    await expect(createFileConfigService({ pathsLowToHigh: [path] }).read()).rejects.toMatchObject({
+      code: "CONFIG_SCHEMA_INVALID",
+      issues: [{ path: "worktree_root" }],
     });
   },
 );

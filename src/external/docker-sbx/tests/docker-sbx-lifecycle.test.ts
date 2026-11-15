@@ -2,50 +2,49 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installExecutable, pathWith } from "../../../modules/fs/tests/support/executable";
-import { withTemporaryDirectory } from "../../../modules/fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../../modules/fs/tests/support/temporary-directory";
 import { isRunning, waitForExit, waitForPid } from "../../../modules/script/tests/support/process";
 
 for (const operation of ["create", "stop", "readiness"] as const) {
   test.skipIf(process.platform === "win32").each(["ignore", "descendant"])(
     `${operation} cancellation terminates an uncooperative %s process group`,
     async (mode) => {
-      await withTemporaryDirectory(async (directory) => {
-        const { child, result, ready } = await startProvider(directory, operation, mode);
-        const deadline = setTimeout(() => child.kill("SIGKILL"), 3000);
-        let pid: number | undefined;
+      await using directory = await createTemporaryDirectory();
+      const { child, result, ready } = await startProvider(directory.path, operation, mode);
+      const deadline = setTimeout(() => child.kill("SIGKILL"), 3000);
+      let pid: number | undefined;
 
-        try {
-          pid = await waitForPid(ready);
+      try {
+        pid = await waitForPid(ready);
 
-          child.kill(operation === "readiness" ? "SIGUSR1" : "SIGINT");
-          const response = await result;
-          await waitForExit(pid);
+        child.kill(operation === "readiness" ? "SIGUSR1" : "SIGINT");
+        const response = await result;
+        await waitForExit(pid);
 
-          expect(response.exitCode).toBe(0);
-          expect(response.stderr).toBe("");
-          expect(JSON.parse(response.stdout)).toMatchObject({
-            error: { code: "CANCELLED" },
-            interruptListeners: 0,
-            abortListeners: 0,
-          });
-          if (operation === "create") {
-            expect(JSON.parse(response.stdout).error.message).toContain(
-              "Sandbox test may already exist; no cleanup was attempted.",
-            );
-          }
-          if (operation === "stop") {
-            expect(JSON.parse(response.stdout).error.message).toContain(
-              "It may already be stopped; no removal or cleanup was attempted.",
-            );
-          }
-          expect(await isRunning(pid)).toBe(false);
-        } finally {
-          clearTimeout(deadline);
-          if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
-          if (child.exitCode === null) child.kill("SIGKILL");
-          await result;
+        expect(response.exitCode).toBe(0);
+        expect(response.stderr).toBe("");
+        expect(JSON.parse(response.stdout)).toMatchObject({
+          error: { code: "CANCELLED" },
+          interruptListeners: 0,
+          abortListeners: 0,
+        });
+        if (operation === "create") {
+          expect(JSON.parse(response.stdout).error.message).toContain(
+            "Sandbox test may already exist; no cleanup was attempted.",
+          );
         }
-      });
+        if (operation === "stop") {
+          expect(JSON.parse(response.stdout).error.message).toContain(
+            "It may already be stopped; no removal or cleanup was attempted.",
+          );
+        }
+        expect(await isRunning(pid)).toBe(false);
+      } finally {
+        clearTimeout(deadline);
+        if (pid && (await isRunning(pid))) process.kill(pid, "SIGKILL");
+        if (child.exitCode === null) child.kill("SIGKILL");
+        await result;
+      }
     },
   );
 }
@@ -53,27 +52,26 @@ for (const operation of ["create", "stop", "readiness"] as const) {
 test.each(["success", "failure"])(
   "real provider execution preserves output, diagnostics, and listener cleanup on %s",
   async (mode) => {
-    await withTemporaryDirectory(async (directory) => {
-      const { result } = await startProvider(directory, "create", mode);
+    await using directory = await createTemporaryDirectory();
+    const { result } = await startProvider(directory.path, "create", mode);
 
-      const response = await result;
-      const data = JSON.parse(response.stdout);
+    const response = await result;
+    const data = JSON.parse(response.stdout);
 
-      expect(response.exitCode).toBe(0);
-      expect(response.stderr).toBe("");
-      expect(data).toMatchObject({
-        output: "provider stdout\n",
-        interruptListeners: 0,
-        abortListeners: 0,
-      });
-      if (mode === "success") expect(data.error).toBeUndefined();
-      else {
-        expect(data.error.code).toBe("SANDBOX_CREATE_FAILED");
-        expect(data.error.message).toContain("exit 7");
-        expect(data.error.message).toContain("provider stdout");
-        expect(data.error.message).toContain("provider stderr");
-      }
+    expect(response.exitCode).toBe(0);
+    expect(response.stderr).toBe("");
+    expect(data).toMatchObject({
+      output: "provider stdout\n",
+      interruptListeners: 0,
+      abortListeners: 0,
     });
+    if (mode === "success") expect(data.error).toBeUndefined();
+    else {
+      expect(data.error.code).toBe("SANDBOX_CREATE_FAILED");
+      expect(data.error.message).toContain("exit 7");
+      expect(data.error.message).toContain("provider stdout");
+      expect(data.error.message).toContain("provider stderr");
+    }
   },
 );
 

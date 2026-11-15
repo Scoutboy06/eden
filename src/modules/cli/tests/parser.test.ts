@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCli } from "./support/cli";
 import { parseCommands, parseFixture as runFixture } from "./support/parser";
 import mkdir from "../../../../apps/cli/src/commands/mkdir";
@@ -54,20 +54,19 @@ test("does not validate rest arguments after -- as options", async () => {
 test.each(["--bogus", "--dryrun"])(
   "rejects unknown option %s before executing a mutation",
   async (option) => {
-    await withTemporaryDirectory(async (directory) => {
-      const path = join(directory, "not-created");
+    await using directory = await createTemporaryDirectory();
+    const path = join(directory.path, "not-created");
 
-      const result = await parseCommands({ mkdir }, "mkdir", path, option, "--json");
+    const result = await parseCommands({ mkdir }, "mkdir", path, option, "--json");
 
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: false,
-        dryRun: false,
-        error: { code: "err:arg:unknown-option" },
-      });
-      await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      dryRun: false,
+      error: { code: "err:arg:unknown-option" },
     });
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
@@ -83,17 +82,16 @@ test.each([
 });
 
 test("CLI mkdir dry-run reports its plan without creating the directory", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "not-created");
-    const result = await parseCommands({ mkdir }, "mkdir", path, "--dry-run", "--json");
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "not-created");
+  const result = await parseCommands({ mkdir }, "mkdir", path, "--dry-run", "--json");
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe("");
-    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      dryRun: true,
-      operations: [{ type: "fs.mkdir", input: { path } }],
-    });
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    dryRun: true,
+    operations: [{ type: "fs.mkdir", input: { path } }],
   });
 });
 

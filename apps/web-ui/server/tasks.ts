@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { listRegisteredProjects } from "../../../src/modules/projects/project-registry";
 
 import { listBeadsTasks } from "../../../src/external/beads/tasks";
-import { createConfigService } from "../../../src/modules/config/config.service";
 import { handleProjectImport } from "./import-project";
 import { handleTaskDetail, taskDetails } from "./task-detail";
 import { projectWorktrees } from "./worktrees";
@@ -9,10 +9,13 @@ import { projectWorktrees } from "./worktrees";
 type Projects = Record<string, { name: string; path: string }>;
 
 export function createTasksMiddleware(
-  _cwd: string,
+  cwd: string,
   readTasks: typeof listBeadsTasks = listBeadsTasks,
-  readProjects: () => Promise<Record<string, { name: string; path: string }>> = async () =>
-    (await createConfigService().read()).projects ?? {},
+  readProjects: () => Promise<Record<string, { name: string; path: string }>> = async () => {
+    return Object.fromEntries(
+      (await listRegisteredProjects()).map(({ key, name, path }) => [key, { name, path }]),
+    );
+  },
   details = taskDetails,
   readWorktrees: typeof projectWorktrees = projectWorktrees,
 ) {

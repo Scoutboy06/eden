@@ -44,19 +44,6 @@ export function createWorktreeRootSchema(
   );
 }
 
-function createProjectPathSchema(
-  platform: NodeJS.Platform = process.platform,
-  home: () => string = homedir,
-) {
-  return createAbsolutePathSchema(
-    platform,
-    home,
-    platform === "win32"
-      ? "Expected a repository path starting with a drive letter, a UNC share, or ~/ or ~\\"
-      : "Expected an absolute repository path or a path starting with ~/",
-  );
-}
-
 function createAbsolutePathSchema(
   platform: NodeJS.Platform,
   home: () => string,
@@ -84,11 +71,6 @@ function createAbsolutePathSchema(
 const worktreeRootSchema = createWorktreeRootSchema();
 
 const nonEmptyString = v.pipe(v.string(), v.nonEmpty());
-const projectKeySchema = v.pipe(
-  nonEmptyString,
-  v.check((key) => key !== "." && key !== "..", "Expected a project key other than . or .."),
-);
-const projectSchema = v.strictObject({ name: nonEmptyString, path: createProjectPathSchema() });
 const hostAliasSchema = v.pipe(
   v.string(),
   v.regex(
@@ -194,7 +176,6 @@ export const ConfigSchema = v.pipe(
         }),
       ),
       worktree_root: v.optional(worktreeRootSchema, () => join(homedir(), ".worktrees")),
-      projects: v.nullish(configMap(projectSchema, projectKeySchema)),
       hosts: v.optional(configMap(hostSchema, hostAliasSchema)),
     },
     "Expected a configuration object containing only recognized settings",

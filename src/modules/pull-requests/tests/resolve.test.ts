@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { GitModule } from "../../git/git.module";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { createGitContext, resolvePullRequestLookup, type GitContext } from "../resolve";
 
 function context(
@@ -120,14 +120,13 @@ test("unsupported remotes are ignored unless explicitly selected", async () => {
 });
 
 test("real Git context reads worktree branch and fetch remotes without fetching", async () => {
-  await withTemporaryDirectory(async (cwd) => {
-    await GitModule.execute(cwd, ["init", "-b", "topic"]);
-    await GitModule.execute(cwd, ["remote", "add", "origin", "git@github.com:acme/app.git"]);
+  await using cwd = await createTemporaryDirectory();
+  await GitModule.execute(cwd.path, ["init", "-b", "topic"]);
+  await GitModule.execute(cwd.path, ["remote", "add", "origin", "git@github.com:acme/app.git"]);
 
-    expect(await resolvePullRequestLookup({}, createGitContext(cwd))).toMatchObject({
-      kind: "branch",
-      sourceBranch: "topic",
-      repository: { repository: "app" },
-    });
+  expect(await resolvePullRequestLookup({}, createGitContext(cwd.path))).toMatchObject({
+    kind: "branch",
+    sourceBranch: "topic",
+    repository: { repository: "app" },
   });
 });

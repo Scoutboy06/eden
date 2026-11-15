@@ -13,17 +13,24 @@ export const edenOptions = plugin({
       type: "boolean",
       description: "Output structured JSON",
     });
+
+    ctx.addGlobalOption("verbose", {
+      type: "boolean",
+      description: "Display captured post-hook output",
+    });
   },
 
   extension: (ctx) => ({
     dryRun: ctx.values["dry-run"] === true,
     json: ctx.values.json === true,
+    verbose: ctx.values.verbose === true,
   }),
 });
 
 export type EdenExtensions = {
   dryRun: boolean;
   json: boolean;
+  verbose: boolean;
 };
 
 export function requestsFlag(argv: string[], name: string): boolean {

@@ -4,60 +4,58 @@ import { join } from "node:path";
 import { stringify } from "yaml";
 import { createFileConfigService } from "../config.service";
 import { selectConfig } from "../select";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 
 test("reads profiles without interpreting references or injecting profile defaults", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "config.yaml");
-    const profiles = {
-      inet: {
-        provider: "docker-sbx" as const,
-        agent: "claude" as const,
-        mcp_servers: ["notion", "db"],
-        mounts: {
-          packages: { path: "~/cache", readonly: true },
-          scratch: { path: "~/scratch", create: true },
-        },
-        pull: "never" as const,
-        disk: { root: "100g", docker: "50g" },
-        workspace: { mode: "clone" as const, path: "~/repository" },
-        template: "prodinetcrsweccr.azurecr.io/inetsbx:latest",
-        kits: [
-          "~/kit",
-          "./kit",
-          "C:\\work\\kit",
-          "oci://registry/kit",
-          "https://example.com/kit.git",
-        ],
-        kit_args: { "inetsbx.workspace": "clone", enabled: true, count: 3, empty: "" },
-        shell: { cwd: "/home/agent/project", command: ["zsh", "-l"] },
-        snapshot: { paths: ["~/.claude", "~/.config/tool/"], keep: 3 },
-        setup: { network: { allow: ["github.com", "*.npmjs.org", "registry.example:443"] } },
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "config.yaml");
+  const profiles = {
+    inet: {
+      provider: "docker-sbx" as const,
+      agent: "claude" as const,
+      mcp_servers: ["notion", "db"],
+      mounts: {
+        packages: { path: "~/cache", readonly: true },
+        scratch: { path: "~/scratch", create: true },
       },
-      empty: {},
-      "work.profile": { kits: [], kit_args: {} },
-      "with spaces": { template: "opaque template reference" },
-    };
-    await writeFile(path, stringify({ sandbox: { profiles } }));
+      pull: "never" as const,
+      disk: { root: "100g", docker: "50g" },
+      workspace: { mode: "clone" as const, path: "~/repository" },
+      template: "prodinetcrsweccr.azurecr.io/inetsbx:latest",
+      kits: [
+        "~/kit",
+        "./kit",
+        "C:\\work\\kit",
+        "oci://registry/kit",
+        "https://example.com/kit.git",
+      ],
+      kit_args: { "inetsbx.workspace": "clone", enabled: true, count: 3, empty: "" },
+      shell: { cwd: "/home/agent/project", command: ["zsh", "-l"] },
+      snapshot: { paths: ["~/.claude", "~/.config/tool/"], keep: 3 },
+      setup: { network: { allow: ["github.com", "*.npmjs.org", "registry.example:443"] } },
+    },
+    empty: {},
+    "work.profile": { kits: [], kit_args: {} },
+    "with spaces": { template: "opaque template reference" },
+  };
+  await writeFile(path, stringify({ sandbox: { profiles } }));
 
-    const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
+  const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
 
-    expect(config.sandbox).toEqual({ profiles });
-    expect(selectConfig(config, "sandbox.profiles.inet.agent")).toBe("claude");
-  });
+  expect(config.sandbox).toEqual({ profiles });
+  expect(selectConfig(config, "sandbox.profiles.inet.agent")).toBe("claude");
 });
 
 test.each(["docker.io/sbx/claude-kit:latest", "~/kits/claude", "./kit", "C:\\kits\\claude"])(
   "accepts the agent kit reference %s",
   async (agent) => {
-    await withTemporaryDirectory(async (directory) => {
-      const path = join(directory, "config.yaml");
-      await writeFile(path, stringify({ sandbox: { profiles: { work: { agent } } } }));
+    await using directory = await createTemporaryDirectory();
+    const path = join(directory.path, "config.yaml");
+    await writeFile(path, stringify({ sandbox: { profiles: { work: { agent } } } }));
 
-      const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
+    const config = await createFileConfigService({ pathsLowToHigh: [path] }).read();
 
-      expect(selectConfig(config, "sandbox.profiles.work.agent")).toBe(agent);
-    });
+    expect(selectConfig(config, "sandbox.profiles.work.agent")).toBe(agent);
   },
 );
 
@@ -135,143 +133,138 @@ test.each([
   [{ unused: [] }, "sandbox.profiles.unused"],
   [{ unused: null }, "sandbox.profiles.unused"],
 ] as const)("rejects invalid profile configuration %j", async (profiles, issuePath) => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "config.yaml");
-    await writeFile(path, stringify({ sandbox: { profiles } }));
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "config.yaml");
+  await writeFile(path, stringify({ sandbox: { profiles } }));
 
-    await expect(createFileConfigService({ pathsLowToHigh: [path] }).read()).rejects.toMatchObject({
-      code: "CONFIG_SCHEMA_INVALID",
-      path,
-      issues: expect.arrayContaining([expect.objectContaining({ path: issuePath })]),
-    });
+  await expect(createFileConfigService({ pathsLowToHigh: [path] }).read()).rejects.toMatchObject({
+    code: "CONFIG_SCHEMA_INVALID",
+    path,
+    issues: expect.arrayContaining([expect.objectContaining({ path: issuePath })]),
   });
 });
 
 test("merges profile fields and argument keys, replaces arrays, and preserves provenance", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const global = join(directory, "global.yaml");
-    const repository = join(directory, "repository.yaml");
-    const local = join(directory, "local.yaml");
-    await writeFile(
-      global,
-      stringify({
-        sandbox: {
-          profiles: {
-            inet: {
-              provider: "docker-sbx",
-              template: "global:image",
-              kits: ["first", "second"],
-              kit_args: { "kit.arg": "global", enabled: true, count: 1 },
-            },
-            "other.profile": { template: "other:image" },
+  await using directory = await createTemporaryDirectory();
+  const global = join(directory.path, "global.yaml");
+  const repository = join(directory.path, "repository.yaml");
+  const local = join(directory.path, "local.yaml");
+  await writeFile(
+    global,
+    stringify({
+      sandbox: {
+        profiles: {
+          inet: {
+            provider: "docker-sbx",
+            template: "global:image",
+            kits: ["first", "second"],
+            kit_args: { "kit.arg": "global", enabled: true, count: 1 },
           },
+          "other.profile": { template: "other:image" },
         },
-      }),
-    );
-    await writeFile(
-      repository,
-      stringify({
-        sandbox: {
-          profiles: {
-            inet: {
-              template: "repository:image",
-              kits: ["replacement"],
-              kit_args: { "kit.arg": "repository", count: 2 },
-            },
-          },
-        },
-      }),
-    );
-    await writeFile(
-      local,
-      stringify({ sandbox: { profiles: { inet: { kit_args: {} }, "other.profile": {} } } }),
-    );
-
-    const { config, provenance } = await createFileConfigService({
-      pathsLowToHigh: [global, repository, local],
-    }).readWithProvenance();
-
-    expect(config.sandbox?.profiles).toEqual({
-      inet: {
-        provider: "docker-sbx",
-        template: "repository:image",
-        kits: ["replacement"],
-        kit_args: { "kit.arg": "repository", enabled: true, count: 2 },
       },
-      "other.profile": { template: "other:image" },
-    });
-    expect(provenance).toMatchObject({
-      "sandbox.profiles.inet.provider": { type: "file", path: global },
-      "sandbox.profiles.inet.template": { type: "file", path: repository },
-      "sandbox.profiles.inet.kits": { type: "file", path: repository },
-      'sandbox.profiles.inet.kit_args["kit.arg"]': { type: "file", path: repository },
-      "sandbox.profiles.inet.kit_args.enabled": { type: "file", path: global },
-      "sandbox.profiles.inet.kit_args.count": { type: "file", path: repository },
-      'sandbox.profiles["other.profile"].template': { type: "file", path: global },
-    });
+    }),
+  );
+  await writeFile(
+    repository,
+    stringify({
+      sandbox: {
+        profiles: {
+          inet: {
+            template: "repository:image",
+            kits: ["replacement"],
+            kit_args: { "kit.arg": "repository", count: 2 },
+          },
+        },
+      },
+    }),
+  );
+  await writeFile(
+    local,
+    stringify({ sandbox: { profiles: { inet: { kit_args: {} }, "other.profile": {} } } }),
+  );
+
+  const { config, provenance } = await createFileConfigService({
+    pathsLowToHigh: [global, repository, local],
+  }).readWithProvenance();
+
+  expect(config.sandbox?.profiles).toEqual({
+    inet: {
+      provider: "docker-sbx",
+      template: "repository:image",
+      kits: ["replacement"],
+      kit_args: { "kit.arg": "repository", enabled: true, count: 2 },
+    },
+    "other.profile": { template: "other:image" },
+  });
+  expect(provenance).toMatchObject({
+    "sandbox.profiles.inet.provider": { type: "file", path: global },
+    "sandbox.profiles.inet.template": { type: "file", path: repository },
+    "sandbox.profiles.inet.kits": { type: "file", path: repository },
+    'sandbox.profiles.inet.kit_args["kit.arg"]': { type: "file", path: repository },
+    "sandbox.profiles.inet.kit_args.enabled": { type: "file", path: global },
+    "sandbox.profiles.inet.kit_args.count": { type: "file", path: repository },
+    'sandbox.profiles["other.profile"].template': { type: "file", path: global },
   });
 });
 
 test("preserves provenance for an empty __proto__ profile without mutating prototypes", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "config.yaml");
-    await writeFile(path, 'sandbox: { profiles: { "__proto__": {} } }\n');
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "config.yaml");
+  await writeFile(path, 'sandbox: { profiles: { "__proto__": {} } }\n');
 
-    const { config, provenance } = await createFileConfigService({
-      pathsLowToHigh: [path],
-    }).readWithProvenance();
+  const { config, provenance } = await createFileConfigService({
+    pathsLowToHigh: [path],
+  }).readWithProvenance();
 
-    expect(Object.keys(config.sandbox!.profiles!)).toEqual(["__proto__"]);
-    expect(provenance["sandbox.profiles.__proto__"]).toEqual({ type: "file", path });
-    expect(Object.hasOwn(Object.prototype, "provider")).toBe(false);
-  });
+  expect(Object.keys(config.sandbox!.profiles!)).toEqual(["__proto__"]);
+  expect(provenance["sandbox.profiles.__proto__"]).toEqual({ type: "file", path });
+  expect(Object.hasOwn(Object.prototype, "provider")).toBe(false);
 });
 
 test("rejects invalid profile fields in lower layers even when overridden", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const global = join(directory, "global.yaml");
-    const repository = join(directory, "repository.yaml");
-    await writeFile(global, "sandbox:\n  profiles:\n    inet:\n      template: 123\n");
-    await writeFile(repository, "sandbox:\n  profiles:\n    inet:\n      template: valid\n");
+  await using directory = await createTemporaryDirectory();
+  const global = join(directory.path, "global.yaml");
+  const repository = join(directory.path, "repository.yaml");
+  await writeFile(global, "sandbox:\n  profiles:\n    inet:\n      template: 123\n");
+  await writeFile(repository, "sandbox:\n  profiles:\n    inet:\n      template: valid\n");
 
-    await expect(
-      createFileConfigService({ pathsLowToHigh: [global, repository] }).read(),
-    ).rejects.toMatchObject({
-      code: "CONFIG_SCHEMA_INVALID",
-      path: global,
-    });
+  await expect(
+    createFileConfigService({ pathsLowToHigh: [global, repository] }).read(),
+  ).rejects.toMatchObject({
+    code: "CONFIG_SCHEMA_INVALID",
+    path: global,
   });
 });
 
 test.each(["__proto__", "constructor", "prototype", "toString"])(
   "preserves literal mapping key %s safely",
   async (key) => {
-    await withTemporaryDirectory(async (directory) => {
-      const global = join(directory, "global.yaml");
-      const repository = join(directory, "repository.yaml");
-      await writeFile(
-        global,
-        stringify({ sandbox: { profiles: { [key]: { kit_args: { [key]: "global" } } } } }),
-      );
-      await writeFile(
-        repository,
-        stringify({
-          sandbox: { profiles: { [key]: { kit_args: { [key]: "override" }, template: "image" } } },
-        }),
-      );
+    await using directory = await createTemporaryDirectory();
+    const global = join(directory.path, "global.yaml");
+    const repository = join(directory.path, "repository.yaml");
+    await writeFile(
+      global,
+      stringify({ sandbox: { profiles: { [key]: { kit_args: { [key]: "global" } } } } }),
+    );
+    await writeFile(
+      repository,
+      stringify({
+        sandbox: { profiles: { [key]: { kit_args: { [key]: "override" }, template: "image" } } },
+      }),
+    );
 
-      const { config, provenance } = await createFileConfigService({
-        pathsLowToHigh: [global, repository],
-      }).readWithProvenance();
-      const path = `sandbox.profiles[${JSON.stringify(key)}].kit_args[${JSON.stringify(key)}]`;
+    const { config, provenance } = await createFileConfigService({
+      pathsLowToHigh: [global, repository],
+    }).readWithProvenance();
+    const path = `sandbox.profiles[${JSON.stringify(key)}].kit_args[${JSON.stringify(key)}]`;
 
-      expect(selectConfig(config, path)).toBe("override");
-      expect(Object.keys(config.sandbox!.profiles!)).toEqual([key]);
-      expect(provenance[`sandbox.profiles.${key}.kit_args.${key}`]).toEqual({
-        type: "file",
-        path: repository,
-      });
-      expect(Object.hasOwn(Object.prototype, "kit_args")).toBe(false);
+    expect(selectConfig(config, path)).toBe("override");
+    expect(Object.keys(config.sandbox!.profiles!)).toEqual([key]);
+    expect(provenance[`sandbox.profiles.${key}.kit_args.${key}`]).toEqual({
+      type: "file",
+      path: repository,
     });
+    expect(Object.hasOwn(Object.prototype, "kit_args")).toBe(false);
   },
 );

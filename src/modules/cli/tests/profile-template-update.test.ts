@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify } from "yaml";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { installExecutable, pathWith } from "../../fs/tests/support/executable";
 import { runCliWith } from "./support/cli";
 
@@ -56,212 +56,205 @@ async function commands(path: string): Promise<string[][]> {
 }
 
 test("updates by immutable digest, verifies loaded image, and then becomes a no-op", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
 
-    const first = await runCliWith(options, "profile", "update-template", "work", "--json");
-    const previous = await commands(options.env.EDEN_TEMPLATE_LOG);
-    const second = await runCliWith(options, "profile", "update-template", "work", "--json");
-    const later = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(previous.length);
-    const pulledByDigest = previous.some(
-      (args) =>
-        args[1] === "image" &&
-        args[2] === "pull" &&
-        args.at(-1)?.endsWith(`@${options.env.EDEN_TEMPLATE_DIGEST}`),
-    );
-    const loadedTemplate = previous.some((args) => args[0] === "sbx" && args[2] === "load");
+  const first = await runCliWith(options, "profile", "update-template", "work", "--json");
+  const previous = await commands(options.env.EDEN_TEMPLATE_LOG);
+  const second = await runCliWith(options, "profile", "update-template", "work", "--json");
+  const later = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(previous.length);
+  const pulledByDigest = previous.some(
+    (args) =>
+      args[1] === "image" &&
+      args[2] === "pull" &&
+      args.at(-1)?.endsWith(`@${options.env.EDEN_TEMPLATE_DIGEST}`),
+  );
+  const loadedTemplate = previous.some((args) => args[0] === "sbx" && args[2] === "load");
 
-    expect(first.exitCode).toBe(0);
-    expect(JSON.parse(first.stdout).template).toMatchObject({
-      status: "updated",
-      sandboxes: {
-        current: [],
-        outdated: [],
-        unattributed: [],
-        unavailable: [],
-        listUnavailable: false,
-      },
-    });
-    expect(pulledByDigest).toBe(true);
-    expect(loadedTemplate).toBe(true);
-    expect(JSON.parse(second.stdout).template.status).toBe("current");
-    expect(later.map((args) => args.slice(0, 3))).toEqual([
-      ["docker", "buildx", "imagetools"],
-      ["sbx", "template", "ls"],
-      ["sbx", "ls", "--json"],
-    ]);
+  expect(first.exitCode).toBe(0);
+  expect(JSON.parse(first.stdout).template).toMatchObject({
+    status: "updated",
+    sandboxes: {
+      current: [],
+      outdated: [],
+      unattributed: [],
+      unavailable: [],
+      listUnavailable: false,
+    },
   });
+  expect(pulledByDigest).toBe(true);
+  expect(loadedTemplate).toBe(true);
+  expect(JSON.parse(second.stdout).template.status).toBe("current");
+  expect(later.map((args) => args.slice(0, 3))).toEqual([
+    ["docker", "buildx", "imagetools"],
+    ["sbx", "template", "ls"],
+    ["sbx", "ls", "--json"],
+  ]);
 });
 
 test("dry-run inspects but never creates cache, pulls or loads", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
 
-    const result = await runCliWith(
-      options,
-      "profile",
-      "update-template",
-      "work",
-      "--dry-run",
-      "--json",
-    );
-    const commandPrefixes = (await commands(options.env.EDEN_TEMPLATE_LOG)).map((args) =>
-      args.slice(0, 3),
-    );
+  const result = await runCliWith(
+    options,
+    "profile",
+    "update-template",
+    "work",
+    "--dry-run",
+    "--json",
+  );
+  const commandPrefixes = (await commands(options.env.EDEN_TEMPLATE_LOG)).map((args) =>
+    args.slice(0, 3),
+  );
 
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
-      type: "sandbox.template.update",
-      input: { cached: false, outdatedSandboxes: null },
-    });
-    expect(commandPrefixes).toEqual([
-      ["docker", "buildx", "imagetools"],
-      ["sbx", "template", "ls"],
-    ]);
-    expect(await Bun.file(join(directory, "state")).exists()).toBe(false);
-    expect(await Bun.file(join(directory, "cache", "eden", "templates")).exists()).toBe(false);
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout).operations[0]).toMatchObject({
+    type: "sandbox.template.update",
+    input: { cached: false, outdatedSandboxes: null },
   });
+  expect(commandPrefixes).toEqual([
+    ["docker", "buildx", "imagetools"],
+    ["sbx", "template", "ls"],
+  ]);
+  expect(await Bun.file(join(directory.path, "state")).exists()).toBe(false);
+  expect(await Bun.file(join(directory.path, "cache", "eden", "templates")).exists()).toBe(false);
 });
 
 test("rejects a pulled image whose digest differs before tagging or loading", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    options.env.EDEN_TEMPLATE_WRONG_DIGEST = `sha256:${"c".repeat(64)}`;
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  options.env.EDEN_TEMPLATE_WRONG_DIGEST = `sha256:${"c".repeat(64)}`;
 
-    const result = await runCliWith(options, "profile", "update-template", "work", "--json");
-    const commandsAfterUpdate = await commands(options.env.EDEN_TEMPLATE_LOG);
-    const taggedOrLoaded = commandsAfterUpdate.some(
-      (args) => args[2] === "tag" || args[2] === "load",
-    );
+  const result = await runCliWith(options, "profile", "update-template", "work", "--json");
+  const commandsAfterUpdate = await commands(options.env.EDEN_TEMPLATE_LOG);
+  const taggedOrLoaded = commandsAfterUpdate.some(
+    (args) => args[2] === "tag" || args[2] === "load",
+  );
 
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout).error).toMatchObject({
-      code: "SANDBOX_TEMPLATE_UPDATE_FAILED",
-      message: expect.stringContaining("did not verify"),
-    });
-    expect(taggedOrLoaded).toBe(false);
+  expect(result.exitCode).toBe(1);
+  expect(JSON.parse(result.stdout).error).toMatchObject({
+    code: "SANDBOX_TEMPLATE_UPDATE_FAILED",
+    message: expect.stringContaining("did not verify"),
   });
+  expect(taggedOrLoaded).toBe(false);
 });
 
 test("verified cache is reused if template disappears, but a damaged archive is not", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    const initialUpdate = await runCliWith(options, "profile", "update-template", "work", "--json");
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  const initialUpdate = await runCliWith(options, "profile", "update-template", "work", "--json");
 
-    expect(initialUpdate.exitCode).toBe(0);
+  expect(initialUpdate.exitCode).toBe(0);
 
-    await Bun.write(options.env.EDEN_TEMPLATE_STATE, "cccccccccccc");
-    let start = (await commands(options.env.EDEN_TEMPLATE_LOG)).length;
+  await Bun.write(options.env.EDEN_TEMPLATE_STATE, "cccccccccccc");
+  let start = (await commands(options.env.EDEN_TEMPLATE_LOG)).length;
 
-    const cachedUpdate = await runCliWith(options, "profile", "update-template", "work", "--json");
-    let next = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(start);
+  const cachedUpdate = await runCliWith(options, "profile", "update-template", "work", "--json");
+  let next = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(start);
 
-    expect(cachedUpdate.exitCode).toBe(0);
-    expect(next.some((args) => args[2] === "load")).toBe(true);
-    expect(next.some((args) => args[2] === "pull")).toBe(false);
+  expect(cachedUpdate.exitCode).toBe(0);
+  expect(next.some((args) => args[2] === "load")).toBe(true);
+  expect(next.some((args) => args[2] === "pull")).toBe(false);
 
-    const cache = join(directory, "cache", "eden", "templates");
-    const archive = (await readdir(cache)).find((name) => name.endsWith(".tar"))!;
-    await Bun.write(join(cache, archive), "damaged");
-    await Bun.write(options.env.EDEN_TEMPLATE_STATE, "cccccccccccc");
+  const cache = join(directory.path, "cache", "eden", "templates");
+  const archive = (await readdir(cache)).find((name) => name.endsWith(".tar"))!;
+  await Bun.write(join(cache, archive), "damaged");
+  await Bun.write(options.env.EDEN_TEMPLATE_STATE, "cccccccccccc");
 
-    start = (await commands(options.env.EDEN_TEMPLATE_LOG)).length;
-    const damagedCacheUpdate = await runCliWith(
-      options,
-      "profile",
-      "update-template",
-      "work",
-      "--json",
-    );
-    next = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(start);
+  start = (await commands(options.env.EDEN_TEMPLATE_LOG)).length;
+  const damagedCacheUpdate = await runCliWith(
+    options,
+    "profile",
+    "update-template",
+    "work",
+    "--json",
+  );
+  next = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(start);
 
-    expect(damagedCacheUpdate.exitCode).toBe(0);
-    expect(next.some((args) => args[2] === "pull")).toBe(true);
-  });
+  expect(damagedCacheUpdate.exitCode).toBe(0);
+  expect(next.some((args) => args[2] === "pull")).toBe(true);
 });
 
 test("a changed registry digest triggers an update without touching sandboxes", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    const initialUpdate = await runCliWith(options, "profile", "update-template", "work", "--json");
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  const initialUpdate = await runCliWith(options, "profile", "update-template", "work", "--json");
 
-    expect(initialUpdate.exitCode).toBe(0);
+  expect(initialUpdate.exitCode).toBe(0);
 
-    const start = (await commands(options.env.EDEN_TEMPLATE_LOG)).length;
-    options.env.EDEN_TEMPLATE_DIGEST = `sha256:${"d".repeat(64)}`;
+  const start = (await commands(options.env.EDEN_TEMPLATE_LOG)).length;
+  options.env.EDEN_TEMPLATE_DIGEST = `sha256:${"d".repeat(64)}`;
 
-    const result = await runCliWith(options, "profile", "update-template", "work", "--json");
-    const next = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(start);
-    const pulledNewDigest = next.some(
-      (args) => args[2] === "pull" && args.at(-1)?.endsWith(`@${options.env.EDEN_TEMPLATE_DIGEST}`),
-    );
-    const sandboxCommandsAreReadOnly = next
-      .filter((args) => args[0] === "sbx")
-      .every((args) => args[1] === "template" || args[1] === "ls" || args[1] === "inspect");
+  const result = await runCliWith(options, "profile", "update-template", "work", "--json");
+  const next = (await commands(options.env.EDEN_TEMPLATE_LOG)).slice(start);
+  const pulledNewDigest = next.some(
+    (args) => args[2] === "pull" && args.at(-1)?.endsWith(`@${options.env.EDEN_TEMPLATE_DIGEST}`),
+  );
+  const sandboxCommandsAreReadOnly = next
+    .filter((args) => args[0] === "sbx")
+    .every((args) => args[1] === "template" || args[1] === "ls" || args[1] === "inspect");
 
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).template.status).toBe("updated");
-    expect(pulledNewDigest).toBe(true);
-    expect(sandboxCommandsAreReadOnly).toBe(true);
-  });
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout).template.status).toBe("updated");
+  expect(pulledNewDigest).toBe(true);
+  expect(sandboxCommandsAreReadOnly).toBe(true);
 });
 
 test("load failure reports that the template may have changed", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    options.env.EDEN_TEMPLATE_LOAD_FAIL = "1";
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  options.env.EDEN_TEMPLATE_LOAD_FAIL = "1";
 
-    const result = await runCliWith(options, "profile", "update-template", "work", "--json");
+  const result = await runCliWith(options, "profile", "update-template", "work", "--json");
 
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout).error.message).toContain("template may already have changed");
-    expect(
-      (await readdir(join(directory, "cache", "eden", "templates"))).some((name) =>
-        name.endsWith(".json"),
-      ),
-    ).toBe(false);
-  });
+  expect(result.exitCode).toBe(1);
+  expect(JSON.parse(result.stdout).error.message).toContain("template may already have changed");
+  expect(
+    (await readdir(join(directory.path, "cache", "eden", "templates"))).some((name) =>
+      name.endsWith(".json"),
+    ),
+  ).toBe(false);
 });
 
 test("uses provider image ID and reports sandbox attribution without exposing inspect fields", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    const providerId = `sha256:${"e".repeat(64)}`;
-    options.env.EDEN_TEMPLATE_SBX_IMAGE_ID = providerId;
-    options.env.EDEN_TEMPLATE_SANDBOXES = JSON.stringify([
-      { name: "current" },
-      { name: "old" },
-      { name: "other" },
-      { name: "broken" },
-    ]);
-    options.env.EDEN_TEMPLATE_INSPECT = JSON.stringify({
-      current: {
-        image: "registry.example/team/image:latest",
-        image_digest: providerId,
-        secrets: ["must-not-appear"],
-      },
-      old: {
-        image: "registry.example/team/image:latest",
-        image_digest: `sha256:${"f".repeat(64)}`,
-      },
-      other: { image: "registry.example/team/other:latest", image_digest: providerId },
-    });
-
-    const result = await runCliWith(options, "profile", "update-template", "work", "--json");
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).template.sandboxes).toEqual({
-      current: ["current"],
-      outdated: ["old"],
-      unattributed: ["other"],
-      unavailable: ["broken"],
-      listUnavailable: false,
-    });
-    expect(result.stdout).not.toContain("must-not-appear");
-    expect(
-      (await runCliWith(options, "profile", "update-template", "work", "--json")).exitCode,
-    ).toBe(0);
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  const providerId = `sha256:${"e".repeat(64)}`;
+  options.env.EDEN_TEMPLATE_SBX_IMAGE_ID = providerId;
+  options.env.EDEN_TEMPLATE_SANDBOXES = JSON.stringify([
+    { name: "current" },
+    { name: "old" },
+    { name: "other" },
+    { name: "broken" },
+  ]);
+  options.env.EDEN_TEMPLATE_INSPECT = JSON.stringify({
+    current: {
+      image: "registry.example/team/image:latest",
+      image_digest: providerId,
+      secrets: ["must-not-appear"],
+    },
+    old: {
+      image: "registry.example/team/image:latest",
+      image_digest: `sha256:${"f".repeat(64)}`,
+    },
+    other: { image: "registry.example/team/other:latest", image_digest: providerId },
   });
+
+  const result = await runCliWith(options, "profile", "update-template", "work", "--json");
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout).template.sandboxes).toEqual({
+    current: ["current"],
+    outdated: ["old"],
+    unattributed: ["other"],
+    unavailable: ["broken"],
+    listUnavailable: false,
+  });
+  expect(result.stdout).not.toContain("must-not-appear");
+  expect((await runCliWith(options, "profile", "update-template", "work", "--json")).exitCode).toBe(
+    0,
+  );
 });
 
 function azLogPath(directory: string) {
@@ -289,29 +282,27 @@ async function azureProfile(options: TemplateOptions, directory: string, registr
 }
 
 test("an azurecr.io template authenticates through az and stops with a login hint before pulling", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    await azureProfile(options, directory);
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  await azureProfile(options, directory.path);
 
-    const result = await runCliWith(options, "profile", "update-template", "work", "--json");
-    const azCommands = await Bun.file(azLogPath(directory)).text();
+  const result = await runCliWith(options, "profile", "update-template", "work", "--json");
+  const azCommands = await Bun.file(azLogPath(directory.path)).text();
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("run az login");
-    expect(azCommands).toContain('"--expose-token"');
-    expect(await Bun.file(options.env.EDEN_TEMPLATE_LOG).exists()).toBe(false);
-  });
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stdout + result.stderr).toContain("run az login");
+  expect(azCommands).toContain('"--expose-token"');
+  expect(await Bun.file(options.env.EDEN_TEMPLATE_LOG).exists()).toBe(false);
 });
 
 test("registry_auth docker keeps an azurecr.io template on Docker credentials", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory);
-    await azureProfile(options, directory, "docker");
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path);
+  await azureProfile(options, directory.path, "docker");
 
-    await runCliWith(options, "profile", "update-template", "work", "--json");
-    const log = await commands(options.env.EDEN_TEMPLATE_LOG);
+  await runCliWith(options, "profile", "update-template", "work", "--json");
+  const log = await commands(options.env.EDEN_TEMPLATE_LOG);
 
-    expect(log[0]!.slice(0, 3)).toEqual(["docker", "buildx", "imagetools"]);
-    expect(await Bun.file(azLogPath(directory)).exists()).toBe(false);
-  });
+  expect(log[0]!.slice(0, 3)).toEqual(["docker", "buildx", "imagetools"]);
+  expect(await Bun.file(azLogPath(directory.path)).exists()).toBe(false);
 });

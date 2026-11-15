@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import type { SandboxSummary } from "../provider";
 import { inferSandbox } from "../sandbox-inference";
 
@@ -10,12 +10,11 @@ function summary(name: string, workspace?: string): SandboxSummary {
 }
 
 async function withCheckout<T>(action: (checkout: string) => Promise<T>) {
-  return withTemporaryDirectory(async (directory) => {
-    const checkout = join(directory, "My Project");
-    await mkdir(checkout);
+  await using directory = await createTemporaryDirectory();
+  const checkout = join(directory.path, "My Project");
+  await mkdir(checkout);
 
-    return action(checkout);
-  });
+  return action(checkout);
 }
 
 test("prefers the sandbox whose workspace is the checkout", async () => {

@@ -1,33 +1,32 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { installExecutable, pathWith } from "../../fs/tests/support/executable";
 import { checkSandboxFreshness } from "../template-freshness";
 
 const image = "exampleacr.azurecr.io/app:latest";
 
 async function withFakeSbx(run: () => Promise<void>) {
-  await withTemporaryDirectory(async (directory) => {
-    await installExecutable(
-      new URL("../../cli/tests/fixtures/sbx-freshness.ts", import.meta.url),
-      directory,
-      "sbx",
-    );
-    const saved = { ...process.env };
-    process.env.PATH = pathWith(directory);
-    process.env.EDEN_FRESHNESS_LOG = join(directory, "commands");
-    process.env.EDEN_FRESHNESS_TEMPLATES = JSON.stringify([
-      { repository: "exampleacr.azurecr.io/app", tag: "latest", id: "b".repeat(12) },
-    ]);
-    process.env.EDEN_FRESHNESS_INSPECT = JSON.stringify({
-      one: { image, image_digest: `sha256:${"b".repeat(64)}` },
-    });
-    try {
-      await run();
-    } finally {
-      process.env = saved;
-    }
+  await using directory = await createTemporaryDirectory();
+  await installExecutable(
+    new URL("../../cli/tests/fixtures/sbx-freshness.ts", import.meta.url),
+    directory.path,
+    "sbx",
+  );
+  const saved = { ...process.env };
+  process.env.PATH = pathWith(directory.path);
+  process.env.EDEN_FRESHNESS_LOG = join(directory.path, "commands");
+  process.env.EDEN_FRESHNESS_TEMPLATES = JSON.stringify([
+    { repository: "exampleacr.azurecr.io/app", tag: "latest", id: "b".repeat(12) },
+  ]);
+  process.env.EDEN_FRESHNESS_INSPECT = JSON.stringify({
+    one: { image, image_digest: `sha256:${"b".repeat(64)}` },
   });
+  try {
+    await run();
+  } finally {
+    process.env = saved;
+  }
 }
 
 test("the remembered profile selects the registry auth used for the sandbox image", async () => {

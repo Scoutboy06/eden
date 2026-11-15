@@ -10,6 +10,7 @@ import sbx from "./commands/sbx";
 import setup from "./commands/setup";
 import pr from "./commands/pr";
 import host from "./commands/host";
+import project from "./commands/project";
 
 await runCli({
   pr,
@@ -21,4 +22,5 @@ await runCli({
   completion,
   mkdir,
   host,
+  project,
 });

@@ -1,151 +1,154 @@
 import { expect, test } from "bun:test";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCliWith } from "./support/cli";
 
 test("config get selects the effective tree, subtree, and scalar leaves", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const xdg = join(directory, "config");
-    const path = join(xdg, "eden", "config.yaml");
-    const text =
-      "# keep this comment\nagent:\n  default: claude\nworktree_root: ~/trees/../worktrees\n";
-    await mkdir(join(xdg, "eden"), { recursive: true });
-    await writeFile(path, text);
-    const options = {
-      cwd: directory,
-      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: xdg },
-    };
+  await using directory = await createTemporaryDirectory();
+  const xdg = join(directory.path, "config");
+  const path = join(xdg, "eden", "config.yaml");
+  const text =
+    "# keep this comment\nagent:\n  default: claude\nworktree_root: ~/trees/../worktrees\n";
+  await mkdir(join(xdg, "eden"), { recursive: true });
+  await writeFile(path, text);
+  const options = {
+    cwd: directory.path,
+    env: { HOME: directory.path, USERPROFILE: directory.path, XDG_CONFIG_HOME: xdg },
+  };
 
-    const whole = await runCliWith(options, "config", "get");
-    const json = await runCliWith(options, "config", "get", "--json");
+  const whole = await runCliWith(options, "config", "get");
+  const json = await runCliWith(options, "config", "get", "--json");
 
-    expect(whole.exitCode).toBe(0);
-    expect(whole.stderr).toBe("");
-    expect(Bun.YAML.parse(whole.stdout)).toEqual({
-      agent: { default: "claude" },
-      worktree_root: join(directory, "worktrees"),
-    });
-    expect(json.exitCode).toBe(0);
-    expect(json.stderr).toBe("");
-    expect(JSON.parse(json.stdout)).toEqual({
-      ok: true,
-      dryRun: false,
-      value: { agent: { default: "claude" }, worktree_root: join(directory, "worktrees") },
-    });
-
-    expect(await readFile(path, "utf8")).toBe(text);
+  expect(whole.exitCode).toBe(0);
+  expect(whole.stderr).toBe("");
+  expect(Bun.YAML.parse(whole.stdout)).toEqual({
+    agent: { default: "claude" },
+    worktree_root: join(directory.path, "worktrees"),
   });
+  expect(json.exitCode).toBe(0);
+  expect(json.stderr).toBe("");
+  expect(JSON.parse(json.stdout)).toEqual({
+    ok: true,
+    dryRun: false,
+    value: { agent: { default: "claude" }, worktree_root: join(directory.path, "worktrees") },
+  });
+
+  expect(await readFile(path, "utf8")).toBe(text);
 });
 
 test("config get uses the home configuration directory when XDG_CONFIG_HOME is unset", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const configDirectory = join(directory, ".config", "eden");
-    await mkdir(configDirectory, { recursive: true });
-    await writeFile(join(configDirectory, "config.yaml"), "agent:\n  default: claude\n");
+  await using directory = await createTemporaryDirectory();
+  const configDirectory = join(directory.path, ".config", "eden");
+  await mkdir(configDirectory, { recursive: true });
+  await writeFile(join(configDirectory, "config.yaml"), "agent:\n  default: claude\n");
 
-    const result = await runCliWith(
-      {
-        cwd: directory,
-        env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: undefined },
-      },
-      "config",
-      "get",
-      "agent.default",
-    );
+  const result = await runCliWith(
+    {
+      cwd: directory.path,
+      env: { HOME: directory.path, USERPROFILE: directory.path, XDG_CONFIG_HOME: undefined },
+    },
+    "config",
+    "get",
+    "agent.default",
+  );
 
-    expect(result).toEqual({ exitCode: 0, stdout: "claude\n", stderr: "" });
-  });
+  expect(result).toEqual({ exitCode: 0, stdout: "claude\n", stderr: "" });
 });
 
 test("config get applies defaults without creating missing configuration", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = {
-      cwd: directory,
-      env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: join(directory, "missing") },
-    };
+  await using directory = await createTemporaryDirectory();
+  const options = {
+    cwd: directory.path,
+    env: {
+      HOME: directory.path,
+      USERPROFILE: directory.path,
+      XDG_CONFIG_HOME: join(directory.path, "missing"),
+    },
+  };
 
-    const result = await runCliWith(options, "config", "get", "--json");
-    const root = await runCliWith(options, "config", "get", "worktree_root");
+  const result = await runCliWith(options, "config", "get", "--json");
+  const root = await runCliWith(options, "config", "get", "worktree_root");
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: true,
-      dryRun: false,
-      value: { worktree_root: join(directory, ".worktrees") },
-    });
-    expect(root).toEqual({ exitCode: 0, stdout: `${join(directory, ".worktrees")}\n`, stderr: "" });
-    expect((await readdir(directory)).filter((name) => name !== ".bun")).toEqual([]);
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({
+    ok: true,
+    dryRun: false,
+    value: { worktree_root: join(directory.path, ".worktrees") },
   });
+  expect(root).toEqual({
+    exitCode: 0,
+    stdout: `${join(directory.path, ".worktrees")}\n`,
+    stderr: "",
+  });
+  expect((await readdir(directory.path)).filter((name) => name !== ".bun")).toEqual([]);
 });
 
 for (const text of [undefined, "agent: {}\n"]) {
   test(`config get distinguishes unset settings from unknown paths with config ${text ?? "missing"}`, async () => {
-    await withTemporaryDirectory(async (directory) => {
-      const xdg = join(directory, "config");
-      if (text !== undefined) {
-        await mkdir(join(xdg, "eden"), { recursive: true });
-        await writeFile(join(xdg, "eden", "config.yaml"), text);
-      }
-      const options = {
-        cwd: directory,
-        env: { HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: xdg },
-      };
+    await using directory = await createTemporaryDirectory();
+    const xdg = join(directory.path, "config");
+    if (text !== undefined) {
+      await mkdir(join(xdg, "eden"), { recursive: true });
+      await writeFile(join(xdg, "eden", "config.yaml"), text);
+    }
+    const options = {
+      cwd: directory.path,
+      env: { HOME: directory.path, USERPROFILE: directory.path, XDG_CONFIG_HOME: xdg },
+    };
 
-      const unset = await runCliWith(options, "config", "get", "agent.default");
-      const json = await runCliWith(options, "config", "get", "agent.default", "--json");
+    const unset = await runCliWith(options, "config", "get", "agent.default");
+    const json = await runCliWith(options, "config", "get", "agent.default", "--json");
 
-      expect(unset).toEqual({ exitCode: 0, stdout: "", stderr: "" });
-      expect(json.exitCode).toBe(0);
-      expect(json.stderr).toBe("");
-      expect(JSON.parse(json.stdout)).toEqual({ ok: true, dryRun: false, value: null });
+    expect(unset).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+    expect(json.exitCode).toBe(0);
+    expect(json.stderr).toBe("");
+    expect(JSON.parse(json.stdout)).toEqual({ ok: true, dryRun: false, value: null });
 
-      const unknown = await runCliWith(options, "config", "get", "agent.typo", "--json");
-      expect(unknown.exitCode).toBe(1);
-      expect(unknown.stderr).toBe("");
-      expect(JSON.parse(unknown.stdout)).toEqual({
-        ok: false,
-        dryRun: false,
-        error: {
-          code: "CONFIG_KEY_UNKNOWN",
-          message: "Unknown configuration key: agent.typo",
-        },
-      });
+    const unknown = await runCliWith(options, "config", "get", "agent.typo", "--json");
+    expect(unknown.exitCode).toBe(1);
+    expect(unknown.stderr).toBe("");
+    expect(JSON.parse(unknown.stdout)).toEqual({
+      ok: false,
+      dryRun: false,
+      error: {
+        code: "CONFIG_KEY_UNKNOWN",
+        message: "Unknown configuration key: agent.typo",
+      },
     });
   }, 20_000);
 }
 
 test.each([false, true])("config get reports all invalid settings (json=%s)", async (json) => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "eden", "config.yaml");
-    const text = "agent:\n  default: unsupported\nworktree_root: relative\n";
-    await mkdir(join(directory, "eden"));
-    await writeFile(path, text);
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "eden", "config.yaml");
+  const text = "agent:\n  default: unsupported\nworktree_root: relative\n";
+  await mkdir(join(directory.path, "eden"));
+  await writeFile(path, text);
 
-    const result = await runCliWith(
-      { cwd: directory, env: { XDG_CONFIG_HOME: directory } },
-      "config",
-      "get",
-      ...(json ? ["--json"] : []),
-    );
+  const result = await runCliWith(
+    { cwd: directory.path, env: { XDG_CONFIG_HOME: directory.path } },
+    "config",
+    "get",
+    ...(json ? ["--json"] : []),
+  );
 
-    expect(result.exitCode).toBe(1);
-    if (json) {
-      const error = JSON.parse(result.stdout).error;
-      expect(error.code).toBe("CONFIG_SCHEMA_INVALID");
-      expect(error.issues).toEqual([
-        { path: "agent.default", message: "Expected codex, claude, or opencode" },
-        { path: "worktree_root", message: expect.stringContaining("Expected") },
-      ]);
-      for (const issue of error.issues)
-        expect(error.message).toContain(`${issue.path}: ${issue.message}`);
-    } else {
-      expect(result.stderr).toContain("agent.default: Expected codex, claude, or opencode");
-      expect(result.stderr).toContain("worktree_root: Expected");
-    }
-    expect(await readFile(path, "utf8")).toBe(text);
-  });
+  expect(result.exitCode).toBe(1);
+  if (json) {
+    const error = JSON.parse(result.stdout).error;
+    expect(error.code).toBe("CONFIG_SCHEMA_INVALID");
+    expect(error.issues).toEqual([
+      { path: "agent.default", message: "Expected codex, claude, or opencode" },
+      { path: "worktree_root", message: expect.stringContaining("Expected") },
+    ]);
+    for (const issue of error.issues)
+      expect(error.message).toContain(`${issue.path}: ${issue.message}`);
+  } else {
+    expect(result.stderr).toContain("agent.default: Expected codex, claude, or opencode");
+    expect(result.stderr).toContain("worktree_root: Expected");
+  }
+  expect(await readFile(path, "utf8")).toBe(text);
 });
 
 for (const [text, code] of [
@@ -154,22 +157,21 @@ for (const [text, code] of [
   ["# empty\n", "CONFIG_EMPTY"],
 ] as const) {
   test(`config get rejects ${code} without modifying configuration`, async () => {
-    await withTemporaryDirectory(async (directory) => {
-      const path = join(directory, "eden", "config.yaml");
-      await mkdir(join(directory, "eden"));
-      await writeFile(path, text!);
+    await using directory = await createTemporaryDirectory();
+    const path = join(directory.path, "eden", "config.yaml");
+    await mkdir(join(directory.path, "eden"));
+    await writeFile(path, text!);
 
-      const result = await runCliWith(
-        { cwd: directory, env: { XDG_CONFIG_HOME: directory } },
-        "config",
-        "get",
-        "--json",
-      );
+    const result = await runCliWith(
+      { cwd: directory.path, env: { XDG_CONFIG_HOME: directory.path } },
+      "config",
+      "get",
+      "--json",
+    );
 
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout).error.code).toBe(code);
-      expect(await readFile(path, "utf8")).toBe(text);
-    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout).error.code).toBe(code);
+    expect(await readFile(path, "utf8")).toBe(text);
   });
 }

@@ -2,13 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export async function withTemporaryDirectory<T>(
-  run: (directory: string) => Promise<T>,
-): Promise<T> {
-  const directory = await mkdtemp(join(tmpdir(), "eden-fs-"));
-  try {
-    return await run(directory);
-  } finally {
-    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  }
+export async function createTemporaryDirectory() {
+  const path = await mkdtemp(join(tmpdir(), "eden-fs-"));
+
+  return {
+    path,
+    [Symbol.asyncDispose]: async () => {
+      await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    },
+  };
 }

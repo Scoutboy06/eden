@@ -2,11 +2,10 @@ import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createFileConfigService } from "../../../src/modules/config/config.service";
 import { createTasksMiddleware } from "./tasks";
 import type { WorktreeProjection } from "./worktrees";
 
@@ -184,30 +183,24 @@ test("empty and unreadable project registries are distinguishable", async () => 
   }
 });
 
-test("serves an empty project list when the loaded config has projects: null", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "eden-project-api-"));
-  const path = join(directory, "config.yaml");
-  await writeFile(path, "projects: null\n");
-  const config = createFileConfigService({ pathsLowToHigh: [path] });
-
-  try {
-    await withServer(
-      async () => [],
-      async (url) => {
-        const response = await fetch(`${url}/api/projects`);
-
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ projects: [] });
-      },
-      async () => (await config.read()).projects ?? {},
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+test("serves an empty project list from an empty registry", async () => {
+  await withServer(
+    async () => [],
+    async (url) => {
+      const response = await fetch(`${url}/api/projects`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ projects: [] });
+    },
+    async () => ({}),
+  );
 });
 
-test("documented dev startup serves projects through Bun's runtime", async () => {
+test("documented dev startup serves project add, list, and remove through Bun's runtime", async () => {
   const configHome = await mkdtemp(join(tmpdir(), "eden-web-startup-"));
+  const repository = join(configHome, "repository");
+  await mkdir(repository);
+  const git = Bun.spawn(["git", "init", repository], { stdout: "ignore", stderr: "ignore" });
+  expect(await git.exited).toBe(0);
   const probe = createNetServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const { port } = probe.address() as AddressInfo;
@@ -218,7 +211,15 @@ test("documented dev startup serves projects through Bun's runtime", async () =>
   const child = spawn(
     "bun",
     ["run", "web:dev", "--", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
-    { env: { ...process.env, XDG_CONFIG_HOME: configHome }, stdio: "ignore" },
+    {
+      env: {
+        ...process.env,
+        HOME: configHome,
+        XDG_CONFIG_HOME: configHome,
+        XDG_STATE_HOME: join(configHome, "state"),
+      },
+      stdio: "ignore",
+    },
   );
 
   try {
@@ -234,6 +235,24 @@ test("documented dev startup serves projects through Bun's runtime", async () =>
 
     expect(response?.status).toBe(200);
     expect(await response?.json()).toEqual({ projects: [] });
+    const url = `http://127.0.0.1:${port}`;
+    const added = await fetch(`${url}/api/projects`, {
+      method: "POST",
+      headers: { Origin: url, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: repository, name: "Dev Smoke" }),
+    });
+    expect(added.status).toBe(201);
+    const project = ((await added.json()) as { project: { key: string } }).project;
+    expect(await (await fetch(`${url}/api/projects`)).json()).toEqual({
+      projects: [{ key: "Dev-Smoke", name: "Dev Smoke" }],
+    });
+    const removed = await fetch(`${url}/api/projects`, {
+      method: "DELETE",
+      headers: { Origin: url, "Content-Type": "application/json" },
+      body: JSON.stringify({ key: project.key }),
+    });
+    expect(removed.status).toBe(200);
+    expect(await (await fetch(`${url}/api/projects`)).json()).toEqual({ projects: [] });
   } finally {
     if (child.exitCode === null) {
       child.kill("SIGTERM");

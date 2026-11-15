@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { deriveSandboxName, findCheckout, pathKey } from "../sandbox-checkout";
 
 test.each([
@@ -24,20 +24,18 @@ test.each(["/home/me/p/x", "/home/me/p/default", "/home/me/p/___"])(
 );
 
 test("finds the repository root from a nested folder", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    await mkdir(join(directory, "repo", ".git"), { recursive: true });
-    await mkdir(join(directory, "repo", "src", "deep"), { recursive: true });
+  await using directory = await createTemporaryDirectory();
+  await mkdir(join(directory.path, "repo", ".git"), { recursive: true });
+  await mkdir(join(directory.path, "repo", "src", "deep"), { recursive: true });
 
-    expect(await pathKey(await findCheckout(join(directory, "repo", "src", "deep")))).toBe(
-      await pathKey(join(directory, "repo")),
-    );
-  });
+  expect(await pathKey(await findCheckout(join(directory.path, "repo", "src", "deep")))).toBe(
+    await pathKey(join(directory.path, "repo")),
+  );
 });
 
 test("fails outside a checkout", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    await expect(findCheckout(directory)).rejects.toThrow("Not inside a Git checkout");
-  });
+  await using directory = await createTemporaryDirectory();
+  await expect(findCheckout(directory.path)).rejects.toThrow("Not inside a Git checkout");
 });
 
 test("compares paths ignoring separators, trailing slashes and mount suffixes", async () => {

@@ -1,13 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { homedir } from "node:os";
-
-import { createConfigService } from "../../../src/modules/config/config.service";
-import { createExecution } from "../../../src/modules/execution";
+import { createProjectRegistry } from "../../../src/modules/projects/project-registry";
+import { registerProject } from "../../../src/modules/projects/project-registration";
 
 let pending = Promise.resolve();
-
 export async function importProject(input: unknown) {
   const operation = pending.then(() => saveProject(input));
   pending = operation.then(
@@ -21,7 +16,7 @@ export async function removeProject(input: unknown) {
   const operation = pending.then(async () => {
     if (!input || typeof input !== "object" || !("key" in input) || typeof input.key !== "string")
       throw new Error("Specify a project key.");
-    await createConfigService(createExecution({ dryRun: false })).removeProject(input.key);
+    await createProjectRegistry().remove(input.key);
   });
   pending = operation.then(
     () => {},
@@ -31,24 +26,12 @@ export async function removeProject(input: unknown) {
 }
 
 async function saveProject(input: unknown) {
-  const repository = await resolveRepository(input);
-  const name = projectName(input, repository);
-  const service = createConfigService(createExecution({ dryRun: false }));
-  const projects = (await service.read()).projects ?? {};
-  for (const project of Object.values(projects)) {
-    const existingPath = await realpath(project.path).catch(() => null);
-    const isSameRepository = existingPath === repository;
-    if (isSameRepository) {
-      throw new Error("This repository is already imported.");
-    }
-  }
-  const base = name.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^\.+$|^-+|-+$/g, "") || "project";
-  let key = base;
-  for (let suffix = 2; Object.hasOwn(projects, key); suffix++) {
-    key = `${base}-${suffix}`;
-  }
-  await service.addProject(key, { name, path: repository });
-  return { key, name };
+  const project = await registerProject(
+    input !== null && typeof input === "object" && !Array.isArray(input)
+      ? (input as { path: unknown; name?: unknown })
+      : { path: undefined },
+  );
+  return { key: project.key, name: project.name };
 }
 
 export async function handleProjectImport(request: IncomingMessage, response: ServerResponse) {
@@ -84,66 +67,4 @@ export async function handleProjectImport(request: IncomingMessage, response: Se
       }),
     );
   }
-}
-
-async function resolveRepository(input: unknown) {
-  if (!input || typeof input !== "object" || !("path" in input) || typeof input.path !== "string") {
-    throw new Error("Enter a local repository path.");
-  }
-
-  const inputPath = input.path;
-  const path = inputPath.startsWith("~/") ? resolve(homedir(), inputPath.slice(2)) : inputPath;
-  const isAbsolutePath = isAbsolute(path);
-  const containsNullByte = path.includes("\0");
-  if (!isAbsolutePath || containsNullByte) {
-    throw new Error("Enter an absolute repository path.");
-  }
-
-  const directory = await realpath(path).catch(() => {
-    throw new Error("Repository directory does not exist.");
-  });
-  const git = Bun.spawn(
-    ["git", "-C", directory, "rev-parse", "--show-toplevel", "--git-common-dir"],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...process.env,
-        GIT_DIR: undefined,
-        GIT_WORK_TREE: undefined,
-        GIT_COMMON_DIR: undefined,
-      },
-    },
-  );
-  const [output, , exit] = await Promise.all([
-    new Response(git.stdout).text(),
-    new Response(git.stderr).text(),
-    git.exited,
-  ]);
-  if (exit !== 0) {
-    throw new Error("Path must be inside an existing Git working repository.");
-  }
-
-  const [root, common] = output.trim().split("\n");
-  if (!root || !common) {
-    throw new Error("Could not resolve repository.");
-  }
-
-  const commonPath = await realpath(resolve(directory, common));
-  const repository = basename(commonPath) === ".git" ? dirname(commonPath) : root;
-  return repository;
-}
-
-function projectName(input: unknown, repository: string) {
-  const providedName =
-    input !== null && typeof input === "object" && "name" in input && typeof input.name === "string"
-      ? input.name.trim()
-      : null;
-  const name = providedName ?? basename(repository);
-
-  if (!name || name.length > 120) {
-    throw new Error("Enter a project name of at most 120 characters.");
-  }
-
-  return name;
 }

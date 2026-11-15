@@ -9,11 +9,18 @@ export async function readValidatedConfig(
   path: string,
 ): Promise<{ text: string | undefined; parsed: Record<string, unknown> }> {
   const text = await readConfigFile(path);
-  const parsed = parseConfigYaml(text ?? "{}", path);
+  const input = parseConfigYaml(text ?? "{}", path);
+  const parsed = omitLegacyProjects(input);
 
   validateConfig(parsed, path);
 
   return { text, parsed: parsed as Record<string, unknown> };
+}
+
+function omitLegacyProjects(input: unknown): unknown {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+  const { projects: _projects, ...config } = input as Record<string, unknown>;
+  return config;
 }
 
 export async function writeConfigFile(path: string, text: string): Promise<void> {
@@ -67,7 +74,7 @@ export function parseConfigYaml(text: string, path: string): unknown {
 }
 
 export function validateConfig(parsed: unknown, path: string): Config {
-  const result = v.safeParse(ConfigSchema, parsed);
+  const result = v.safeParse(ConfigSchema, omitLegacyProjects(parsed));
 
   if (!result.success) {
     const issues = result.issues.map((issue) => ({

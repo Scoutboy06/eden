@@ -3,19 +3,18 @@ import { join } from "node:path";
 import { buildPullRequestComment } from "../comment-input";
 import { PullRequestService } from "../service";
 import { createExecution } from "../../execution/execution";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { githubProvider } from "../../../external/github/tests/support/github";
 import type { PullRequestProvider } from "../provider";
 
 test("body files preserve multiline UTF-8 contents", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "body.md");
-    await Bun.write(path, "Hej världen\n\nDetails\n");
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "body.md");
+  await Bun.write(path, "Hej världen\n\nDetails\n");
 
-    expect(await buildPullRequestComment({ bodyFile: path, replyTo: "review:56" })).toEqual({
-      body: "Hej världen\n\nDetails\n",
-      replyTo: "review:56",
-    });
+  expect(await buildPullRequestComment({ bodyFile: path, replyTo: "review:56" })).toEqual({
+    body: "Hej världen\n\nDetails\n",
+    replyTo: "review:56",
   });
 });
 

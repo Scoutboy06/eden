@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import type { TransferSandboxInput } from "../provider";
 import { FileSandboxSnapshotStore } from "../snapshot-store";
 import { createSandboxHarness } from "./support/sandbox";
@@ -58,158 +58,152 @@ async function rebuildHarness(
 }
 
 test("rebuild snapshots, removes, recreates and restores in order", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const { service, commands, transfers, store } = await rebuildHarness(directory);
+  await using directory = await createTemporaryDirectory();
+  const { service, commands, transfers, store } = await rebuildHarness(directory.path);
 
-    const result = await service.rebuild(input);
+  const result = await service.rebuild(input);
 
-    const [stored] = await store.list("docker-sbx", "box");
-    expect(result).toMatchObject({ restored: true, snapshot: stored });
-    const steps = commands.map(({ args }) => args[0]).filter((step) => step !== "ls");
-    expect(steps).toEqual(["policy", "exec", "rm", "policy", "create"]);
-    expect(commands.find(({ args }) => args[0] === "rm")!.args).toEqual([
-      "rm",
-      "--force",
-      "--",
-      "box",
-    ]);
-    expect(transfers.map(({ stdinFile }) => stdinFile)).toEqual([undefined, stored!.path]);
-  });
+  const [stored] = await store.list("docker-sbx", "box");
+  expect(result).toMatchObject({ restored: true, snapshot: stored });
+  const steps = commands.map(({ args }) => args[0]).filter((step) => step !== "ls");
+  expect(steps).toEqual(["policy", "exec", "rm", "policy", "create"]);
+  expect(commands.find(({ args }) => args[0] === "rm")!.args).toEqual([
+    "rm",
+    "--force",
+    "--",
+    "box",
+  ]);
+  expect(transfers.map(({ stdinFile }) => stdinFile)).toEqual([undefined, stored!.path]);
 });
 
 test("rebuild can skip the snapshot and the restore", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const skipped = await rebuildHarness(directory);
+  await using directory = await createTemporaryDirectory();
+  const skipped = await rebuildHarness(directory.path);
 
-    const noSnapshot = await skipped.service.rebuild({ ...input, snapshot: false });
+  const noSnapshot = await skipped.service.rebuild({ ...input, snapshot: false });
 
-    expect(noSnapshot).toMatchObject({ restored: false, snapshot: undefined });
-    expect(skipped.transfers).toEqual([]);
+  expect(noSnapshot).toMatchObject({ restored: false, snapshot: undefined });
+  expect(skipped.transfers).toEqual([]);
 
-    const noRestore = await skipped.service.rebuild({ ...input, restore: false });
+  const noRestore = await skipped.service.rebuild({ ...input, restore: false });
 
-    expect(noRestore.restored).toBe(false);
-    expect(noRestore.snapshot).toBeDefined();
-    expect(skipped.transfers).toHaveLength(1);
-  });
+  expect(noRestore.restored).toBe(false);
+  expect(noRestore.snapshot).toBeDefined();
+  expect(skipped.transfers).toHaveLength(1);
 });
 
 test("rebuild of a profile without snapshot paths just removes and recreates", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const { service, commands, transfers } = await rebuildHarness(directory, {
-      snapshotPaths: false,
-    });
-
-    const result = await service.rebuild(input);
-
-    expect(result).toMatchObject({ restored: false, snapshot: undefined });
-    expect(transfers).toEqual([]);
-    expect(commands.map(({ args }) => args[0])).toContain("create");
+  await using directory = await createTemporaryDirectory();
+  const { service, commands, transfers } = await rebuildHarness(directory.path, {
+    snapshotPaths: false,
   });
+
+  const result = await service.rebuild(input);
+
+  expect(result).toMatchObject({ restored: false, snapshot: undefined });
+  expect(transfers).toEqual([]);
+  expect(commands.map(({ args }) => args[0])).toContain("create");
 });
 
 test("rebuild reports the removed sandbox and the kept snapshot when create fails", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const { service, store, commands } = await rebuildHarness(directory, { createFailure: true });
-
-    const failure = await service.rebuild(input).catch((error: unknown) => error);
-
-    const [stored] = await store.list("docker-sbx", "box");
-    expect(failure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
-    expect((failure as Error).message).toContain(
-      "Sandbox box was removed but could not be recreated",
-    );
-    expect((failure as Error).message).toContain(stored!.path);
-    expect(commands.map(({ args }) => args[0])).toContain("rm");
+  await using directory = await createTemporaryDirectory();
+  const { service, store, commands } = await rebuildHarness(directory.path, {
+    createFailure: true,
   });
+
+  const failure = await service.rebuild(input).catch((error: unknown) => error);
+
+  const [stored] = await store.list("docker-sbx", "box");
+  expect(failure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
+  expect((failure as Error).message).toContain(
+    "Sandbox box was removed but could not be recreated",
+  );
+  expect((failure as Error).message).toContain(stored!.path);
+  expect(commands.map(({ args }) => args[0])).toContain("rm");
 });
 
 test("rebuild reports a failing create post hook as recreated, not as lost", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const hooks = join(directory, "hooks");
-    await mkdir(hooks, { recursive: true });
-    await writeFile(join(hooks, "sandbox.create.post.ts"), "process.exitCode = 3;\n");
-    const { service, store, transfers } = await rebuildHarness(directory);
+  await using directory = await createTemporaryDirectory();
+  const hooks = join(directory.path, "hooks");
+  await mkdir(hooks, { recursive: true });
+  await writeFile(join(hooks, "sandbox.create.post.ts"), "process.exitCode = 3;\n");
+  const { service, store, transfers } = await rebuildHarness(directory.path);
 
-    const restoredFailure = await service.rebuild(input).catch((error: unknown) => error);
+  const restoredFailure = await service.rebuild(input).catch((error: unknown) => error);
 
-    const [stored] = await store.list("docker-sbx", "box");
-    const restoredMessage = (restoredFailure as Error).message;
-    expect(restoredFailure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
-    expect(restoredMessage).toContain("Sandbox box was recreated but its create post hook failed");
-    expect(restoredMessage).not.toContain("could not be recreated");
-    expect(restoredMessage).toContain(`Its snapshot ${stored!.id} was restored.`);
-    expect(transfers).toHaveLength(2);
+  const [stored] = await store.list("docker-sbx", "box");
+  const restoredMessage = (restoredFailure as Error).message;
+  expect(restoredFailure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
+  expect(restoredMessage).toContain("Sandbox box was recreated but its create post hook failed");
+  expect(restoredMessage).not.toContain("could not be recreated");
+  expect(restoredMessage).toContain(`Its snapshot ${stored!.id} was restored.`);
+  expect(transfers).toHaveLength(2);
 
-    const skippedFailure = await service
-      .rebuild({ ...input, restore: false })
-      .catch((error: unknown) => error);
+  const skippedFailure = await service
+    .rebuild({ ...input, restore: false })
+    .catch((error: unknown) => error);
 
-    const skippedMessage = (skippedFailure as Error).message;
-    expect(skippedMessage).toContain("recreated but its create post hook failed");
-    expect(skippedMessage).toContain("restore it with eden sbx restore --name box --snapshot");
-  });
+  const skippedMessage = (skippedFailure as Error).message;
+  expect(skippedMessage).toContain("recreated but its create post hook failed");
+  expect(skippedMessage).toContain("restore it with eden sbx restore --name box --snapshot");
 });
 
 test("rebuild reports both a failing create post hook and a failing restore, with its warnings", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const hooks = join(directory, "hooks");
-    await mkdir(hooks, { recursive: true });
-    await writeFile(join(hooks, "sandbox.create.post.ts"), "process.exitCode = 3;\n");
-    const { service } = await rebuildHarness(directory, {
-      restoreFailure: true,
-      hostWorkspace: true,
-    });
-
-    const failure = await service.rebuild(input).catch((error: unknown) => error);
-
-    const message = (failure as Error).message;
-    expect(failure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
-    expect(message).toContain("recreated but its snapshot could not be restored");
-    expect(message).toContain("create post hook had also failed");
-    expect(message).toContain("Host workspace or mount is writable");
+  await using directory = await createTemporaryDirectory();
+  const hooks = join(directory.path, "hooks");
+  await mkdir(hooks, { recursive: true });
+  await writeFile(join(hooks, "sandbox.create.post.ts"), "process.exitCode = 3;\n");
+  const { service } = await rebuildHarness(directory.path, {
+    restoreFailure: true,
+    hostWorkspace: true,
   });
+
+  const failure = await service.rebuild(input).catch((error: unknown) => error);
+
+  const message = (failure as Error).message;
+  expect(failure).toMatchObject({ code: "SANDBOX_REBUILD_FAILED" });
+  expect(message).toContain("recreated but its snapshot could not be restored");
+  expect(message).toContain("create post hook had also failed");
+  expect(message).toContain("Host workspace or mount is writable");
 });
 
 test("rebuild needs a profile and force for a running sandbox before touching anything", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const bare = await createSandboxHarness({
-      directory,
-      run: async () => ({
-        exitCode: 0,
-        stdout: JSON.stringify([{ name: "box", status: "running" }]),
-        stderr: "",
-      }),
-    });
-    await expect(bare.service.rebuild(input)).rejects.toMatchObject({
-      code: "SANDBOX_INVALID_INPUT",
-    });
-
-    const { service, commands, transfers } = await rebuildHarness(directory);
-    await expect(service.rebuild({ ...input, force: false })).rejects.toMatchObject({
-      code: "SANDBOX_REMOVE_REQUIRES_FORCE",
-    });
-
-    expect(transfers).toEqual([]);
-    expect(commands.map(({ args }) => args[0])).toEqual(["ls"]);
+  await using directory = await createTemporaryDirectory();
+  const bare = await createSandboxHarness({
+    directory: directory.path,
+    run: async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify([{ name: "box", status: "running" }]),
+      stderr: "",
+    }),
   });
+  await expect(bare.service.rebuild(input)).rejects.toMatchObject({
+    code: "SANDBOX_INVALID_INPUT",
+  });
+
+  const { service, commands, transfers } = await rebuildHarness(directory.path);
+  await expect(service.rebuild({ ...input, force: false })).rejects.toMatchObject({
+    code: "SANDBOX_REMOVE_REQUIRES_FORCE",
+  });
+
+  expect(transfers).toEqual([]);
+  expect(commands.map(({ args }) => args[0])).toEqual(["ls"]);
 });
 
 test("rebuild dry-run records every step without executing any", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const { service, execution, transfers, commands } = await rebuildHarness(directory, {
-      dryRun: true,
-    });
-
-    await service.rebuild(input);
-
-    expect(execution.operations.map(({ type }) => type)).toEqual([
-      "sandbox.snapshot",
-      "sandbox.remove",
-      "sandbox.create",
-      "sandbox.restore",
-    ]);
-    expect(transfers).toEqual([]);
-    expect(commands.map(({ args }) => args[0])).not.toContain("rm");
+  await using directory = await createTemporaryDirectory();
+  const { service, execution, transfers, commands } = await rebuildHarness(directory.path, {
+    dryRun: true,
   });
+
+  await service.rebuild(input);
+
+  expect(execution.operations.map(({ type }) => type)).toEqual([
+    "sandbox.snapshot",
+    "sandbox.remove",
+    "sandbox.create",
+    "sandbox.restore",
+  ]);
+  expect(transfers).toEqual([]);
+  expect(commands.map(({ args }) => args[0])).not.toContain("rm");
 });

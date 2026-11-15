@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { runCli } from "./support/cli";
 import { runPr, runPrWithEnv } from "./support/pr-runner";
 
@@ -391,26 +391,25 @@ test("PR edit rejects no-op patches and flag conflicts, preserving structured pr
 });
 
 test("PR edit reads body-file through the CLI and requires an explicit PR target", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const path = join(directory, "body.md");
-    await Bun.write(path, "New description\n");
+  await using directory = await createTemporaryDirectory();
+  const path = join(directory.path, "body.md");
+  await Bun.write(path, "New description\n");
 
-    const result = await runPr(
-      "pr",
-      "edit",
-      "https://github.com/acme/app/pull/12",
-      "--body-file",
-      path,
-      "--json",
-    );
-    const absent = await runPr("pr", "edit", "--title", "Updated", "--json");
-    const absentResponse = JSON.parse(absent.stdout);
+  const result = await runPr(
+    "pr",
+    "edit",
+    "https://github.com/acme/app/pull/12",
+    "--body-file",
+    path,
+    "--json",
+  );
+  const absent = await runPr("pr", "edit", "--title", "Updated", "--json");
+  const absentResponse = JSON.parse(absent.stdout);
 
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ pr: { body: "New description\n" } });
-    expect(absent.exitCode).toBe(1);
-    expect(absentResponse.ok).toBe(false);
-  });
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ pr: { body: "New description\n" } });
+  expect(absent.exitCode).toBe(1);
+  expect(absentResponse.ok).toBe(false);
 });
 
 test("PR reopen handles closed, open and merged PRs through human and JSON output", async () => {

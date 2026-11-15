@@ -15,10 +15,13 @@ import { checkSandboxFreshness } from "../sandbox/template-freshness";
 import { TemplateUpdateService } from "../sandbox/template-update";
 import { SetupService } from "../setup/setup.service";
 import { PullRequestService } from "../pull-requests/service";
+import { createProjectRegistrationService } from "../projects/project-registration";
+import { createProjectScaffoldService } from "../projects/project-scaffold";
 
 export function createCommandServices(options: EdenExtensions, execution: Execution) {
   const onStderr = options.json ? undefined : streamStderr;
-  const hooks = new HookService(execution, { onStderr });
+  const onPostStdout = !options.json && options.verbose ? streamStderr : undefined;
+  const hooks = new HookService(execution, { onStderr, onPostStdout });
   const output = new CommandOutput(options, execution.operations);
   let fs: FilesystemService | undefined;
   let worktree: WorktreeService | undefined;
@@ -49,6 +52,8 @@ export function createCommandServices(options: EdenExtensions, execution: Execut
     get pullRequests() {
       return new PullRequestService(undefined, undefined, execution);
     },
+    projectRegistration: createProjectRegistrationService(execution),
+    projectScaffold: createProjectScaffoldService(execution),
     readResolvedConfig,
     readConfig,
     templateUpdate: new TemplateUpdateService(execution),

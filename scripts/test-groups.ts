@@ -39,6 +39,7 @@ function isIntegration(file: string): boolean {
 
   return (
     file.startsWith("src/modules/cli/tests/") ||
+    file.startsWith("src/modules/projects/tests/") ||
     file.startsWith("src/modules/script/tests/") ||
     file.startsWith("src/modules/worktree/tests/") ||
     file.startsWith("src/modules/git/tests/") ||

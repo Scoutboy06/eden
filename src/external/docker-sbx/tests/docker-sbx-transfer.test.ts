@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { installExecutable, pathWith } from "../../../modules/fs/tests/support/executable";
-import { withTemporaryDirectory } from "../../../modules/fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../../modules/fs/tests/support/temporary-directory";
 import { DockerSandboxProvider } from "../provider";
 import { dockerTransferArguments, transferDockerFiles } from "../transfer";
 
@@ -41,53 +41,52 @@ test("provider transfer delegates to the injected transfer", async () => {
 });
 
 test("transfer streams bytes unchanged through files in both directions", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const argsFile = join(directory, "args.json");
-    await installExecutable(
-      new URL("./fixtures/sbx-transfer.ts", import.meta.url),
-      directory,
-      "sbx",
-    );
+  await using directory = await createTemporaryDirectory();
+  const argsFile = join(directory.path, "args.json");
+  await installExecutable(
+    new URL("./fixtures/sbx-transfer.ts", import.meta.url),
+    directory.path,
+    "sbx",
+  );
 
-    await withEnvironment(
-      { PATH: pathWith(directory), EDEN_SBX_TRANSFER_ARGS: argsFile },
-      async () => {
-        const download = join(directory, "download.bin");
-        const downloaded = await transferDockerFiles({
-          name: "box",
-          argv: ["sh", "-c", "tar -czf - -- a b", "sh", "a b"],
-          stdoutFile: download,
-        });
+  await withEnvironment(
+    { PATH: pathWith(directory.path), EDEN_SBX_TRANSFER_ARGS: argsFile },
+    async () => {
+      const download = join(directory.path, "download.bin");
+      const downloaded = await transferDockerFiles({
+        name: "box",
+        argv: ["sh", "-c", "tar -czf - -- a b", "sh", "a b"],
+        stdoutFile: download,
+      });
 
-        expect(Buffer.from(await Bun.file(download).arrayBuffer())).toEqual(
-          Buffer.from([0x0d, 0x0a, 0x00, 0xff, 0x1a]),
-        );
-        expect(downloaded).toEqual({ exitCode: 0, stderr: "transfer warning" });
-        expect(JSON.parse(await Bun.file(argsFile).text())).toEqual([
-          "exec",
-          "--",
-          "box",
-          "sh",
-          "-c",
-          "tar -czf - -- a b",
-          "sh",
-          "a b",
-        ]);
+      expect(Buffer.from(await Bun.file(download).arrayBuffer())).toEqual(
+        Buffer.from([0x0d, 0x0a, 0x00, 0xff, 0x1a]),
+      );
+      expect(downloaded).toEqual({ exitCode: 0, stderr: "transfer warning" });
+      expect(JSON.parse(await Bun.file(argsFile).text())).toEqual([
+        "exec",
+        "--",
+        "box",
+        "sh",
+        "-c",
+        "tar -czf - -- a b",
+        "sh",
+        "a b",
+      ]);
 
-        const upload = join(directory, "upload.bin");
-        const copy = join(directory, "copy.bin");
-        await Bun.write(upload, binary);
-        await transferDockerFiles({
-          name: "box",
-          argv: ["cat"],
-          stdinFile: upload,
-          stdoutFile: copy,
-        });
+      const upload = join(directory.path, "upload.bin");
+      const copy = join(directory.path, "copy.bin");
+      await Bun.write(upload, binary);
+      await transferDockerFiles({
+        name: "box",
+        argv: ["cat"],
+        stdinFile: upload,
+        stdoutFile: copy,
+      });
 
-        expect(Buffer.from(await Bun.file(copy).arrayBuffer())).toEqual(binary);
-      },
-    );
-  });
+      expect(Buffer.from(await Bun.file(copy).arrayBuffer())).toEqual(binary);
+    },
+  );
 });
 
 async function withEnvironment(values: Record<string, string>, action: () => Promise<void>) {

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify } from "yaml";
-import { withTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
+import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
 import { installExecutable, pathWith } from "../../fs/tests/support/executable";
 import { runCliWith } from "./support/cli";
 
@@ -71,62 +71,59 @@ async function setup(directory: string, digests: Record<string, string>) {
 }
 
 test("status reports state, workspace, freshness and the latest snapshot", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory, { "example/image:tag": digest });
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path, { "example/image:tag": digest });
 
-    const result = await runCliWith(options, "sbx", "status", "--name", "box", "--json");
+  const result = await runCliWith(options, "sbx", "status", "--name", "box", "--json");
 
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      sandbox: { name: "box", status: "stopped", workspace: "/work/box" },
-      freshness: { state: "current" },
-      latestSnapshot: { id: "20260101T101010123Z", sizeBytes: 7 },
-    });
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    sandbox: { name: "box", status: "stopped", workspace: "/work/box" },
+    freshness: { state: "current" },
+    latestSnapshot: { id: "20260101T101010123Z", sizeBytes: 7 },
   });
 });
 
 test("status keeps going with an unknown freshness when the registry fails", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory, {});
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path, {});
 
-    const result = await runCliWith(options, "sbx", "status", "--name", "box", "--json");
+  const result = await runCliWith(options, "sbx", "status", "--name", "box", "--json");
 
-    expect(result.exitCode).toBe(0);
-    const data = JSON.parse(result.stdout);
-    expect(data.freshness.state).toBe("unknown");
-    expect(data.freshness.reason).toContain("registry");
-  });
+  expect(result.exitCode).toBe(0);
+  const data = JSON.parse(result.stdout);
+  expect(data.freshness.state).toBe("unknown");
+  expect(data.freshness.reason).toContain("registry");
 });
 
 test("status skips the registry with --no-check-updates and fails for unknown sandboxes", async () => {
-  await withTemporaryDirectory(async (directory) => {
-    const options = await setup(directory, { "example/image:tag": digest });
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path, { "example/image:tag": digest });
 
-    const skipped = await runCliWith(
-      options,
-      "sbx",
-      "status",
-      "--name",
-      "box",
-      "--no-check-updates",
-      "--json",
-    );
+  const skipped = await runCliWith(
+    options,
+    "sbx",
+    "status",
+    "--name",
+    "box",
+    "--no-check-updates",
+    "--json",
+  );
 
-    expect(JSON.parse(skipped.stdout).freshness).toEqual({
-      state: "unknown",
-      reason: "Not checked (--no-check-updates).",
-    });
-    expect(await Bun.file(options.env.EDEN_FRESHNESS_LOG).text()).not.toContain("inspect");
-
-    const human = await runCliWith(options, "sbx", "status", "--name", "box", "--no-check-updates");
-
-    expect(human.stdout).toContain("State:     stopped");
-    expect(human.stdout).toContain("Workspace: /work/box");
-    expect(human.stdout).toContain("Snapshot:  20260101T101010123Z");
-
-    const missing = await runCliWith(options, "sbx", "status", "--name", "nope", "--json");
-
-    expect(missing.exitCode).toBe(1);
-    expect(JSON.parse(missing.stdout).error.code).toBe("SANDBOX_NOT_FOUND");
+  expect(JSON.parse(skipped.stdout).freshness).toEqual({
+    state: "unknown",
+    reason: "Not checked (--no-check-updates).",
   });
+  expect(await Bun.file(options.env.EDEN_FRESHNESS_LOG).text()).not.toContain("inspect");
+
+  const human = await runCliWith(options, "sbx", "status", "--name", "box", "--no-check-updates");
+
+  expect(human.stdout).toContain("State:     stopped");
+  expect(human.stdout).toContain("Workspace: /work/box");
+  expect(human.stdout).toContain("Snapshot:  20260101T101010123Z");
+
+  const missing = await runCliWith(options, "sbx", "status", "--name", "nope", "--json");
+
+  expect(missing.exitCode).toBe(1);
+  expect(JSON.parse(missing.stdout).error.code).toBe("SANDBOX_NOT_FOUND");
 });
