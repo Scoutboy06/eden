@@ -316,11 +316,13 @@ export class SandboxService {
       );
     }
 
-    const startsFirst =
-      sandbox.status === "stopped" &&
-      this.provider.start !== undefined &&
-      (await this.hooks.discover("sandbox.start.post")) !== undefined;
-    if (startsFirst) await this.startSandbox(sandbox);
+    const isStopped = sandbox.status === "stopped";
+    const canStart = this.provider.start !== undefined;
+    if (isStopped && canStart) {
+      const startPostHook = await this.hooks.discover("sandbox.start.post");
+      const hasStartPostHook = startPostHook !== undefined;
+      if (hasStartPostHook) await this.startSandbox(sandbox);
+    }
 
     let exitCode = 0;
 
