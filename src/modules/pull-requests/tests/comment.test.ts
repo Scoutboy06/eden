@@ -58,6 +58,7 @@ test.each([
   { ref: "", body: "Body" },
   { ref: "https://github.com/acme/app/pull/12", body: " " },
   { ref: "https://github.com/acme/app/pull/12", body: "Body", replyTo: "issue:56" },
+  { ref: "https://github.com/acme/app/pull/12", body: "Body", replyTo: "azure:17:23" },
   { ref: "https://dev.azure.com/acme/project/_git/app/pullrequest/12", body: "Body" },
 ])("rejects invalid or unsupported input before provider selection %#", async (input) => {
   let selections = 0;
@@ -67,7 +68,7 @@ test.each([
   });
 
   await expect(service.comment(input)).rejects.toThrow();
-  expect(selections).toBe(0);
+  expect(selections).toBe(input.ref.startsWith("https://dev.azure.com") ? 1 : 0);
 });
 
 test("rejects missing commenter capability before recording mutation", async () => {

@@ -150,6 +150,8 @@ export class GitHubApiProvider
     return providerRequest(async () => {
       if (ref.provider !== "github")
         throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      if (input.replyTo?.startsWith("azure:"))
+        throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub reply target.");
       const replyId = validatePullRequestComment(input);
       const { data: pr } = await this.client.pulls.get(parameters(ref));
       assertPullRequestIdentity(normalizePullRequest(pr), ref);

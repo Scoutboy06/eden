@@ -267,7 +267,7 @@ const status = defineCommand({
 
 const comment = defineCommand({
   name: "comment",
-  description: "Post a GitHub PR comment or reply to an inline review thread",
+  description: "Post a PR comment or reply to a supported comment thread",
   args: {
     ref: { type: "positional", required: true, description: "Exact PR number or URL" },
     repo: args.repo,
@@ -285,7 +285,7 @@ const comment = defineCommand({
     "reply-to": {
       type: "string",
       description:
-        "Root inline review comment ID (review:<id> from pr show --comments); discussion replies unsupported",
+        "GitHub: review:<id> from pr show --comments; Azure DevOps: azure:<thread ID>:<comment ID>",
     },
   },
   async run(ctx, { pullRequests, output }) {

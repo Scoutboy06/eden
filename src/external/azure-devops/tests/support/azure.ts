@@ -39,6 +39,9 @@ export function azureProvider(
     getPullRequestStatuses: async () => [],
     getPullRequestReviewers: async () => [],
     getThreads: async () => [],
+    getPullRequestThread: async () => ({ id: 1, comments: [] }),
+    createThread: async () => ({ id: 1, comments: [{ id: 1, content: "" }] }),
+    createComment: async () => ({ id: 1, content: "" }),
     ...git,
   };
   const policyClient: AzurePolicyClient = { getPolicyEvaluations: async () => [], ...policies };

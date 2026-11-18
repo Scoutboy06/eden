@@ -4,6 +4,7 @@ import { GitApi } from "azure-devops-node-api/GitApi";
 import { PolicyApi } from "azure-devops-node-api/PolicyApi";
 import { getBearerHandler, getPersonalAccessTokenHandler } from "azure-devops-node-api";
 import {
+  CommentType,
   PullRequestStatus,
   type GitPullRequest,
   type GitRepository,
@@ -14,6 +15,8 @@ import type {
   PullRequest,
   PullRequestCheck,
   PullRequestComment,
+  PullRequestCommenter,
+  PullRequestCommentInput,
   PullRequestProvider,
   PullRequestCreateInput,
   PullRequestPatch,
@@ -47,11 +50,19 @@ export type AzureGitClient = Pick<
   | "getPullRequestStatuses"
   | "getPullRequestReviewers"
   | "getThreads"
+  | "createThread"
+  | "createComment"
+  | "getPullRequestThread"
 >;
 export type AzurePolicyClient = Pick<IPolicyApi, "getPolicyEvaluations">;
 
 export class AzureDevOpsApiProvider
-  implements PullRequestProvider, PullRequestWriter, PullRequestReopener, PullRequestLister
+  implements
+    PullRequestProvider,
+    PullRequestWriter,
+    PullRequestReopener,
+    PullRequestLister,
+    PullRequestCommenter
 {
   constructor(
     private readonly organizationUrl: string,
@@ -241,6 +252,84 @@ export class AzureDevOpsApiProvider
     });
   }
 
+  addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment> {
+    return providerRequest(async () => {
+      const id = this.id(ref);
+      if (ref.provider !== "azure-devops") invalidResponse();
+      const pr = await this.git.getPullRequestById(id);
+      const { repository, project } = context(pr);
+      assertKnownIdentity(pr, ref, repository, project);
+      if (input.replyTo !== undefined) {
+        const { threadId, parentCommentId } = azureReplyTarget(input.replyTo);
+        const thread = await this.git.getPullRequestThread(repository, id, threadId, project);
+        if (
+          thread.id !== threadId ||
+          thread.isDeleted ||
+          !thread.comments?.some((item) => item.id === parentCommentId && !item.isDeleted)
+        )
+          throw new ScmError(
+            "SCM_NOT_FOUND",
+            "Reply target comment was not found on this pull request.",
+          );
+        const comment = await this.git.createComment(
+          { content: input.body, parentCommentId, commentType: CommentType.Text },
+          repository,
+          id,
+          threadId,
+          project,
+        );
+        const posted = this.normalizePostedComment(threadId, comment, input.body);
+        if (comment.parentCommentId !== undefined && comment.parentCommentId !== parentCommentId)
+          throw possiblyApplied(
+            undefined,
+            "The comment may have been added, but its response could not be verified.",
+          );
+        return { ...posted, replyTo: `${threadId}:${comment.parentCommentId ?? parentCommentId}` };
+      }
+      const thread = await this.git.createThread(
+        { comments: [{ content: input.body, commentType: CommentType.Text }] },
+        repository,
+        id,
+        project,
+      );
+      let threadId: number;
+      try {
+        if (thread.id == null) invalidResponse();
+        threadId = thread.id;
+      } catch (error) {
+        throw possiblyApplied(
+          error,
+          "The comment may have been added, but its response could not be verified.",
+        );
+      }
+      const comment = thread.comments?.[0];
+      if (!comment)
+        throw possiblyApplied(
+          undefined,
+          "The comment may have been added, but its response could not be verified.",
+        );
+      return this.normalizePostedComment(threadId, comment, input.body);
+    });
+  }
+
+  private normalizePostedComment(
+    threadId: number,
+    comment: Awaited<ReturnType<IGitApi["createComment"]>>,
+    body: string,
+  ): PullRequestComment {
+    try {
+      if (comment.id == null || comment.content !== body) invalidResponse();
+      const result = normalizeComments([{ id: threadId, comments: [comment] }])[0];
+      if (!result || result.id !== `${threadId}:${comment.id}`) invalidResponse();
+      return result;
+    } catch (error) {
+      throw possiblyApplied(
+        error,
+        "The comment may have been added, but its response could not be verified.",
+      );
+    }
+  }
+
   findOpenPullRequests(query: {
     repository: RepositoryRef;
     sourceBranch: string;
@@ -422,6 +511,18 @@ function azureRepository(repository: RepositoryRef, organizationUrl: string) {
       "Expected a repository in the selected Azure organization.",
     );
   return repository;
+}
+
+function azureReplyTarget(selector: string): { threadId: number; parentCommentId: number } {
+  const match = /^azure:([1-9][0-9]*):([1-9][0-9]*)$/.exec(selector);
+  if (!match)
+    throw new ScmError("SCM_INVALID_OPTIONS", "Reply target must be an Azure comment ID.");
+  const threadId = Number(match[1]);
+  const parentCommentId = Number(match[2]);
+  if (!Number.isSafeInteger(threadId) || !Number.isSafeInteger(parentCommentId))
+    throw new ScmError("SCM_INVALID_OPTIONS", "Reply target must use safe Azure comment IDs.");
+
+  return { threadId, parentCommentId };
 }
 
 function fullBranch(branch: string) {

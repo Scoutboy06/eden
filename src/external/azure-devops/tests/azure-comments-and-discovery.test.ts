@@ -20,6 +20,113 @@ const repository: RepositoryRef = {
   repository: "app",
 };
 
+test("Azure top-level comments create a thread and return the exact comment identity", async () => {
+  const createThread = mock<AzureGitClient["createThread"]>(async () => ({
+    id: 17,
+    comments: [{ id: 23, content: "Hello", commentType: CommentType.Text }],
+  }));
+  const provider = azureProvider({ createThread });
+
+  expect(await provider.addComment(ref, { body: "Hello" })).toMatchObject({
+    id: "17:23",
+    body: "Hello",
+    threadId: "17",
+  });
+  expect(createThread.mock.calls[0]?.[0]).toEqual({
+    comments: [{ content: "Hello", commentType: CommentType.Text }],
+  });
+});
+
+test("Azure replies use the selected thread and parent comment IDs", async () => {
+  const getPullRequestThread = mock<AzureGitClient["getPullRequestThread"]>(async () => ({
+    id: 17,
+    comments: [{ id: 23, content: "Parent" }],
+  }));
+  const createComment = mock<AzureGitClient["createComment"]>(async () => ({
+    id: 24,
+    content: "Reply",
+    commentType: CommentType.Text,
+  }));
+  const provider = azureProvider({ getPullRequestThread, createComment });
+
+  expect(await provider.addComment(ref, { body: "Reply", replyTo: "azure:17:23" })).toMatchObject({
+    id: "17:24",
+    body: "Reply",
+    threadId: "17",
+    replyTo: "17:23",
+  });
+  expect(getPullRequestThread.mock.calls[0]).toEqual(["repo-id", 42, 17, "Product"]);
+  expect(createComment.mock.calls[0]).toEqual([
+    { content: "Reply", parentCommentId: 23, commentType: CommentType.Text },
+    "repo-id",
+    42,
+    17,
+    "Product",
+  ]);
+});
+
+test.each([
+  { id: 17, isDeleted: true, comments: [{ id: 23 }] },
+  { id: 17, comments: [{ id: 23, isDeleted: true }] },
+  { id: 17, comments: [] },
+  { id: 18, comments: [{ id: 23 }] },
+])("Azure missing or deleted reply targets fail before writes %#", async (thread) => {
+  const createComment = mock<AzureGitClient["createComment"]>(async () => ({}));
+  const provider = azureProvider({
+    getPullRequestThread: async () => ({
+      ...thread,
+      comments: thread.comments.map((comment) => ({ ...comment })),
+    }),
+    createComment,
+  });
+
+  await expect(
+    provider.addComment(ref, { body: "No post", replyTo: "azure:17:23" }),
+  ).rejects.toMatchObject({ code: "SCM_NOT_FOUND" });
+  expect(createComment).not.toHaveBeenCalled();
+});
+
+test("Azure reply confirmation rejects a different parent", async () => {
+  const provider = azureProvider({
+    getPullRequestThread: async () => ({ id: 17, comments: [{ id: 23 }] }),
+    createComment: async () => ({
+      id: 24,
+      content: "Reply",
+      commentType: CommentType.Text,
+      parentCommentId: 99,
+    }),
+  });
+
+  await expect(
+    provider.addComment(ref, { body: "Reply", replyTo: "azure:17:23" }),
+  ).rejects.toMatchObject({ code: "SCM_PARTIAL_FAILURE" });
+});
+
+test("Azure missing postwrite thread identity reports possible application", async () => {
+  const provider = azureProvider({
+    createThread: async () => ({
+      comments: [{ id: 1, content: "Hello", commentType: CommentType.Text }],
+    }),
+  });
+
+  await expect(provider.addComment(ref, { body: "Hello" })).rejects.toMatchObject({
+    code: "SCM_PARTIAL_FAILURE",
+  });
+});
+
+test("Azure denied comments retain structured errors", async () => {
+  const provider = azureProvider({
+    createThread: async () => {
+      throw Object.assign(new Error("private diagnostic"), { statusCode: 403 });
+    },
+  });
+
+  await expect(provider.addComment(ref, { body: "Hello" })).rejects.toMatchObject({
+    code: "SCM_ACCESS_DENIED",
+    message: "The provider denied access to this operation.",
+  });
+});
+
 test("Azure comments preserve thread context and exclude deleted and system messages", async () => {
   const getThreads = mock<AzureGitClient["getThreads"]>(async () => [
     {

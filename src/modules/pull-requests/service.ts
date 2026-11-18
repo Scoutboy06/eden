@@ -191,11 +191,15 @@ export class PullRequestService {
     validatePullRequestComment(input);
     const ref = await this.exactReference(input);
     validateReference(ref);
-
-    if (ref.provider !== "github")
+    if (input.replyTo?.startsWith("azure:") && ref.provider !== "azure-devops")
       throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr comment currently supports GitHub only; Azure DevOps commenting is deferred.",
+        "SCM_PROVIDER_MISMATCH",
+        "Azure reply targets require an Azure DevOps pull request.",
+      );
+    if (input.replyTo?.startsWith("review:") && ref.provider !== "github")
+      throw new ScmError(
+        "SCM_PROVIDER_MISMATCH",
+        "GitHub review reply targets require a GitHub pull request.",
       );
 
     const provider = await this.createProvider(repositoryForRef(ref));
@@ -209,8 +213,8 @@ export class PullRequestService {
 
     await this.execution.mutate(
       {
-        type: "github-pr-comment",
-        description: input.replyTo ? "Reply to GitHub review comment" : "Post GitHub PR comment",
+        type: `${ref.provider}-pr-comment`,
+        description: input.replyTo ? "Reply to PR comment" : "Post PR comment",
         input: { ref, ...comment },
       },
       async () => {

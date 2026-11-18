@@ -4,6 +4,17 @@ import { githubPr, githubProvider } from "./support/github";
 const ref = { provider: "github" as const, owner: "acme", repository: "app", number: 12 };
 const root = { id: 56, pull_request_url: "https://api.github.com/repos/acme/app/pulls/12" };
 
+test("rejects Azure reply targets before any GitHub requests", async () => {
+  const { provider, calls } = githubProvider(() => {
+    throw new Error("No request expected");
+  });
+
+  await expect(
+    provider.addComment(ref, { body: "No post", replyTo: "azure:17:23" }),
+  ).rejects.toMatchObject({ code: "SCM_PROVIDER_MISMATCH" });
+  expect(calls).toEqual([]);
+});
+
 function comment(reply = false, overrides: Record<string, unknown> = {}) {
   return {
     id: 34,
