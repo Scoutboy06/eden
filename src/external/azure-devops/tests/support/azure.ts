@@ -39,6 +39,11 @@ export function azureProvider(
     getPullRequestStatuses: async () => [],
     getPullRequestReviewers: async () => [],
     createPullRequestReviewer: async (reviewer) => reviewer,
+    getPullRequestIterations: async () => [],
+    getPullRequestIterationChanges: async () => ({ changeEntries: [] }),
+    getItemContent: async () => {
+      throw new Error("No item content expected");
+    },
     getThreads: async () => [],
     getPullRequestThread: async () => ({ id: 1, comments: [] }),
     createThread: async () => ({ id: 1, comments: [{ id: 1, content: "" }] }),

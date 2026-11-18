@@ -93,7 +93,7 @@ test("PR diff declares format and path options and renders patch, stat and JSON"
   expect(filteredPaths).toEqual(["src/auth.ts"]);
 });
 
-test("PR diff preserves empty results and returns structured errors for invalid and unsupported targets", async () => {
+test("PR diff preserves empty results and returns structured validation and authentication errors", async () => {
   const empty = await runPr(
     "pr",
     "diff",
@@ -122,7 +122,7 @@ test("PR diff preserves empty results and returns structured errors for invalid 
   expect(invalid.exitCode).toBe(1);
   expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
   expect(azure.exitCode).toBe(1);
-  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_UNSUPPORTED_OPERATION" } });
+  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_AUTHENTICATION_FAILED" } });
 });
 
 test("PR help and completion expose the read commands and show enrichments", async () => {

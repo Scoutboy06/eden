@@ -508,7 +508,7 @@ const requestReview = defineCommand({
 
 const diff = defineCommand({
   name: "diff",
-  description: "Show the changed files in a GitHub PR",
+  description: "Show the changed files in a pull request",
   args: {
     ref: { type: "positional", required: true, description: "PR number or URL" },
     repo: args.repo,

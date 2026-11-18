@@ -530,7 +530,7 @@ export class PullRequestService {
     if (input.path !== undefined) validateDiffPath(input.path);
 
     const pathGlob = input.path === undefined ? undefined : new Bun.Glob(input.path);
-    const { provider, ref } = await this.resolve(input, "diff");
+    const { provider, ref } = await this.resolve(input);
     if (!("getDiff" in provider) || typeof provider.getDiff !== "function")
       throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot return PR diffs.");
 
@@ -600,14 +600,8 @@ export class PullRequestService {
     return { ref, reviews: filteredReviews };
   }
 
-  private async resolve(input: PullRequestInput, operation?: "diff") {
+  private async resolve(input: PullRequestInput) {
     const lookup = await resolvePullRequestLookup(input, this.git);
-    if (operation === "diff" && lookup.repository.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr diff currently supports GitHub only; Azure DevOps diff is deferred.",
-      );
-
     const provider = await this.createProvider(lookup.repository);
 
     return resolvePullRequestTarget(lookup, provider);

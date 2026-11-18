@@ -69,8 +69,22 @@ test("diff resolves provider output and applies repository-relative glob filters
   });
 });
 
-test("diff rejects invalid glob before provider creation and reports Azure as unsupported", async () => {
-  const create = mock(async () => azureProvider());
+test("diff rejects invalid glob before provider creation and dispatches Azure", async () => {
+  const provider = azureProvider();
+  const azureRef: PullRequestRef = {
+    provider: "azure-devops",
+    organizationUrl: "https://dev.azure.com/acme",
+    id: 42,
+  };
+  const getDiff = mock(async () => ({
+    ref: azureRef,
+    baseCommit: "base",
+    headCommit: "head",
+    files: [],
+    completeness: { status: "complete" as const },
+  }));
+  provider.getDiff = getDiff;
+  const create = mock(async () => provider);
   const service = new PullRequestService(git, create);
 
   await expect(service.diff({ ref: "12", path: "../private" })).rejects.toMatchObject({
@@ -79,8 +93,9 @@ test("diff rejects invalid glob before provider creation and reports Azure as un
   expect(create).not.toHaveBeenCalled();
   await expect(
     service.diff({ ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42" }),
-  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
-  expect(create).not.toHaveBeenCalled();
+  ).resolves.toMatchObject({ ref: azureRef, files: [] });
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(getDiff).toHaveBeenCalledWith(azureRef);
 });
 
 test("service resolves branch searches before exact lookup", async () => {

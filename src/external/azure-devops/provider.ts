@@ -10,6 +10,8 @@ import {
   type GitRepository,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
+import { confirmAzureDiffSnapshot, readAzurePullRequestDiff } from "./diff";
+import { readAzureFileDiff } from "./file-diff";
 import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
   PullRequest,
@@ -29,6 +31,8 @@ import type {
   PullRequestListItem,
   PullRequestLister,
   PullRequestReviewRequester,
+  PullRequestDiffer,
+  PullRequestDiff,
 } from "../../modules/pull-requests/provider";
 import {
   assertKnownIdentity,
@@ -55,6 +59,9 @@ export type AzureGitClient = Pick<
   | "createThread"
   | "createComment"
   | "getPullRequestThread"
+  | "getPullRequestIterations"
+  | "getPullRequestIterationChanges"
+  | "getItemContent"
 >;
 export type AzurePolicyClient = Pick<IPolicyApi, "getPolicyEvaluations">;
 
@@ -65,7 +72,8 @@ export class AzureDevOpsApiProvider
     PullRequestReopener,
     PullRequestLister,
     PullRequestReviewRequester,
-    PullRequestCommenter
+    PullRequestCommenter,
+    PullRequestDiffer
 {
   constructor(
     private readonly organizationUrl: string,
@@ -512,6 +520,31 @@ export class AzureDevOpsApiProvider
         requested.push(reviewerId);
       }
       return { requested, alreadyPending };
+    });
+  }
+
+  getDiff(ref: PullRequestRef): Promise<PullRequestDiff> {
+    return providerRequest(async () => {
+      const id = this.id(ref);
+      const { snapshot, changes } = await readAzurePullRequestDiff(this.git, id);
+      const files = [];
+      for (const change of changes) files.push(await readAzureFileDiff(this.git, snapshot, change));
+      await confirmAzureDiffSnapshot(this.git, snapshot);
+      const unavailableCounts = files.some((file) => file.patch.status === "unavailable");
+
+      return {
+        ref,
+        baseCommit: snapshot.commonCommit,
+        headCommit: snapshot.sourceCommit,
+        files,
+        completeness: unavailableCounts
+          ? {
+              status: "incomplete",
+              reason:
+                "Line counts are unavailable for binary or oversized files; zero counts for those files are placeholders.",
+            }
+          : { status: "complete" },
+      };
     });
   }
 
