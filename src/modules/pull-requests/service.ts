@@ -135,11 +135,6 @@ export class PullRequestService {
     },
   ) {
     const lookup = await resolvePullRequestLookup(input, this.git);
-    if (lookup.repository.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr create currently supports GitHub only; Azure DevOps creation is deferred.",
-      );
     if (lookup.kind !== "branch")
       throw new ScmError(
         "SCM_INVALID_OPTIONS",

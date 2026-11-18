@@ -3,6 +3,7 @@ import { buildPullRequestCreate } from "../create-input";
 import { PullRequestService } from "../service";
 import { createExecution } from "../../execution/execution";
 import { githubProvider } from "../../../external/github/tests/support/github";
+import { azureProvider } from "../../../external/azure-devops/tests/support/azure";
 
 test("create inputs preserve empty bodies and deduplicate comma-separated metadata", async () => {
   expect(
@@ -67,23 +68,28 @@ test("create resolves current branch and dry-run records all metadata without HT
   ]);
 });
 
-test("Azure CLI creation is rejected before selecting credentials or a provider", async () => {
-  let selections = 0;
-  const service = new PullRequestService(undefined, async () => {
-    selections++;
-    throw new Error("No provider expected");
+test("Azure create accepts provider fields while dry-run avoids remote calls", async () => {
+  const provider = azureProvider({
+    createPullRequest: async (input) => {
+      throw new Error(`Unexpected remote call for ${input.title}`);
+    },
+  });
+  const service = new PullRequestService(
+    { remotes: async () => [], branch: async () => "topic" },
+    async () => provider,
+    createExecution({ dryRun: true }),
+  );
+
+  const result = await service.createByReference({
+    repo: "https://dev.azure.com/acme/project/_git/app",
+    head: "topic",
+    title: "Title",
+    body: "Description",
+    base: "main",
+    draft: true,
   });
 
-  await expect(
-    service.createByReference({
-      repo: "https://dev.azure.com/acme/project/_git/app",
-      head: "topic",
-      title: "Title",
-      body: "",
-      base: "main",
-    }),
-  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
-  expect(selections).toBe(0);
+  expect(result).toBeUndefined();
 });
 
 test("overlong reviewer logins fail before provider selection or PR creation", async () => {

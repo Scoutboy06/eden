@@ -55,7 +55,7 @@ const list = defineCommand({
 
 const create = defineCommand({
   name: "create",
-  description: "Create a GitHub PR (never pushes branches)",
+  description: "Create a pull request (never pushes branches)",
   args: {
     repo: args.repo,
     remote: args.remote,

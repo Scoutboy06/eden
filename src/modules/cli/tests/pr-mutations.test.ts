@@ -287,7 +287,7 @@ test("PR create dry-run sends no HTTP requests and errors follow existing output
   expect(invalid.exitCode).toBe(1);
   expect(JSON.parse(invalid.stdout)).toMatchObject({ error: { code: "SCM_INVALID_OPTIONS" } });
   expect(azure.exitCode).toBe(1);
-  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_UNSUPPORTED_OPERATION" } });
+  expect(JSON.parse(azure.stdout)).toMatchObject({ error: { code: "SCM_AUTHENTICATION_FAILED" } });
 });
 
 test("PR edit help and completion declare supported metadata options", async () => {
