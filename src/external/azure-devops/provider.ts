@@ -186,6 +186,62 @@ export class AzureDevOpsApiProvider
     });
   }
 
+  closePullRequest(ref: PullRequestRef, options: { comment?: string } = {}): Promise<PullRequest> {
+    return providerRequest(async () => {
+      const id = this.id(ref);
+      if (ref.provider !== "azure-devops") invalidResponse();
+      const current = await this.git.getPullRequestById(id);
+      const { repository, project } = context(current);
+      assertKnownIdentity(current, ref, repository, project);
+      const normalized = normalizeAzurePullRequest(current, this.organizationUrl, ref, {
+        repository,
+        project,
+      });
+      if (normalized.state === "merged")
+        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be closed.");
+      if (normalized.state === "closed") return normalized;
+      const updated = await providerRequest(() =>
+        this.git.updatePullRequest(
+          { status: PullRequestStatus.Abandoned },
+          repository,
+          id,
+          project,
+        ),
+      ).catch((error: unknown) => {
+        if (error instanceof ScmError && error.code !== "SCM_REQUEST_FAILED") throw error;
+        throw possiblyApplied(
+          error,
+          "The pull request may have closed. Inspect the PR before retrying.",
+        );
+      });
+      let result: PullRequest;
+      try {
+        assertKnownIdentity(updated, ref, repository, project);
+        result = normalizeAzurePullRequest(updated, this.organizationUrl, ref, {
+          repository,
+          project,
+        });
+        if (result.state !== "closed") invalidResponse();
+      } catch (error) {
+        throw possiblyApplied(
+          error,
+          "The pull request may have closed, but its response could not be verified.",
+        );
+      }
+      if (options.comment) {
+        try {
+          await this.addComment(ref, { body: options.comment });
+        } catch (error) {
+          throw new ScmError(
+            "SCM_PARTIAL_FAILURE",
+            `PR closed: ${result.url}; the closing comment could not be confirmed. Do not retry automatically; inspect the PR before adding a comment. ${error instanceof Error ? error.message : "Unknown provider error"}`,
+          );
+        }
+      }
+      return result;
+    });
+  }
+
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       const id = this.id(ref);

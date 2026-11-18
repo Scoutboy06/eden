@@ -438,7 +438,7 @@ const merge = defineCommand({
 
 const close = defineCommand({
   name: "close",
-  description: "Close a GitHub PR (already-closed PRs are unchanged; merged PRs are rejected)",
+  description: "Close a PR (already-closed PRs are unchanged; merged PRs are rejected)",
   args: {
     ref: { type: "positional", required: true, description: "Exact PR number or URL" },
     repo: args.repo,

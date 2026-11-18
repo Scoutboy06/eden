@@ -447,12 +447,6 @@ export class PullRequestService {
     const ref = await this.exactReference(input);
     validateReference(ref);
 
-    if (ref.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr close currently supports GitHub only; Azure DevOps closing is deferred.",
-      );
-
     const provider = await this.createProvider(repositoryForRef(ref));
     if (!("closePullRequest" in provider) || typeof provider.closePullRequest !== "function")
       throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot close pull requests.");
@@ -461,8 +455,8 @@ export class PullRequestService {
 
     await this.execution.mutate(
       {
-        type: "github-pr-close",
-        description: "Close GitHub pull request; comment only after a new closure",
+        type: `${ref.provider}-pr-close`,
+        description: `Close ${ref.provider} pull request; comment only after a new closure`,
         input: {
           ref,
           ...(input.comment !== undefined ? { comment: input.comment } : {}),

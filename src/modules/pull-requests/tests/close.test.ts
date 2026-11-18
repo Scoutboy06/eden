@@ -29,7 +29,6 @@ test("close dry-run records exact target and comment without HTTP requests", asy
 test.each([
   { ref: "https://github.com/acme/app/pull/12", comment: " " },
   { ref: "" },
-  { ref: "https://dev.azure.com/acme/project/_git/app/pullrequest/12" },
   { ref: "https://github.com/acme/app/pull/12", repo: "https://github.com/other/repo" },
 ])("rejects invalid or unsupported close requests before provider selection %#", async (input) => {
   let selections = 0;
@@ -40,6 +39,31 @@ test.each([
 
   await expect(service.close(input)).rejects.toThrow();
   expect(selections).toBe(0);
+});
+
+test("Azure close resolves an exact target and selects its provider", async () => {
+  const provider = {
+    closePullRequest: async (ref: { provider: string; id: number }) => ({
+      ref,
+      state: "closed" as const,
+    }),
+  } as unknown as PullRequestProvider;
+  let selectedProvider = "";
+  const service = new PullRequestService(
+    undefined,
+    async (repository) => {
+      selectedProvider = repository.provider;
+      return provider;
+    },
+    createExecution({ dryRun: false }),
+  );
+
+  const result = await service.close({
+    ref: "https://dev.azure.com/acme/project/_git/app/pullrequest/12",
+  });
+
+  expect(selectedProvider).toBe("azure-devops");
+  expect(result?.state).toBe("closed");
 });
 
 test("rejects providers without close capability before recording a mutation", async () => {
