@@ -72,19 +72,14 @@ export class PullRequestService {
       throw new ScmError("SCM_INVALID_OPTIONS", "--state must be open, closed, merged or all.");
     if (!Number.isSafeInteger(limit) || limit < 1)
       throw new ScmError("SCM_INVALID_OPTIONS", "--limit must be a positive safe integer.");
-    const hasInvalidAuthor =
-      input.author !== undefined &&
-      (input.author.length > 39 ||
-        !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(input.author));
-    if (hasInvalidAuthor)
-      throw new ScmError("SCM_INVALID_OPTIONS", "--author must be a GitHub user login.");
-
     const repository = await resolveRepository(input, this.git);
-    if (repository.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr list currently supports GitHub only; Azure DevOps listing is deferred.",
-      );
+    if (input.author !== undefined && repository.provider === "github") {
+      const invalidGitHubLogin =
+        input.author.length > 39 ||
+        !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(input.author);
+      if (invalidGitHubLogin)
+        throw new ScmError("SCM_INVALID_OPTIONS", "--author must be a GitHub user login.");
+    }
     const provider = await this.createProvider(repository);
     if (!("listPullRequests" in provider) || typeof provider.listPullRequests !== "function")
       throw new ScmError("SCM_UNSUPPORTED_OPERATION", "This provider cannot list pull requests.");

@@ -25,7 +25,7 @@ const args = {
 
 const list = defineCommand({
   name: "list",
-  description: "List GitHub PRs, newest created first",
+  description: "List pull requests, newest created first",
   args: {
     repo: args.repo,
     remote: args.remote,
@@ -34,7 +34,7 @@ const list = defineCommand({
       choices: ["open", "closed", "merged", "all"],
       description: "PR state (default: open; closed excludes merged)",
     },
-    author: { type: "string", description: "Filter by GitHub user login" },
+    author: { type: "string", description: "Filter by GitHub login or Azure DevOps identity GUID" },
     draft: { type: "boolean", description: "Show draft PRs only" },
     limit: { type: "number", description: "Maximum matching PRs (positive integer; default: 30)" },
   },

@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { PullRequestService } from "../service";
 import { createExecution } from "../../execution/execution";
 import { githubProvider } from "../../../external/github/tests/support/github";
+import { azureProvider } from "../../../external/azure-devops/tests/support/azure";
 import type { PullRequestProvider } from "../provider";
 
 function fixture() {
@@ -77,13 +78,33 @@ test("explicit repo selection works without accessing local Git", async () => {
   expect((await service.list({ repo: "https://github.com/acme/app" })).prs).toEqual([]);
 });
 
-test("Azure listing is rejected without credential or provider lookup", async () => {
-  const { service, selections } = fixture();
+test("Azure listing resolves explicit repository and forwards Azure filters", async () => {
+  const provider = azureProvider();
+  const listPullRequests = mock(provider.listPullRequests.bind(provider));
+  provider.listPullRequests = listPullRequests;
+  const service = new PullRequestService(undefined, async () => provider);
 
-  await expect(
-    service.list({ repo: "https://dev.azure.com/acme/project/_git/app" }),
-  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
-  expect(selections()).toBe(0);
+  const result = await service.list({
+    repo: "https://dev.azure.com/acme/project/_git/app",
+    state: "merged",
+    author: "fce95fea-d8c2-45ce-902b-d6901dd0abc6",
+    draft: false,
+    limit: 7,
+  });
+
+  expect(result.repository).toEqual({
+    provider: "azure-devops",
+    organizationUrl: "https://dev.azure.com/acme",
+    project: "project",
+    repository: "app",
+  });
+  expect(listPullRequests).toHaveBeenCalledWith({
+    repository: result.repository,
+    state: "merged",
+    author: "fce95fea-d8c2-45ce-902b-d6901dd0abc6",
+    draft: false,
+    limit: 7,
+  });
 });
 
 test("providers without listing capability are rejected explicitly", async () => {

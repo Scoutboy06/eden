@@ -6,6 +6,7 @@ import { getBearerHandler, getPersonalAccessTokenHandler } from "azure-devops-no
 import {
   PullRequestStatus,
   type GitPullRequest,
+  type GitRepository,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
 import type { Credential } from "../../modules/pull-requests/credentials";
@@ -21,6 +22,9 @@ import type {
   PullRequestReopener,
   PullRequestReview,
   RepositoryRef,
+  PullRequestListQuery,
+  PullRequestListItem,
+  PullRequestLister,
 } from "../../modules/pull-requests/provider";
 import {
   assertKnownIdentity,
@@ -47,7 +51,7 @@ export type AzureGitClient = Pick<
 export type AzurePolicyClient = Pick<IPolicyApi, "getPolicyEvaluations">;
 
 export class AzureDevOpsApiProvider
-  implements PullRequestProvider, PullRequestWriter, PullRequestReopener
+  implements PullRequestProvider, PullRequestWriter, PullRequestReopener, PullRequestLister
 {
   constructor(
     private readonly organizationUrl: string,
@@ -174,6 +178,7 @@ export class AzureDevOpsApiProvider
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
       const id = this.id(ref);
+      if (ref.provider !== "azure-devops") invalidResponse();
       const pr = await this.git.getPullRequestById(id);
       const { repository, project } = context(pr);
       return normalizeAzurePullRequest(
@@ -183,6 +188,33 @@ export class AzureDevOpsApiProvider
         { repository, project },
         options.raw,
       );
+    });
+  }
+
+  listPullRequests(query: PullRequestListQuery): Promise<PullRequestListItem[]> {
+    return providerRequest(async () => {
+      const repository = azureRepository(query.repository, this.organizationUrl);
+      const resolved = await this.git.getRepository(repository.repository, repository.project);
+      const identity = resolvedRepositoryIdentity(resolved);
+      validateAzureListAuthor(query.author);
+      const result: PullRequestListItem[] = [];
+      for (let skip = 0; result.length < query.limit; skip += 100) {
+        const page = await this.git.getPullRequests(
+          identity.repositoryId,
+          azureListCriteria(query),
+          identity.projectId,
+          undefined,
+          skip,
+          100,
+        );
+        for (const pr of page) {
+          const item = normalizeListedPullRequest(pr, identity, this.organizationUrl);
+          if (matchesAzureListQuery(item, query)) result.push(item);
+          if (result.length >= query.limit) break;
+        }
+        if (page.length < 100) break;
+      }
+      return result;
     });
   }
 
@@ -298,6 +330,66 @@ export class AzureDevOpsApiProvider
       if (page.length < 100) return result;
     }
   }
+}
+
+function resolvedRepositoryIdentity(repository: GitRepository) {
+  return {
+    repositoryId: repository.id ?? invalidResponse(),
+    projectId: repository.project?.id ?? invalidResponse(),
+    repository: repository.name ?? invalidResponse(),
+    project: repository.project?.name ?? invalidResponse(),
+  };
+}
+
+function validateAzureListAuthor(author: string | undefined): void {
+  if (author !== undefined && !isAzureIdentityGuid(author))
+    throw new ScmError("SCM_INVALID_OPTIONS", "--author must be an Azure DevOps identity GUID.");
+}
+
+function azureListCriteria(query: PullRequestListQuery) {
+  const status = {
+    open: PullRequestStatus.Active,
+    closed: PullRequestStatus.Abandoned,
+    merged: PullRequestStatus.Completed,
+    all: PullRequestStatus.All,
+  }[query.state];
+  return { status, ...(query.author !== undefined ? { creatorId: query.author } : {}) };
+}
+
+function normalizeListedPullRequest(
+  pr: GitPullRequest,
+  repository: ReturnType<typeof resolvedRepositoryIdentity>,
+  organizationUrl: string,
+): PullRequestListItem {
+  if (
+    !sameAzureIdentity(pr.repository?.id, repository.repositoryId) ||
+    !sameAzureIdentity(pr.repository?.project?.id, repository.projectId)
+  )
+    invalidResponse();
+  const identity = pr.createdBy;
+  if (identity && (!identity.id || !isAzureIdentityGuid(identity.id) || !identity.displayName))
+    invalidResponse();
+  const ref: PullRequestRef = {
+    provider: "azure-devops",
+    organizationUrl,
+    id: pr.pullRequestId ?? invalidResponse(),
+  };
+  const item = normalizeAzurePullRequest(pr, organizationUrl, ref, repository);
+  return {
+    ...item,
+    author: identity ? { id: identity.id!, name: identity.displayName! } : null,
+  };
+}
+
+function matchesAzureListQuery(item: PullRequestListItem, query: PullRequestListQuery): boolean {
+  return (
+    (query.state === "all" || item.state === query.state) &&
+    (query.draft === undefined || query.draft === item.isDraft)
+  );
+}
+
+function isAzureIdentityGuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 export function createAzureDevOpsApiProvider(

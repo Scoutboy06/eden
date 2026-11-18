@@ -110,3 +110,63 @@ test("Azure branch discovery uses full refs and paginates", async () => {
   ]);
   expect(getPullRequests.mock.calls[1]?.[4]).toBe(100);
 });
+
+test("Azure list resolves canonical IDs, paginates, and preserves Azure author identity", async () => {
+  const getRepository = mock<AzureGitClient["getRepository"]>(async () => ({
+    id: "repo-id",
+    name: "app",
+    project: { id: "project-id", name: "Product" },
+  }));
+  const getPullRequests = mock<AzureGitClient["getPullRequests"]>(
+    async (_repository, _criteria, _project, _length, skip) =>
+      skip === 0
+        ? Array.from({ length: 100 }, (_, index) =>
+            azurePr({
+              pullRequestId: index + 1,
+              status: PullRequestStatus.Completed,
+              isDraft: false,
+              createdBy: {
+                id: "fce95fea-d8c2-45ce-902b-d6901dd0abc6",
+                displayName: "Eden Test",
+              },
+            }),
+          )
+        : [
+            azurePr({
+              pullRequestId: 101,
+              status: PullRequestStatus.Completed,
+              isDraft: false,
+              createdBy: {
+                id: "fce95fea-d8c2-45ce-902b-d6901dd0abc6",
+                displayName: "Eden Test",
+              },
+            }),
+          ],
+  );
+  const provider = azureProvider({ getRepository, getPullRequests });
+
+  const pullRequests = await provider.listPullRequests({
+    repository,
+    state: "merged",
+    author: "fce95fea-d8c2-45ce-902b-d6901dd0abc6",
+    draft: false,
+    limit: 101,
+  });
+
+  expect(getRepository).toHaveBeenCalledWith("app", "Product");
+  expect(getPullRequests.mock.calls[0]).toEqual([
+    "repo-id",
+    { status: PullRequestStatus.Completed, creatorId: "fce95fea-d8c2-45ce-902b-d6901dd0abc6" },
+    "project-id",
+    undefined,
+    0,
+    100,
+  ]);
+  expect(getPullRequests.mock.calls[1]?.[4]).toBe(100);
+  expect(pullRequests).toHaveLength(101);
+  expect(pullRequests[0]).toMatchObject({
+    state: "merged",
+    isDraft: false,
+    author: { id: "fce95fea-d8c2-45ce-902b-d6901dd0abc6", name: "Eden Test" },
+  });
+});
