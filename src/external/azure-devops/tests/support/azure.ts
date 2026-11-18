@@ -38,6 +38,7 @@ export function azureProvider(
     getPullRequests: async () => [],
     getPullRequestStatuses: async () => [],
     getPullRequestReviewers: async () => [],
+    createPullRequestReviewer: async (reviewer) => reviewer,
     getThreads: async () => [],
     getPullRequestThread: async () => ({ id: 1, comments: [] }),
     createThread: async () => ({ id: 1, comments: [{ id: 1, content: "" }] }),

@@ -88,6 +88,25 @@ test("dry-run records create and edit without invoking provider writes", async (
   expect(execution.operations).toHaveLength(2);
 });
 
+test("Azure review dry-run identifies the selected provider without invoking requests", async () => {
+  const execution = createExecution({ dryRun: true });
+  const requested = mock(async () => ({ requested: [], alreadyPending: [] }));
+  const provider = { ...({} as PullRequestProvider), requestReview: requested };
+  const service = new PullRequestService(undefined, async () => provider, execution);
+
+  await service.requestReview({
+    ref: "42",
+    repo: "https://dev.azure.com/acme/project/_git/app",
+    reviewers: ["b6f5a78d-8c3e-4f22-9d11-4f8361cc92a1"],
+  });
+
+  expect(execution.operations[0]).toMatchObject({
+    type: "azure-devops-pr-request-review",
+    description: "Request azure-devops pull request review",
+  });
+  expect(requested).not.toHaveBeenCalled();
+});
+
 test("request review validates and deduplicates targets and dry-run never calls provider", async () => {
   const execution = createExecution({ dryRun: true });
   const requested = mock(async () => ({ requested: [], alreadyPending: [] }));
@@ -115,7 +134,7 @@ test("request review validates and deduplicates targets and dry-run never calls 
       repo: "https://dev.azure.com/acme/project/_git/app",
       reviewers: ["alice"],
     }),
-  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+  ).rejects.toMatchObject({ code: "SCM_INVALID_OPTIONS" });
   expect(execution.operations).toHaveLength(1);
 });
 

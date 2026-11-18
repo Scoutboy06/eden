@@ -473,13 +473,19 @@ const reopen = defineCommand({
 
 const requestReview = defineCommand({
   name: "request-review",
-  description: "Request review from GitHub users or teams",
+  description: "Request review from GitHub logins/teams or Azure identity GUIDs",
   args: {
     ref: { type: "positional", required: true, description: "Exact PR number or URL" },
     repo: args.repo,
     remote: args.remote,
-    reviewer: { type: "string", description: "Comma-separated GitHub user logins" },
-    team: { type: "string", description: "Comma-separated GitHub org/team slugs" },
+    reviewer: {
+      type: "string",
+      description: "Comma-separated GitHub logins or Azure identity GUIDs",
+    },
+    team: {
+      type: "string",
+      description: "Comma-separated GitHub org/team slugs (Azure DevOps does not support teams)",
+    },
   },
   async run(ctx, { pullRequests, output }) {
     const result = await pullRequests.requestReview({

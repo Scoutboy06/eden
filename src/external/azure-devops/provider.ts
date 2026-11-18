@@ -28,6 +28,7 @@ import type {
   PullRequestListQuery,
   PullRequestListItem,
   PullRequestLister,
+  PullRequestReviewRequester,
 } from "../../modules/pull-requests/provider";
 import {
   assertKnownIdentity,
@@ -49,6 +50,7 @@ export type AzureGitClient = Pick<
   | "getPullRequests"
   | "getPullRequestStatuses"
   | "getPullRequestReviewers"
+  | "createPullRequestReviewer"
   | "getThreads"
   | "createThread"
   | "createComment"
@@ -62,6 +64,7 @@ export class AzureDevOpsApiProvider
     PullRequestWriter,
     PullRequestReopener,
     PullRequestLister,
+    PullRequestReviewRequester,
     PullRequestCommenter
 {
   constructor(
@@ -458,6 +461,57 @@ export class AzureDevOpsApiProvider
         },
         state: normalizeReviewState(reviewer.vote),
       }));
+    });
+  }
+
+  requestReview(ref: PullRequestRef, input: { reviewers: string[]; teams: string[] }) {
+    return providerRequest(async () => {
+      if (input.teams.length)
+        throw new ScmError(
+          "SCM_UNSUPPORTED_OPERATION",
+          "Azure DevOps does not support --team reviewer slugs; use Azure identity GUIDs with --reviewer.",
+        );
+      const reviewerIds = [
+        ...new Set(input.reviewers.map((reviewerId) => reviewerId.toLowerCase())),
+      ];
+      for (const reviewerId of reviewerIds) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reviewerId))
+          throw new ScmError("SCM_INVALID_OPTIONS", "Azure reviewer must be an identity GUID.");
+      }
+      const id = this.id(ref);
+      if (ref.provider !== "azure-devops") invalidResponse();
+      const pr = await this.git.getPullRequestById(id);
+      const { repository, project } = context(pr);
+      assertKnownIdentity(pr, ref, repository, project);
+      const current = await this.git.getPullRequestReviewers(repository, id, project);
+      const existingIds = new Set(
+        current.map((reviewer) => reviewer.id?.toLowerCase()).filter(Boolean),
+      );
+      const requested: string[] = [];
+      const alreadyPending: string[] = [];
+      for (const reviewerId of reviewerIds) {
+        if (existingIds.has(reviewerId.toLowerCase())) {
+          alreadyPending.push(reviewerId);
+          continue;
+        }
+        try {
+          const created = await this.git.createPullRequestReviewer(
+            {},
+            repository,
+            id,
+            reviewerId,
+            project,
+          );
+          if (created.id?.toLowerCase() !== reviewerId.toLowerCase()) invalidResponse();
+        } catch {
+          throw new ScmError(
+            "SCM_PARTIAL_FAILURE",
+            `Review requests may have been applied for ${[...requested, reviewerId].join(", ")}; inspect the PR reviewers before retrying.`,
+          );
+        }
+        requested.push(reviewerId);
+      }
+      return { requested, alreadyPending };
     });
   }
 

@@ -411,11 +411,19 @@ export class PullRequestService {
     const ref = await this.exactReference(input);
     validateReference(ref);
 
-    if (ref.provider !== "github")
+    if (ref.provider === "azure-devops" && teams.length)
       throw new ScmError(
         "SCM_UNSUPPORTED_OPERATION",
-        "eden pr request-review currently supports GitHub only; Azure DevOps reviewer requests are deferred.",
+        "Azure DevOps does not support --team reviewer slugs; use Azure identity GUIDs with --reviewer.",
       );
+    if (
+      ref.provider === "azure-devops" &&
+      reviewers.some(
+        (reviewer) =>
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reviewer),
+      )
+    )
+      throw new ScmError("SCM_INVALID_OPTIONS", "Azure reviewer must be an identity GUID.");
 
     const provider = await this.createProvider(repositoryForRef(ref));
     if (!("requestReview" in provider) || typeof provider.requestReview !== "function")
@@ -425,8 +433,8 @@ export class PullRequestService {
 
     await this.execution.mutate(
       {
-        type: "github-pr-request-review",
-        description: "Request GitHub pull request review",
+        type: `${ref.provider}-pr-request-review`,
+        description: `Request ${ref.provider} pull request review`,
         input: { ref, reviewers, teams },
       },
       async () => {
