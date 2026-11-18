@@ -5,6 +5,10 @@
 - Keep vendor SDK construction, API calls and response normalization in
   `src/external/`; application modules own workflow policy and provider selection.
 - Add new vendor SDKs to the import restrictions in `.oxlintrc.json`.
+- Commit completed, verified work frequently in small, coherent commits, usually
+  one per ticket. Follow the user's commit and publishing instructions.
+- Commit each ticket before starting the next; do not accumulate an entire
+  horizon in the working tree.
 
 ## Style
 
