@@ -44,6 +44,7 @@ import type {
   RunSandboxInput,
   SandboxProvider,
   SandboxProviderName,
+  SandboxRemoveOptions,
   SandboxSummary,
   SshAccess,
 } from "./provider";
@@ -263,7 +264,8 @@ export class SandboxService {
     );
   }
 
-  async remove(name: string, force: boolean): Promise<void> {
+  async remove(name: string, options: SandboxRemoveOptions = {}): Promise<void> {
+    const force = options.force ?? false;
     validateSandboxInput(name);
     const sandbox = await this.requireSandbox(name);
     this.assertRemovable(sandbox, force);
@@ -297,7 +299,7 @@ export class SandboxService {
         input: { provider: this.provider.name, name, force },
       },
       async () => {
-        await this.provider.remove!(name, force);
+        await this.provider.remove!(name, { skipConfirmation: force || options.skipConfirmation });
         await this.forgetProfile(name);
       },
     );
@@ -368,7 +370,7 @@ export class SandboxService {
       ? await snapshotSandbox(this.snapshotContext(), name, snapshotSettings)
       : undefined;
     const snapshot = taken?.snapshot;
-    await this.remove(name, input.force);
+    await this.remove(name, { force: input.force });
 
     const { warnings, postHookFailure } = await this.recreate(input, snapshot);
 

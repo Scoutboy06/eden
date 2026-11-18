@@ -272,9 +272,16 @@ const remove = defineCommand({
       type: "boolean",
       description: "Skip removal hook and confirmation; allow running sandbox removal",
     },
+    yes: {
+      type: "boolean",
+      short: "y",
+      description: "Skip confirmation; still run the removal hook",
+    },
   },
   async run(ctx, { sandbox, output }) {
     const { json, dryRun } = ctx.extensions.eden;
+    const force = ctx.values.force ?? false;
+    const yes = ctx.values.yes ?? false;
     if (ctx.values.name === undefined && ctx.values.force) {
       throw new SandboxError(
         "SANDBOX_INVALID_INPUT",
@@ -282,21 +289,22 @@ const remove = defineCommand({
       );
     }
     if (
-      !ctx.values.force &&
+      !force &&
+      !yes &&
       !dryRun &&
       (json || !process.stdin.isTTY || !process.stdout.isTTY || !process.stderr.isTTY)
     ) {
       throw new SandboxError(
         "SANDBOX_REMOVE_REQUIRES_FORCE",
-        "Noninteractive sandbox removal requires --force; without it, run in a terminal to confirm removal.",
+        "Noninteractive sandbox removal requires --yes or --force; without either, run in a terminal to confirm removal.",
       );
     }
     const service = await sandbox({ provider: ctx.values.provider });
     const name = await selectName(ctx.values.name, service, json);
-    if (ctx.values.name === undefined && !dryRun && !(await confirmRemoval(name))) {
+    if (ctx.values.name === undefined && !dryRun && !yes && !(await confirmRemoval(name))) {
       throw new SandboxError("CANCELLED", `Removal of sandbox ${name} was not confirmed.`);
     }
-    await service.remove(name, ctx.values.force ?? false);
+    await service.remove(name, { force, skipConfirmation: yes });
     output.write({
       data: { sandbox: { provider: service.providerName, name } },
       human: () => `Removed sandbox ${name} using ${service.providerName}.`,

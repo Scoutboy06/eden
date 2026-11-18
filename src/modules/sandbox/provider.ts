@@ -48,6 +48,7 @@ export type TransferSandboxInput = {
 };
 export type TransferSandboxResult = { exitCode: number; stderr: string };
 export type SshAccess = { host: string; command: string[]; setupCommand: string[] };
+export type SandboxRemoveOptions = { force?: boolean; skipConfirmation?: boolean };
 
 export interface SandboxProvider {
   readonly name: SandboxProviderName;
@@ -66,6 +67,6 @@ export interface SandboxProvider {
   sshAccess?(name: string): SshAccess;
   start?(name: string): Promise<void>;
   stop(name: string): Promise<void>;
-  remove?(name: string, force: boolean): Promise<void>;
+  remove?(name: string, options?: { skipConfirmation?: boolean }): Promise<void>;
 }
 import type { ReadinessCheck } from "./readiness";

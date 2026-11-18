@@ -66,7 +66,7 @@ test("create records the profile, list shows it and removal forgets it", async (
   ]);
   expect(await service.profileOf("example")).toBe("work");
 
-  await service.remove("example", true);
+  await service.remove("example", { force: true });
 
   expect(await registry.read("docker-sbx")).toEqual({});
   expect(await service.profileOf("example")).toBeUndefined();
@@ -129,7 +129,7 @@ test("a failing registry warns without failing create, list or remove", async ()
   });
 
   await service.create({ name: "example" });
-  await service.remove("example", true);
+  await service.remove("example", { force: true });
 
   expect(await service.list()).toEqual([
     { provider: "docker-sbx", name: "example", status: "stopped" },

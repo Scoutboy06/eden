@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmod, copyFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTemporaryDirectory } from "../../fs/tests/support/temporary-directory";
-import { runCliWith, withRunningCli } from "./support/cli";
+import { runCli, runCliWith, withRunningCli } from "./support/cli";
 import { prepareSandboxCli, sandboxCommands } from "./support/sandbox";
 
 async function installRemoveHook(configHome: string) {
@@ -28,7 +28,7 @@ test("force removes exactly one sandbox and skips the remove hook", async () => 
   ]);
 });
 
-test("noninteractive removal requires force before provider calls", async () => {
+test("noninteractive removal requires yes or force before provider calls", async () => {
   await using directory = await createTemporaryDirectory();
   const options = await prepareSandboxCli(directory.path, "stopped");
 
@@ -37,7 +37,7 @@ test("noninteractive removal requires force before provider calls", async () => 
   expect(result.exitCode).toBe(1);
   expect(JSON.parse(result.stdout).error).toMatchObject({
     code: "SANDBOX_REMOVE_REQUIRES_FORCE",
-    message: expect.stringContaining("terminal"),
+    message: expect.stringContaining("--yes or --force"),
   });
   expect(await Bun.file(join(directory.path, "commands")).exists()).toBe(false);
 });
@@ -258,5 +258,95 @@ test("inferred dry-run removal names the inferred sandbox and removes nothing", 
   expect(await sandboxCommands(directory.path)).toEqual([
     ["ls", "--json"],
     ["ls", "--json"],
+  ]);
+});
+
+test("help declares yes with its short alias", async () => {
+  const result = await runCli("sbx", "rm", "--help");
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("-y, --yes");
+});
+
+test.each(["--yes", "-y"])(
+  "%s runs the removal hook and removes a stopped sandbox",
+  async (flag) => {
+    await using temporary = await createTemporaryDirectory();
+    const directory = temporary.path;
+    const options = await prepareSandboxCli(directory, "stopped");
+    await installRemoveHook(options.env.XDG_CONFIG_HOME!);
+
+    const result = await runCliWith(options, "sbx", "rm", "--name", "example", flag, "--json");
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).sandbox).toEqual({
+      provider: "docker-sbx",
+      name: "example",
+    });
+    expect(await sandboxCommands(directory)).toEqual([
+      ["ls", "--json"],
+      expect.objectContaining({ hook: "sandbox.remove.pre" }),
+      ["rm", "--force", "--", "example"],
+    ]);
+  },
+);
+
+test.each(["running", "pending"])(
+  "yes rejects a %s sandbox before hooks or removal",
+  async (status) => {
+    await using temporary = await createTemporaryDirectory();
+    const directory = temporary.path;
+    const options = await prepareSandboxCli(directory, status);
+    await installRemoveHook(options.env.XDG_CONFIG_HOME!);
+
+    const result = await runCliWith(options, "sbx", "rm", "--name", "example", "--yes", "--json");
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("SANDBOX_REMOVE_REQUIRES_FORCE");
+    expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
+  },
+);
+
+test("yes dry-run records but does not execute the hook or remove the sandbox", async () => {
+  await using temporary = await createTemporaryDirectory();
+  const directory = temporary.path;
+  const options = await prepareSandboxCli(directory, "stopped");
+  await installRemoveHook(options.env.XDG_CONFIG_HOME!);
+
+  const result = await runCliWith(
+    options,
+    "sbx",
+    "rm",
+    "--name",
+    "example",
+    "--yes",
+    "--dry-run",
+    "--json",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout).operations.map((op: any) => op.type)).toEqual([
+    "hook.run",
+    "sandbox.remove",
+  ]);
+  expect(await sandboxCommands(directory)).toEqual([["ls", "--json"]]);
+});
+
+test("a failing removal hook with yes prevents provider removal", async () => {
+  await using temporary = await createTemporaryDirectory();
+  const directory = temporary.path;
+  const options = await prepareSandboxCli(directory, "stopped");
+  await installRemoveHook(options.env.XDG_CONFIG_HOME!);
+  options.env.EDEN_HOOK_EXIT = "7";
+
+  const result = await runCliWith(options, "sbx", "rm", "--name", "example", "--yes", "--json");
+
+  expect(result.exitCode).toBe(1);
+  expect(JSON.parse(result.stdout).error.message).toContain(
+    "Hook sandbox.remove.pre exited with code 7",
+  );
+  expect((await sandboxCommands(directory)).map((event: any) => event.hook ?? event[0])).toEqual([
+    "ls",
+    "sandbox.remove.pre",
   ]);
 });

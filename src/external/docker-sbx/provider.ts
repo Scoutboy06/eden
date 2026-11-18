@@ -209,13 +209,14 @@ export class DockerSandboxProvider implements SandboxProvider {
     await this.execute(["stop", "--", name], name, "stop");
   }
 
-  async remove(name: string, force: boolean): Promise<void> {
+  async remove(name: string, options: { skipConfirmation?: boolean } = {}): Promise<void> {
+    const skipConfirmation = options.skipConfirmation ?? false;
     await this.execute(
-      ["rm", ...(force ? ["--force"] : []), "--", name],
+      ["rm", ...(skipConfirmation ? ["--force"] : []), "--", name],
       name,
       "remove",
       undefined,
-      !force,
+      !skipConfirmation,
     );
   }
 
