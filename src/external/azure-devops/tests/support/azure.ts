@@ -49,6 +49,7 @@ export function azureProvider(
     },
     getThreads: async () => [],
     getPullRequestThread: async () => ({ id: 1, comments: [] }),
+    updateThread: async (thread, _repository, _pr, id) => ({ ...thread, id }),
     createThread: async () => ({ id: 1, comments: [{ id: 1, content: "" }] }),
     createComment: async () => ({ id: 1, content: "" }),
     ...git,

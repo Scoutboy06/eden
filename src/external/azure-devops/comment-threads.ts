@@ -3,10 +3,12 @@ import {
   CommentType,
   type GitPullRequestCommentThread,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
+import { invalidResponse, ScmError } from "../../modules/pull-requests/errors";
 import type {
   PullRequestCommentLocation,
   PullRequestCommentThreads,
   PullRequestCommentThreadsQuery,
+  PullRequestThreadResolution,
 } from "../../modules/pull-requests/provider";
 import { normalizeComments } from "./normalize";
 import type { AzureGitClient } from "./provider";
@@ -20,7 +22,10 @@ export async function listAzureCommentThreads(
 ): Promise<PullRequestCommentThreads> {
   const since = query.since === undefined ? undefined : Date.parse(query.since);
   const threads = (await git.getThreads(repository, id, project))
-    .filter((thread) => !thread.isDeleted && (!query.unresolved || isUnresolved(thread)))
+    .filter(
+      (thread) =>
+        !thread.isDeleted && (!query.unresolved || threadResolution(thread.status) === false),
+    )
     .flatMap((thread) => {
       const source = (thread.comments ?? []).filter(
         (comment) => !comment.isDeleted && comment.commentType === CommentType.Text,
@@ -55,11 +60,7 @@ export async function listAzureCommentThreads(
     threads: selected.map(({ thread, source, comments }) => {
       const current = positions?.threads.get(thread.id);
       const location = threadLocations(thread, current, positions?.iteration);
-      const status = thread.status;
-      const isResolved =
-        status == null || status === CommentThreadStatus.Unknown
-          ? undefined
-          : !isUnresolved(thread);
+      const isResolved = threadResolution(thread.status);
 
       return comments.map((comment, index) => {
         const parentId = source[index]?.parentCommentId;
@@ -79,10 +80,54 @@ export async function listAzureCommentThreads(
   };
 }
 
-function isUnresolved(thread: GitPullRequestCommentThread): boolean {
-  return (
-    thread.status === CommentThreadStatus.Active || thread.status === CommentThreadStatus.Pending
-  );
+export async function setAzureThreadResolution(
+  git: AzureGitClient,
+  target: [repository: string, pullRequestId: number, threadId: number, project: string],
+  isResolved: boolean,
+): Promise<PullRequestThreadResolution> {
+  const threadId = target[2];
+  const current = await git.getPullRequestThread(...target);
+  if (
+    current?.id !== threadId ||
+    current.isDeleted ||
+    !current.comments?.some(
+      (comment) => !comment.isDeleted && comment.commentType === CommentType.Text,
+    )
+  )
+    throw new ScmError(
+      "SCM_NOT_FOUND",
+      "The discussion thread was not found on this pull request.",
+    );
+
+  const requestedStatus = isResolved ? CommentThreadStatus.Fixed : CommentThreadStatus.Active;
+  const alreadyResolved = isResolved && threadResolution(current.status) === true;
+  if (current.status === requestedStatus || alreadyResolved)
+    return { threadId: String(threadId), isResolved, changed: false };
+
+  try {
+    const updated = await git.updateThread({ status: requestedStatus }, ...target);
+    if (updated?.id !== threadId || updated.isDeleted || updated.status !== requestedStatus)
+      invalidResponse();
+  } catch {
+    throw new ScmError(
+      "SCM_PARTIAL_FAILURE",
+      "The Azure discussion thread may have changed, but its requested state could not be confirmed.",
+    );
+  }
+  return { threadId: String(threadId), isResolved, changed: true };
+}
+
+function threadResolution(status: CommentThreadStatus | undefined): boolean | undefined {
+  switch (status) {
+    case CommentThreadStatus.Active:
+    case CommentThreadStatus.Pending:
+      return false;
+    case CommentThreadStatus.Fixed:
+    case CommentThreadStatus.Closed:
+    case CommentThreadStatus.WontFix:
+    case CommentThreadStatus.ByDesign:
+      return true;
+  }
 }
 
 async function readTrackedThreads(

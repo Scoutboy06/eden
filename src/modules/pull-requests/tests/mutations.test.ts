@@ -177,24 +177,31 @@ test("review-thread resolution validates exact targets and dry-run makes no prov
     execution,
   );
   const target = { ref: "12", repo: "https://github.com/acme/app", threadId: "thread-1" };
+  const azure = {
+    ref: "https://dev.azure.com/acme/project/_git/app/pullrequest/42",
+    threadId: "7",
+  };
 
   expect(await service.setReviewThreadResolution(target, true)).toBeUndefined();
+  expect(await service.setReviewThreadResolution(azure, false)).toBeUndefined();
   expect(resolve).not.toHaveBeenCalled();
   expect(execution.operations).toMatchObject([
     {
       type: "github-pr-review-thread-resolution",
       input: { threadId: "thread-1", isResolved: true },
     },
+    {
+      type: "azure-devops-pr-review-thread-resolution",
+      input: { threadId: "7", isResolved: false },
+    },
   ]);
   await expect(
     service.setReviewThreadResolution({ ...target, threadId: " " }, true),
   ).rejects.toMatchObject({ code: "SCM_INVALID_OPTIONS" });
   await expect(
-    service.setReviewThreadResolution(
-      { ref: "12", repo: "https://dev.azure.com/acme/project/_git/app", threadId: "thread-1" },
-      true,
-    ),
-  ).rejects.toMatchObject({ code: "SCM_UNSUPPORTED_OPERATION" });
+    service.setReviewThreadResolution({ ...azure, threadId: "7:1" }, true),
+  ).rejects.toMatchObject({ code: "SCM_INVALID_OPTIONS" });
+  expect(execution.operations).toHaveLength(2);
   expect(resolve).not.toHaveBeenCalled();
 });
 

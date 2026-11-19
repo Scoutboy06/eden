@@ -1,6 +1,7 @@
 import { ScmError } from "./errors";
 import { validatePullRequestComment } from "./comment-input";
 import {
+  azureReviewThreadId,
   matchesDiffPath,
   invalidInput,
   uniqueReviewTargets,
@@ -310,11 +311,7 @@ export class PullRequestService {
       throw new ScmError("SCM_INVALID_OPTIONS", "A valid review thread ID is required.");
     const ref = await this.exactReference(input);
     validateReference(ref);
-    if (ref.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "Review thread resolution currently supports GitHub only; Azure DevOps is unsupported.",
-      );
+    if (ref.provider === "azure-devops") azureReviewThreadId(input.threadId);
     const provider = await this.createProvider(repositoryForRef(ref));
     if (
       !("setReviewThreadResolution" in provider) ||
@@ -329,8 +326,8 @@ export class PullRequestService {
       | undefined;
     await this.execution.mutate(
       {
-        type: "github-pr-review-thread-resolution",
-        description: `${isResolved ? "Resolve" : "Unresolve"} GitHub PR review thread`,
+        type: `${ref.provider}-pr-review-thread-resolution`,
+        description: `${isResolved ? "Resolve" : "Unresolve"} ${ref.provider === "github" ? "GitHub" : "Azure DevOps"} PR review thread`,
         input: { ref, threadId: input.threadId, isResolved },
       },
       async () => {

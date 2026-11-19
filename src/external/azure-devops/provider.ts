@@ -10,11 +10,12 @@ import {
   type GitRepository,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
-import { listAzureCommentThreads } from "./comment-threads";
+import { listAzureCommentThreads, setAzureThreadResolution } from "./comment-threads";
 import { confirmAzureDiffSnapshot, readAzurePullRequestDiff } from "./diff";
 import { readAzureFileDiff } from "./file-diff";
 import { planAzureLabelEdits } from "./labels";
 import type { Credential } from "../../modules/pull-requests/credentials";
+import { azureReviewThreadId } from "../../modules/pull-requests/validation";
 import type {
   PullRequest,
   PullRequestCheck,
@@ -38,6 +39,7 @@ import type {
   PullRequestCommentThreadsQuery,
   PullRequestCommentThreads,
   PullRequestCommentThreadLister,
+  PullRequestThreadResolver,
 } from "../../modules/pull-requests/provider";
 import {
   assertKnownIdentity,
@@ -67,6 +69,7 @@ export type AzureGitClient = Pick<
   | "createThread"
   | "createComment"
   | "getPullRequestThread"
+  | "updateThread"
   | "getPullRequestIterations"
   | "getPullRequestIterationChanges"
   | "getItemContent"
@@ -82,7 +85,8 @@ export class AzureDevOpsApiProvider
     PullRequestReviewRequester,
     PullRequestCommenter,
     PullRequestDiffer,
-    PullRequestCommentThreadLister
+    PullRequestCommentThreadLister,
+    PullRequestThreadResolver
 {
   constructor(
     private readonly organizationUrl: string,
@@ -356,6 +360,19 @@ export class AzureDevOpsApiProvider
       const { repository, project } = context(pr);
       assertKnownIdentity(pr, ref, repository, project);
       return listAzureCommentThreads(this.git, repository, id, project, query);
+    });
+  }
+
+  setReviewThreadResolution(ref: PullRequestRef, threadId: string, isResolved: boolean) {
+    return providerRequest(async () => {
+      const id = this.id(ref);
+      if (ref.provider !== "azure-devops") invalidResponse();
+      const thread = azureReviewThreadId(threadId);
+      const pr = await this.git.getPullRequestById(id);
+      const { repository, project } = context(pr);
+      assertKnownIdentity(pr, ref, repository, project);
+
+      return setAzureThreadResolution(this.git, [repository, id, thread, project], isResolved);
     });
   }
 

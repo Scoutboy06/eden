@@ -98,6 +98,16 @@ export function validateReference(ref: PullRequestRef) {
   }
 }
 
+export function azureReviewThreadId(value: string): number {
+  const id = Number(value);
+  if (!/^[1-9][0-9]*$/.test(value) || id > 2_147_483_647)
+    throw new ScmError(
+      "SCM_INVALID_OPTIONS",
+      "An Azure review thread ID must be a positive integer.",
+    );
+  return id;
+}
+
 export function uniqueReviewTargets(values: string[], kind: "reviewer" | "team"): string[] {
   const pattern = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$/;
   const targets: string[] = [];

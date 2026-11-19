@@ -329,10 +329,14 @@ const comments = defineCommand({
 function threadResolutionCommand(name: "resolve" | "unresolve", isResolved: boolean) {
   return defineCommand({
     name,
-    description: `${isResolved ? "Resolve" : "Reopen"} a GitHub inline review thread`,
+    description: `${isResolved ? "Resolve" : "Reopen"} a pull request discussion thread`,
     args: {
       ref: { type: "positional", required: true, description: "Exact PR number or URL" },
-      thread: { type: "positional", required: true, description: "Thread ID from pr comments" },
+      thread: {
+        type: "positional",
+        required: true,
+        description: "Thread ID from pr comments (Azure: number before the colon)",
+      },
       repo: args.repo,
       remote: args.remote,
     },

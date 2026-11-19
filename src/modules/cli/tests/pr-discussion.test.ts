@@ -35,6 +35,37 @@ test("PR resolve and unresolve declare commands and render state with dry-run SD
   });
 });
 
+test("Azure thread resolution uses the numeric thread ID in its dry-run plan", async () => {
+  const ref = "https://dev.azure.com/acme/Product/_git/app/pullrequest/42";
+  const dry = await runPrWithEnv(
+    { AZURE_DEVOPS_EXT_PAT: "fake-test-token" },
+    "pr",
+    "resolve",
+    ref,
+    "7",
+    "--dry-run",
+    "--json",
+  );
+  const invalid = await runPr("pr", "resolve", ref, "7:1", "--json");
+
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [
+      {
+        type: "azure-devops-pr-review-thread-resolution",
+        input: { threadId: "7", isResolved: true },
+      },
+    ],
+  });
+  expect(invalid.exitCode).toBe(1);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "SCM_INVALID_OPTIONS" },
+  });
+});
+
 test("PR comment declares inputs and renders discussion and reply identities", async () => {
   const help = await runCli("pr", "comment", "--help");
   const completion = await runCli("completion", "bash");
