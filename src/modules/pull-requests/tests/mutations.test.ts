@@ -218,16 +218,15 @@ test("label edits validate conflicts and use the mutation boundary without dry-r
   await expect(
     service.edit(pr.ref, { addLabels: ["feature"], removeLabels: ["FEATURE"] }),
   ).rejects.toMatchObject({ code: "SCM_INVALID_REFERENCE" });
-  expect(state.providerSelections).toBe(1);
-
   const azure = {
     provider: "azure-devops" as const,
     organizationUrl: "https://dev.azure.com/acme",
     id: 12,
   };
-  await expect(service.edit(azure, { addLabels: ["feature"] })).rejects.toMatchObject({
-    code: "SCM_UNSUPPORTED_OPERATION",
-  });
+  await expect(
+    service.edit(azure, { addLabels: ["feature"], removeLabels: ["FEATURE"] }),
+  ).rejects.toMatchObject({ code: "SCM_INVALID_REFERENCE" });
+  expect(state.providerSelections).toBe(1);
 });
 
 test("review and merge reject unsupported providers and malformed mutations before execution", async () => {
@@ -458,7 +457,9 @@ test("Azure dry-run records writes without resolving or mutating the PR through 
       draft: false,
     }),
   ).toBeUndefined();
-  expect(await service.edit(azureRef, { body: "", isDraft: false })).toBeUndefined();
+  expect(
+    await service.edit(azureRef, { body: "", isDraft: false, addLabels: ["feature"] }),
+  ).toBeUndefined();
   expect(getPullRequestById).not.toHaveBeenCalled();
   expect(getRepository).not.toHaveBeenCalled();
   expect(createPullRequest).not.toHaveBeenCalled();

@@ -156,13 +156,6 @@ export class PullRequestService {
   async edit(ref: PullRequestRef, patch: PullRequestPatch) {
     validateEdit(ref, patch);
 
-    const hasLabelEdits = patch.addLabels !== undefined || patch.removeLabels !== undefined;
-    if (hasLabelEdits && ref.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "Label editing currently supports GitHub only; Azure DevOps label editing is unsupported.",
-      );
-
     const provider = await this.createProvider(repositoryForRef(ref));
     const writer = pullRequestWriter(provider);
     let result: Awaited<ReturnType<PullRequestWriter["editPullRequest"]>> | undefined;

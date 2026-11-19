@@ -58,6 +58,33 @@ test("PR edit adds and removes labels and documents additive semantics", async (
   });
 });
 
+test("Azure PR label flags are passed through to the shared dry-run plan", async () => {
+  const result = await runPrWithEnv(
+    { AZURE_DEVOPS_EXT_PAT: "fake-test-token" },
+    "pr",
+    "edit",
+    "https://dev.azure.com/acme/Product/_git/app/pullrequest/42",
+    "--add-label",
+    "feature, needs review",
+    "--remove-label",
+    "stale",
+    "--dry-run",
+    "--json",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    ok: true,
+    dryRun: true,
+    operations: [
+      {
+        type: "azure-devops-pr-edit",
+        input: { patch: { addLabels: ["feature", "needs review"], removeLabels: ["stale"] } },
+      },
+    ],
+  });
+});
+
 test("PR request-review declares hyphenated command, renders results and structures failures", async () => {
   const help = await runCli("pr", "request-review", "--help");
   const completion = await runCli("completion", "bash");

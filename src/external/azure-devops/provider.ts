@@ -13,6 +13,7 @@ import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-r
 import { listAzureCommentThreads } from "./comment-threads";
 import { confirmAzureDiffSnapshot, readAzurePullRequestDiff } from "./diff";
 import { readAzureFileDiff } from "./file-diff";
+import { planAzureLabelEdits } from "./labels";
 import type { Credential } from "../../modules/pull-requests/credentials";
 import type {
   PullRequest,
@@ -56,6 +57,9 @@ export type AzureGitClient = Pick<
   | "updatePullRequest"
   | "getRepository"
   | "getPullRequests"
+  | "getPullRequestLabels"
+  | "createPullRequestLabel"
+  | "deletePullRequestLabels"
   | "getPullRequestStatuses"
   | "getPullRequestReviewers"
   | "createPullRequestReviewer"
@@ -140,6 +144,7 @@ export class AzureDevOpsApiProvider
       const current = await this.git.getPullRequestById(id);
       const { repository, project } = context(current);
       assertKnownIdentity(current, ref, repository, project);
+      const editLabels = await planAzureLabelEdits(this.git, [repository, id, project], patch);
       const update: GitPullRequest = {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.body !== undefined ? { description: patch.body } : {}),
@@ -148,10 +153,20 @@ export class AzureDevOpsApiProvider
           : {}),
         ...(patch.isDraft !== undefined ? { isDraft: patch.isDraft } : {}),
       };
+      if (Object.keys(update).length === 0) {
+        const result = normalizeAzurePullRequest(current, this.organizationUrl, ref, {
+          repository,
+          project,
+        });
+        await editLabels?.();
+        return result;
+      }
+
       const updated = await this.git.updatePullRequest(update, repository, id, project);
+      let result: PullRequest;
       try {
         assertKnownIdentity(updated, ref, repository, project);
-        return normalizeAzurePullRequest(updated, this.organizationUrl, ref, {
+        result = normalizeAzurePullRequest(updated, this.organizationUrl, ref, {
           repository,
           project,
         });
@@ -161,6 +176,8 @@ export class AzureDevOpsApiProvider
           "Pull request changes may have been applied, but its response could not be verified.",
         );
       }
+      await editLabels?.();
+      return result;
     });
   }
 
