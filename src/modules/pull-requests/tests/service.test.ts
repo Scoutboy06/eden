@@ -98,6 +98,32 @@ test("diff rejects invalid glob before provider creation and dispatches Azure", 
   expect(getDiff).toHaveBeenCalledWith(azureRef);
 });
 
+test("comments dispatches Azure exact references with the shared filters", async () => {
+  const azureRef: PullRequestRef = {
+    provider: "azure-devops",
+    organizationUrl: "https://dev.azure.com/acme",
+    id: 42,
+  };
+  const provider = azureProvider();
+  const listCommentThreads = mock(async () => ({ threads: [], hasMore: false, incomplete: false }));
+  Object.assign(provider, { listCommentThreads });
+  const service = new PullRequestService(git, async () => provider as PullRequestProvider);
+
+  await expect(
+    service.comments({
+      ref: "https://dev.azure.com/acme/Product/_git/app/pullrequest/42",
+      unresolved: true,
+      since: "2026-11-18",
+      limit: 4,
+    }),
+  ).resolves.toEqual({ threads: [], hasMore: false, incomplete: false });
+  expect(listCommentThreads).toHaveBeenCalledWith(azureRef, {
+    limit: 4,
+    unresolved: true,
+    since: "2026-11-18",
+  });
+});
+
 test("service resolves branch searches before exact lookup", async () => {
   const selected = { ...ref, number: 37 };
   const calls: string[] = [];

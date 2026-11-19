@@ -115,10 +115,30 @@ function formatComment(comment: PullRequestComment): string {
 
 function formatThreadComment(comment: PullRequestComment): string {
   const reply = comment.replyTo ? ` · reply-to ${comment.replyTo}` : "";
-  const resolution = comment.isResolved ? " (resolved)" : " (unresolved)";
+  const resolution =
+    comment.isResolved === undefined ? "" : comment.isResolved ? " (resolved)" : " (unresolved)";
   const author = comment.author?.name ?? "Deleted user";
-  const location = formatCommentLocation(comment);
+  const location = formatThreadLocation(comment);
   return `${comment.id}${reply}${resolution}\n${author}${location}\n${comment.body}`;
+}
+
+function formatThreadLocation(comment: PullRequestComment): string {
+  const tracked = comment.location?.tracked;
+  const trackedLine = tracked?.right?.start?.line;
+  if (tracked?.path && trackedLine != null)
+    return ` · ${tracked.path}:${trackedLine} [right/new side]`;
+  const trackedOldLine = tracked?.left?.start?.line;
+  if (tracked?.path && trackedOldLine != null)
+    return ` · ${tracked.path}:${trackedOldLine} [left/old side]`;
+
+  const original = comment.location?.original;
+  const originalRight = original?.right?.start?.line;
+  if (original?.path && originalRight != null)
+    return ` · ${original.path}:${originalRight} [original right/new side]`;
+  const originalLeft = original?.left?.start?.line;
+  if (original?.path && originalLeft != null)
+    return ` · ${original.path}:${originalLeft} [original left/old side]`;
+  return formatCommentLocation(comment);
 }
 
 function formatCommentLocation(comment: PullRequestComment): string {

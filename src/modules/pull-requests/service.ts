@@ -242,12 +242,6 @@ export class PullRequestService {
     const ref = await this.exactReference(input);
     validateReference(ref);
 
-    if (ref.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr comments currently supports GitHub only; Azure DevOps thread listing is deferred.",
-      );
-
     const provider = await this.createProvider(repositoryForRef(ref));
     if (!("listCommentThreads" in provider) || typeof provider.listCommentThreads !== "function")
       throw new ScmError(

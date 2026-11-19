@@ -36,7 +36,24 @@ export interface PullRequestComment {
   threadId?: string;
   replyTo?: string;
   isResolved?: boolean;
+  location?: {
+    tracked?: PullRequestCommentLocation;
+    original?: PullRequestCommentLocation;
+    iterationContext?: { firstComparingIteration?: number; secondComparingIteration?: number };
+    trackingCriteria?: {
+      firstComparingIteration?: number;
+      secondComparingIteration?: number;
+      changeTrackingId?: number;
+      origFilePath?: string;
+    };
+  };
 }
+
+export type PullRequestCommentLocation = {
+  path?: string;
+  left?: { start?: { line?: number; offset?: number }; end?: { line?: number; offset?: number } };
+  right?: { start?: { line?: number; offset?: number }; end?: { line?: number; offset?: number } };
+};
 
 export interface PullRequestCheck {
   id: string;

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { runCli } from "./support/cli";
 import { runPr, runPrWithEnv } from "./support/pr-runner";
+import { formatReviewThreads } from "../../../../apps/cli/src/commands/pr-output";
 
 test("PR resolve and unresolve declare commands and render state with dry-run SDK isolation", async () => {
   const resolveHelp = await runCli("pr", "resolve", "--help");
@@ -106,5 +107,53 @@ test("PR comments declare filters and render review threads in human and JSON ou
     ok: true,
     threads: [[{ id: "review:56", threadId: "thread-node-1", replyTo: "review:56" }]],
     hasMore: false,
+  });
+});
+
+test("PR comments human output labels Azure current and original diff sides while JSON retains both", () => {
+  const result = {
+    threads: [
+      [
+        {
+          id: "17:23",
+          body: "Tracked discussion",
+          author: { id: "alice", name: "Alice" },
+          threadId: "17",
+          isResolved: false,
+          location: {
+            tracked: {
+              path: "/src/new.ts",
+              right: { start: { line: 9, offset: 2 }, end: { line: 10, offset: 4 } },
+            },
+            original: {
+              path: "/src/old.ts",
+              left: { start: { line: 3 }, end: { line: 4 } },
+            },
+          },
+        },
+      ],
+      [
+        {
+          id: "18:24",
+          body: "Original fallback",
+          author: null,
+          threadId: "18",
+          location: { original: { path: "/src/older.ts", left: { start: { line: 12 } } } },
+        },
+      ],
+    ],
+    hasMore: false,
+    incomplete: false,
+  };
+
+  const human = formatReviewThreads(result);
+  const json = JSON.parse(JSON.stringify(result));
+
+  expect(human).toContain("/src/new.ts:9 [right/new side]");
+  expect(human).toContain("/src/older.ts:12 [original left/old side]");
+  expect(human).not.toContain("18:24 (unresolved)");
+  expect(json.threads[0][0].location).toMatchObject({
+    tracked: { right: { start: { line: 9, offset: 2 }, end: { line: 10, offset: 4 } } },
+    original: { left: { start: { line: 3 }, end: { line: 4 } } },
   });
 });

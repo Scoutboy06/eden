@@ -10,6 +10,7 @@ import {
   type GitRepository,
 } from "azure-devops-node-api/interfaces/GitInterfaces";
 import { invalidResponse, providerRequest, ScmError } from "../../modules/pull-requests/errors";
+import { listAzureCommentThreads } from "./comment-threads";
 import { confirmAzureDiffSnapshot, readAzurePullRequestDiff } from "./diff";
 import { readAzureFileDiff } from "./file-diff";
 import type { Credential } from "../../modules/pull-requests/credentials";
@@ -33,6 +34,9 @@ import type {
   PullRequestReviewRequester,
   PullRequestDiffer,
   PullRequestDiff,
+  PullRequestCommentThreadsQuery,
+  PullRequestCommentThreads,
+  PullRequestCommentThreadLister,
 } from "../../modules/pull-requests/provider";
 import {
   assertKnownIdentity,
@@ -73,7 +77,8 @@ export class AzureDevOpsApiProvider
     PullRequestLister,
     PullRequestReviewRequester,
     PullRequestCommenter,
-    PullRequestDiffer
+    PullRequestDiffer,
+    PullRequestCommentThreadLister
 {
   constructor(
     private readonly organizationUrl: string,
@@ -316,6 +321,24 @@ export class AzureDevOpsApiProvider
       const threads = await this.git.getThreads(repository, id, project);
 
       return normalizeComments(threads);
+    });
+  }
+
+  listCommentThreads(
+    ref: PullRequestRef,
+    query: PullRequestCommentThreadsQuery,
+  ): Promise<PullRequestCommentThreads> {
+    return providerRequest(async () => {
+      if (ref.provider !== "azure-devops")
+        throw new ScmError(
+          "SCM_PROVIDER_MISMATCH",
+          "Expected a PR in the selected Azure organization.",
+        );
+      const id = this.id(ref);
+      const pr = await this.git.getPullRequestById(id);
+      const { repository, project } = context(pr);
+      assertKnownIdentity(pr, ref, repository, project);
+      return listAzureCommentThreads(this.git, repository, id, project, query);
     });
   }
 

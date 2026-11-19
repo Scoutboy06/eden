@@ -302,7 +302,7 @@ const comment = defineCommand({
 
 const comments = defineCommand({
   name: "comments",
-  description: "List filtered GitHub inline review threads",
+  description: "List filtered PR discussion and inline review threads",
   args: {
     ref: { type: "positional", required: true, description: "Exact PR number or URL" },
     repo: args.repo,
