@@ -13,7 +13,7 @@ Horizon is **planning** by default: choose the next batch and make clear how eac
 
 ## Refer by name
 
-Every epic and ticket has a **name**: its title. In everything the human reads, refer to it by that name, never by a bare id, number, or slug. A wall of `eden-3.3, eden-4yh, eden-sbi` is illegible; names read at a glance. The id and URL don't vanish; a name wraps its link where available, but they ride alongside the name, never stand in for it.
+Every epic and ticket has a **name**: its title. In everything the human reads, refer to it by that name, never by a bare id, number, or slug. A wall of `todo-42, CODE-12345` is illegible; names read at a glance. The id and URL don't vanish; a name wraps its link where available, but they ride alongside the name, never stand in for it.
 
 ## The Map
 
