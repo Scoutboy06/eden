@@ -321,7 +321,10 @@ const list = defineCommand({
       choices: sandboxProviderNames,
       description: "Sandbox provider (defaults to configured sandbox.default_provider)",
     },
-    "check-updates": { type: "boolean", description: "Check image freshness against registries" },
+    "check-updates": {
+      type: "boolean",
+      description: "Check image freshness against local templates or registries",
+    },
   },
 
   async run(ctx, { sandbox, output, readResolvedConfig, checkSandboxFreshness }) {
@@ -361,7 +364,8 @@ const status = defineCommand({
       type: "boolean",
       negatable: true,
       default: true,
-      description: "Check image freshness against the registry (--no-check-updates skips it)",
+      description:
+        "Check image freshness against local templates or registries (--no-check-updates skips it)",
     },
   },
 

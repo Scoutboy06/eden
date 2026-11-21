@@ -58,6 +58,7 @@ export async function checkSandboxFreshness(
       { registry, lookup },
       warnings,
       previousReceipts,
+      sandbox.profile !== undefined && profiles[sandbox.profile]?.pull === "never",
     );
     results.push({ ...sandbox, freshness });
   }
@@ -91,6 +92,7 @@ async function checkImage(
   lookups: { registry: Map<string, Promise<RegistryResult>>; lookup: DigestLookup },
   warnings: string[],
   previousReceipts: () => Promise<Receipt[]>,
+  local: boolean,
 ): Promise<Freshness> {
   const image = metadata.image;
   let reference: { repository: string; tag: string };
@@ -112,6 +114,23 @@ async function checkImage(
       image,
       reason: "The template is absent from the Docker Sandboxes image store.",
     };
+
+  if (local) {
+    if (!/^(sha256:)?[a-f0-9]{12,64}$/.test(loaded.id))
+      return { state: "unknown", image, reason: "The loaded template image ID is invalid." };
+
+    return sameImageId(loaded.id, metadata.imageId)
+      ? {
+          state: "current",
+          image,
+          reason: "The sandbox image matches the locally loaded template (pull: never).",
+        }
+      : {
+          state: "outdated",
+          image,
+          reason: "The sandbox image differs from the locally loaded template (pull: never).",
+        };
+  }
 
   const key = `${auth}:${image}`;
   if (!lookups.registry.has(key))
