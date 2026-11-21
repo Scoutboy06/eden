@@ -29,3 +29,32 @@
 
 - Keep sections fixed and bullets short. Omit redundant information.
 - README: prerequisites and Install/Develop commands. AGENTS: links to guidance.
+
+## Change summaries and pull requests
+
+- Never make a PR unless the developer explicitly asks you to do so.
+- Apply these guidelines to PR descriptions and completion messages for meaningful
+  code changes, whether or not a PR is opened.
+- Conventional commit titles, plain language:
+  `fix(cli): task listing no longer drops closed tasks`.
+- Body: the problem in a sentence or two, then how you fixed it.
+  Explain what the developer can now do and include the command or entry point
+  needed to try it.
+- Show concrete evidence of the changed behavior:
+  - UI changes need clear before/after images. Motion or timing needs a short video.
+  - CLI changes need the command and actual output from a representative run.
+  - Performance improvements need before/after measurements under the same
+    conditions. Include the workload and measurement method; use a chart when useful.
+  - Internal changes need a concise explanation of the benefit and focused
+    verification of the behavior that must remain unchanged.
+- Describe the focused tests or manual checks you ran and the observed results.
+  "Tests pass" alone is insufficient. Distinguish real integrations from simulated
+  dependencies, and state anything you could not check.
+- Make incomplete behavior and follow-up work explicit. Do not describe scaffolding
+  or partially connected functionality as a completed feature.
+- Evidence must come from actual runs. Label illustrative examples as illustrative.
+  Never invent output, measurements, screenshots, or verification results.
+- Upload PR evidence to GitHub. For completion messages, embed or link evidence
+  where the developer can inspect it. Never commit PR-only screenshots or assets.
+- Keep the description proportional to the change. Explain behavior and important
+  decisions, not a file-by-file account of the implementation.
