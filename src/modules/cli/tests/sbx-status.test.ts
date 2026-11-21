@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify } from "yaml";
@@ -82,6 +83,57 @@ test("status reports state, workspace, freshness and the latest snapshot", async
     freshness: { state: "current" },
     latestSnapshot: { id: "20260101T101010123Z", sizeBytes: 7 },
   });
+});
+
+test("status and list compare pull-never sandboxes locally without receipts or registry access", async () => {
+  await using directory = await createTemporaryDirectory();
+  const options = await setup(directory.path, {});
+  await writeFile(
+    join(options.env.XDG_CONFIG_HOME, "eden", "config.yaml"),
+    stringify({
+      sandbox: {
+        default_provider: "docker-sbx",
+        profiles: { work: { template: "example/image:tag", pull: "never" } },
+      },
+    }),
+  );
+  const state = join(options.env.XDG_STATE_HOME, "eden");
+  await mkdir(state, { recursive: true });
+  await writeFile(
+    join(state, "sandbox-profiles.json"),
+    JSON.stringify({
+      "docker-sbx": { box: { profile: "work", recordedAt: "2026-11-21T10:00:00Z" } },
+    }),
+  );
+  options.env.XDG_CACHE_HOME = join(directory.path, "empty-cache");
+
+  const status = await runCliWith(options, "sbx", "status", "--name", "box", "--json");
+  const human = await runCliWith(options, "sbx", "status", "--name", "box");
+  const list = await runCliWith(options, "sbx", "list", "--check-updates", "--json");
+
+  expect(status.exitCode).toBe(0);
+  expect(JSON.parse(status.stdout)).toMatchObject({
+    sandbox: { profile: "work" },
+    freshness: {
+      state: "current",
+      reason: "The sandbox image matches the locally loaded template (pull: never).",
+    },
+  });
+  expect(human.exitCode).toBe(0);
+  expect(human.stdout).toContain(
+    "Image:     current - The sandbox image matches the locally loaded template (pull: never).",
+  );
+  expect(list.exitCode).toBe(0);
+  expect(JSON.parse(list.stdout).sandboxes[0].freshness.state).toBe("current");
+  const commands = (await Bun.file(options.env.EDEN_FRESHNESS_LOG).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(commands.every((args: string[]) => args[0] === "sbx")).toBe(true);
+  expect(commands.some((args: string[]) => args.includes("pull") || args.includes("load"))).toBe(
+    false,
+  );
+  expect(existsSync(join(options.env.XDG_CACHE_HOME, "eden", "templates"))).toBe(false);
 });
 
 test("status keeps going with an unknown freshness when the registry fails", async () => {
