@@ -36,6 +36,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # local files
 AGENTS.local.md
+AGENTS.override.md
 CLAUDE.local.md
 
 .claude/settings.local.json
