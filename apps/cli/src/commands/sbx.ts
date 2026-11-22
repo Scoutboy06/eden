@@ -248,7 +248,12 @@ const ssh = defineCommand({
     output.write({
       data: {
         sandbox: { provider: service.providerName, name: ctx.values.name, status: access.status },
-        ssh: { host: access.host, command: access.command, setupCommand: access.setupCommand },
+        ssh: {
+          host: access.host,
+          command: access.command,
+          setupCommand: access.setupCommand,
+          ...(access.tailnet ? { tailnet: access.tailnet } : {}),
+        },
       },
       human: () => formatSshAccess(ctx.values.name, service.providerName, access),
     });
@@ -692,18 +697,29 @@ function quoteShellArgument(value: string): string {
 function formatSshAccess(
   name: string,
   provider: string,
-  access: { host: string; command: string[]; setupCommand: string[]; status: string },
+  access: {
+    host: string;
+    command: string[];
+    setupCommand: string[];
+    status: string;
+    tailnet?: { host: string; command: string[] };
+  },
 ): string {
   const lines = [
-    `Connect to sandbox ${name} over ssh:`,
-    `  ${access.command.map(quoteShellArgument).join(" ")}`,
+    `Connect to sandbox ${name}:`,
+    `  Local: ${access.command.map(quoteShellArgument).join(" ")}`,
     "",
     "Editors (for example VS Code Remote-SSH) can connect to the host:",
     `  ${access.host}`,
     "",
-    "If the host is not known to your ssh client, run once:",
-    `  ${access.setupCommand.map(quoteShellArgument).join(" ")}`,
   ];
+  if (access.status === "running") {
+    lines.push("  Setup: not needed");
+  } else {
+    lines.push("  Setup:", `    ${access.setupCommand.map(quoteShellArgument).join(" ")}`);
+  }
+  if (access.tailnet)
+    lines.push(`  Tailnet: ${access.tailnet.command.map(quoteShellArgument).join(" ")}`);
   if (access.status !== "running") {
     lines.push(
       "",

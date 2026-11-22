@@ -38,6 +38,7 @@ export type ExecSandboxInput = {
   output: "capture" | "inherit";
   workdir?: string;
   tty?: boolean;
+  stdin?: string;
 };
 export type ExecSandboxResult = { exitCode: number; stdout: string; stderr: string };
 export type TransferSandboxInput = {
@@ -47,7 +48,12 @@ export type TransferSandboxInput = {
   stdoutFile?: string;
 };
 export type TransferSandboxResult = { exitCode: number; stderr: string };
-export type SshAccess = { host: string; command: string[]; setupCommand: string[] };
+export type SshAccess = {
+  host: string;
+  command: string[];
+  setupCommand: string[];
+  tailnet?: { host: string; command: string[] };
+};
 export type SandboxRemoveOptions = { force?: boolean; skipConfirmation?: boolean };
 
 export interface SandboxProvider {

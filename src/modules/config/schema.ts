@@ -139,6 +139,12 @@ const profileSchema = v.pipe(
       v.strictObject({ root: v.optional(nonEmptyString), docker: v.optional(nonEmptyString) }),
     ),
     kits: v.optional(v.array(nonEmptyString)),
+    tailscale: v.optional(
+      v.strictObject({
+        tags: v.pipe(v.array(nonEmptyString), v.minLength(1)),
+        ssh_user: v.optional(nonEmptyString),
+      }),
+    ),
     mcp_servers: v.optional(v.array(nonEmptyString)),
     kit_args: v.optional(configMap(kitArgumentSchema)),
     snapshot: v.optional(

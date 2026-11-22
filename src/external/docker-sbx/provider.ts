@@ -32,6 +32,7 @@ export type DockerCommandRunner = (
     sandboxName?: string;
     operation?: DockerOperation;
     inheritIO?: boolean;
+    stdin?: string;
   },
 ) => Promise<DockerCommandResult>;
 
@@ -173,12 +174,18 @@ export class DockerSandboxProvider implements SandboxProvider {
     const result = await (this.dependencies.run ?? runDockerCommand)(
       [
         "exec",
+        ...(input.stdin === undefined ? [] : ["-i"]),
         ...(input.workdir === undefined ? [] : ["-w", input.workdir]),
         "--",
         input.name,
         ...input.argv,
       ],
-      { sandboxName: input.name, operation: "exec", inheritIO: false },
+      {
+        sandboxName: input.name,
+        operation: "exec",
+        inheritIO: false,
+        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+      },
     );
     if (result.exitCode === 125) {
       const stderr = result.stderr.trim();
@@ -516,7 +523,7 @@ async function runDockerCommand(
   if (!options.signal) process.on("SIGTERM", interrupt);
 
   try {
-    const result = await ScriptRunner.run("sbx", null, {
+    const result = await ScriptRunner.run("sbx", options.stdin ?? null, {
       args,
       env: options.env,
       inheritIO: options.inheritIO,

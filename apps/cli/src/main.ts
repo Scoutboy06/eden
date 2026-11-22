@@ -11,6 +11,7 @@ import setup from "./commands/setup";
 import pr from "./commands/pr";
 import host from "./commands/host";
 import project from "./commands/project";
+import tailscale from "./commands/tailscale";
 
 await runCli({
   pr,
@@ -23,4 +24,5 @@ await runCli({
   mkdir,
   host,
   project,
+  tailscale,
 });

@@ -49,6 +49,15 @@ import type {
   SshAccess,
 } from "./provider";
 import { DockerSandboxProvider } from "../../external/docker-sbx/provider";
+import { tailscaleKitPath } from "../tailnet/kit";
+import {
+  enrollSandbox,
+  exchangeStoredCredential,
+  mintOneTimeKey,
+  revokeOneTimeKey,
+} from "../tailnet/enrollment";
+import { createTailnetDeviceStore } from "../tailnet/devices";
+import { deleteDevice } from "../../external/tailscale/api";
 
 export type ShellSandboxInput = { name: string; cwd?: string };
 
@@ -236,7 +245,22 @@ export class SandboxService {
     }
     const sandbox = await this.requireSandbox(name);
 
-    return { ...this.provider.sshAccess(name), status: sandbox.status };
+    const access = this.provider.sshAccess(name);
+    const device = await createTailnetDeviceStore()
+      .read(name)
+      .catch(() => undefined);
+    return {
+      ...access,
+      ...(device && !device.pendingCleanup
+        ? {
+            tailnet: {
+              host: device.dnsName,
+              command: ["ssh", `${device.sshUser}@${device.dnsName}`],
+            },
+          }
+        : {}),
+      status: sandbox.status,
+    };
   }
 
   async start(name: string): Promise<{ started: boolean }> {
@@ -267,7 +291,19 @@ export class SandboxService {
   async remove(name: string, options: SandboxRemoveOptions = {}): Promise<void> {
     const force = options.force ?? false;
     validateSandboxInput(name);
-    const sandbox = await this.requireSandbox(name);
+    const sandbox = await this.provider
+      .list()
+      .then((items) => items.find((entry) => entry.name === name));
+    const devices = createTailnetDeviceStore();
+    const device = await devices.read(name);
+    if (!sandbox) {
+      if (device?.pendingCleanup) {
+        await this.cleanupTailnetDevice(device);
+        await devices.delete(name);
+        return;
+      }
+      throw this.notFound(name);
+    }
     this.assertRemovable(sandbox, force);
     const canRemove = this.provider.remove !== undefined;
     if (!canRemove) {
@@ -300,6 +336,18 @@ export class SandboxService {
       },
       async () => {
         await this.provider.remove!(name, { skipConfirmation: force || options.skipConfirmation });
+        if (device) {
+          await devices.write({ ...device, pendingCleanup: true });
+          try {
+            await this.cleanupTailnetDevice(device);
+            await devices.delete(name);
+          } catch (error) {
+            throw new SandboxError(
+              "SANDBOX_TEMPLATE_UPDATE_FAILED",
+              `Sandbox ${name} was removed but Tailscale device cleanup failed (${device.dnsName}, node ID ${device.nodeId}): ${errorMessage(error)}. Remove the stale device in the Tailscale admin console, then retry cleanup with 'eden sbx remove ${name}'`,
+            );
+          }
+        }
         await this.forgetProfile(name);
       },
     );
@@ -353,6 +401,9 @@ export class SandboxService {
       );
     }
 
+    const managedDevice = await createTailnetDeviceStore().read(name);
+    if (!this.execution.dryRun && (this.profile?.tailscale || managedDevice))
+      await exchangeStoredCredential();
     this.assertRemovable(await this.requireSandbox(name), input.force);
 
     if (!this.provider.remove) {
@@ -449,6 +500,16 @@ export class SandboxService {
     }
 
     const resolved = resolveCreateInput(input, this.profile);
+    const tailscale = this.profile?.tailscale;
+    if (tailscale && this.provider.name !== "docker-sbx") {
+      throw new SandboxError(
+        "SANDBOX_INVALID_INPUT",
+        "Tailscale enrollment requires Docker Sandboxes.",
+      );
+    }
+    if (tailscale) {
+      resolved.kits = [...(resolved.kits ?? []), tailscaleKitPath()];
+    }
     validateSandboxInput(resolved.name, resolved.image);
     await resolveSandboxPaths(resolved, path);
     const warnings = workspaceWarnings(resolved);
@@ -473,8 +534,33 @@ export class SandboxService {
         input: createAuditInput(this.provider.name, resolved, warnings, this.profile),
       },
       async () => {
-        await this.provider.create(resolved);
-        await this.recordProfile(resolved.name);
+        if (tailscale && !this.execution.dryRun) {
+          const accessToken = await exchangeStoredCredential();
+          const authKey = await mintOneTimeKey(accessToken, tailscale.tags[0]!);
+          let created = false;
+          try {
+            await this.provider.create(resolved);
+            created = true;
+            const enrolled = await enrollSandbox(this.provider, resolved.name, authKey.key);
+            await createTailnetDeviceStore().write({
+              sandboxName: resolved.name,
+              ...enrolled,
+              sshUser: tailscale.ssh_user ?? "root",
+            });
+          } catch (error) {
+            if (!created) throw error;
+            throw new Error(
+              `Sandbox ${resolved.name} was created but Tailscale enrollment failed: ${error instanceof Error ? error.message : String(error)}. Remove it with 'sbx remove ${resolved.name}' and retry creation.`,
+              { cause: error },
+            );
+          } finally {
+            await revokeOneTimeKey(accessToken, authKey.id);
+          }
+          await this.recordProfile(resolved.name);
+        } else {
+          await this.provider.create(resolved);
+          await this.recordProfile(resolved.name);
+        }
       },
     );
 
@@ -636,6 +722,11 @@ export class SandboxService {
         `Could not forget the recorded profile of sandbox ${name}: ${errorMessage(error)}`,
       );
     }
+  }
+
+  private async cleanupTailnetDevice(device: { nodeId: string }): Promise<void> {
+    const token = await exchangeStoredCredential();
+    await deleteDevice(token, device.nodeId);
   }
 
   private async createMountDirectories(input: CreateSandboxInput): Promise<void> {

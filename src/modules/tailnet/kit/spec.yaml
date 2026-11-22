@@ -1,0 +1,15 @@
+schemaVersion: v3
+name: eden-tailscale
+description: Tailscale userspace networking for Eden sandboxes
+startup:
+  - name: tailscale-daemon
+    script: ./start.sh
+    user: root
+    long-running: true
+allow:
+  - "*.tailscale.com"
+  - "*.tailscale.io"
+  - login.tailscale.com
+install:
+  - name: tailscale
+    script: ./install.sh
