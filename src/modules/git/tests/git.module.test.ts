@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,6 +122,33 @@ describe("GitModule read API", () => {
       { path: detached, branch: null },
       { path: topic, branch: "topic" },
     ]);
+  });
+
+  test("runs hooks with the caller's environment and without terminal prompts", async () => {
+    await writeFile(join(directory, "file"), "content\n");
+    await GitModule.execute(directory, ["add", "."]);
+    await GitModule.execute(directory, ["commit", "-m", "initial"]);
+    const hooks = join(directory, "disabled-hooks");
+    const seen = join(directory, "seen").replaceAll("\\", "/");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(
+      join(hooks, "post-checkout"),
+      `#!/bin/sh\nprintf '%s %s' "$EDEN_HOOK_PROBE" "$GIT_TERMINAL_PROMPT" > "${seen}"\n`,
+      { mode: 0o755 },
+    );
+    process.env.EDEN_HOOK_PROBE = "inherited";
+
+    try {
+      await GitModule.createWorktree(directory, {
+        branch: "topic",
+        path: join(directory, "topic"),
+        base: "HEAD",
+      });
+    } finally {
+      delete process.env.EDEN_HOOK_PROBE;
+    }
+
+    expect(await readFile(seen, "utf8")).toBe("inherited 0");
   });
 
   test("reports unmerged paths explicitly", async () => {
