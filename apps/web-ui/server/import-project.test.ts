@@ -93,6 +93,23 @@ test("web project HTTP add, list, and remove share the persistent registry", asy
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
   try {
+    const directories = `${url}/api/projects/directories?path=~/`;
+    const browserHeaders = { "X-Eden-Directory-Browser": "1" };
+    expect((await fetch(directories)).status).toBe(403);
+    expect(
+      (
+        await fetch(directories, {
+          headers: { ...browserHeaders, Origin: "https://other.example" },
+        })
+      ).status,
+    ).toBe(403);
+    const browsed = await fetch(directories, {
+      headers: { ...browserHeaders, "Sec-Fetch-Site": "same-origin" },
+    });
+    expect(browsed.status).toBe(200);
+    expect(browsed.headers.get("cache-control")).toBe("no-store");
+    expect(await browsed.json()).toMatchObject({ directory: "~/", parent: null });
+
     const added = await fetch(`${url}/api/projects`, {
       method: "POST",
       headers: { Origin: url, "Content-Type": "application/json" },

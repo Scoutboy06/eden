@@ -3,6 +3,7 @@ import { listRegisteredProjects } from "../../../src/modules/projects/project-re
 
 import { listBeadsTasks } from "../../../src/external/beads/tasks";
 import { handleProjectImport } from "./import-project";
+import { listProjectDirectories } from "./project-directories";
 import { handleTaskDetail, taskDetails } from "./task-detail";
 import { projectWorktrees } from "./worktrees";
 
@@ -41,6 +42,8 @@ function createTaskMiddleware(
   ) => {
     const url = new URL(request.originalUrl ?? request.url ?? "/", "http://eden.local");
     const detailId = url.pathname.match(/^\/api\/tasks\/([^/]+)$/)?.[1];
+    if (url.pathname === "/api/projects/directories")
+      return respondDirectories(request, response, url);
     if (url.pathname !== "/api/tasks" && url.pathname !== "/api/projects" && !detailId)
       return next();
 
@@ -153,6 +156,34 @@ function createWorktreeMiddleware(
       );
     }
   };
+}
+
+async function respondDirectories(request: IncomingMessage, response: ServerResponse, url: URL) {
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store");
+
+  const site = request.headers["sec-fetch-site"];
+  if (
+    isCrossOrigin(request) ||
+    (site && site !== "same-origin") ||
+    request.headers["x-eden-directory-browser"] !== "1"
+  ) {
+    return respondError(response, 403, "Same-origin directory browser requests are required.");
+  }
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    return respondError(response, 405, "This endpoint is read-only.");
+  }
+
+  try {
+    response.end(JSON.stringify(await listProjectDirectories(url.searchParams.get("path") ?? "")));
+  } catch (error) {
+    respondError(
+      response,
+      400,
+      error instanceof Error && !("code" in error) ? error.message : "Could not read this folder.",
+    );
+  }
 }
 
 function respondError(response: ServerResponse, status: number, message: string) {

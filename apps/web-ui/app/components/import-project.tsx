@@ -3,6 +3,7 @@ import { Add01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useNavigate } from "react-router-dom";
 
+import { ProjectPathPicker } from "@/components/project-path-picker";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -71,24 +72,16 @@ export function ImportProject({
           Import project
         </DialogTrigger>
       )}
-      <DialogContent showCloseButton={!busy}>
+      <DialogContent
+        showCloseButton={!busy}
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+      >
         <DialogTitle>Import project</DialogTitle>
         <DialogDescription>
           Import an existing Git repository on this machine. No repository files will be changed.
         </DialogDescription>
         <form onSubmit={submit} className="flex flex-col gap-4">
-          <label className="flex flex-col gap-2">
-            Repository path
-            <input
-              autoFocus
-              required
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="~/src/my-project"
-              disabled={busy}
-              className="rounded-md border bg-background px-3 py-2"
-            />
-          </label>
+          {open && <ProjectPathPicker path={path} onChange={setPath} disabled={busy} />}
           <label className="flex flex-col gap-2">
             Project name (optional)
             <input
