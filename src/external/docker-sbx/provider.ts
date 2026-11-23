@@ -17,14 +17,7 @@ import type {
 import type { ReadinessCheck, ReadinessResult } from "../../modules/sandbox/readiness";
 import { attachDockerExec, attachDockerSandbox } from "./attach";
 import { transferDockerFiles } from "./transfer";
-import {
-  defaultSandboxdLinkProbe,
-  diagnoseSandboxdLinks,
-  findMissingSandboxdLinks,
-  sandboxdLinkRepairCommand,
-  sandboxdLogPath,
-  type SandboxdLinkProbe,
-} from "./sandboxd-links";
+import { SandboxdLinks, type SandboxdLinkProbe } from "./sandboxd-links";
 
 export { attachDockerSandbox } from "./attach";
 export type { AttachDependencies } from "./attach";
@@ -47,6 +40,7 @@ export type DockerCommandRunner = (
 
 export class DockerSandboxProvider implements SandboxProvider {
   readonly name = "docker-sbx";
+  private readonly sandboxdLinks: SandboxdLinks;
 
   constructor(
     private readonly onCreateOutput?: (text: string) => void,
@@ -59,7 +53,9 @@ export class DockerSandboxProvider implements SandboxProvider {
       sandboxdLinkProbe?: SandboxdLinkProbe;
       interactiveCreate?: boolean;
     } = {},
-  ) {}
+  ) {
+    this.sandboxdLinks = new SandboxdLinks(dependencies.sandboxdLinkProbe);
+  }
 
   readinessChecks(): readonly ReadinessCheck[] {
     return [
@@ -113,7 +109,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         result.exitCode,
         `${result.stdout}\n${result.stderr}`,
         "create",
-        this.daemonLogPath(),
+        this.sandboxdLinks.logPath(),
       );
     } catch (error) {
       if (signal.aborted) throw error;
@@ -139,7 +135,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         result.exitCode,
         diagnostics,
         "create",
-        this.daemonLogPath(),
+        this.sandboxdLinks.logPath(),
       );
     }
 
@@ -239,10 +235,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async diagnose(options: { fix: boolean }): Promise<SandboxDoctorReport> {
-    return diagnoseSandboxdLinks(
-      this.dependencies.sandboxdLinkProbe ?? defaultSandboxdLinkProbe(),
-      options,
-    );
+    return this.sandboxdLinks.diagnose(options);
   }
 
   async remove(name: string, options: { skipConfirmation?: boolean } = {}): Promise<void> {
@@ -355,7 +348,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         `${result.stdout}
 ${result.stderr}`,
         "network",
-        this.daemonLogPath(),
+        this.sandboxdLinks.logPath(),
       );
     }
 
@@ -419,46 +412,12 @@ ${result.stderr}`,
         exitCode,
         diagnostics,
         operation,
-        this.daemonLogPath(),
+        this.sandboxdLinks.logPath(),
       );
       throw failure.code === "SANDBOX_START_FAILED" && sandboxName !== undefined
-        ? (this.missingLinkFailure(sandboxName, exitCode, diagnostics) ?? failure)
+        ? (this.sandboxdLinks.startFailure(sandboxName, exitCode, diagnostics) ?? failure)
         : failure;
     }
-  }
-
-  private daemonLogPath(): string | undefined {
-    const probe = this.dependencies.sandboxdLinkProbe ?? defaultSandboxdLinkProbe();
-    return sandboxdLogPath(probe.platform, probe.env);
-  }
-
-  private missingLinkFailure(
-    name: string,
-    exitCode: number,
-    diagnostics: string,
-  ): SandboxError | undefined {
-    const missing = findMissingSandboxdLinks(
-      this.dependencies.sandboxdLinkProbe ?? defaultSandboxdLinkProbe(),
-    );
-    if (missing === undefined) return undefined;
-    const details = diagnostics.trim();
-    const logPath = this.daemonLogPath();
-    const lines = [
-      `Docker Sandboxes could not start sandbox ${name} (exit ${exitCode}) because sandboxd's temp link is missing. No retry or cleanup was attempted.`,
-      "",
-      "Missing link:",
-      ...missing.links.map((link) => `  ${link}`),
-      "",
-      `Current TEMP: ${missing.temp ?? "unknown"}`,
-      `It should point to: ${missing.stateDir}`,
-      "",
-      "Recreate it with: eden sbx doctor --fix",
-      "Or in PowerShell:",
-      ...missing.links.map((link) => `  ${sandboxdLinkRepairCommand(link, missing.stateDir)}`),
-      ...(details ? ["", "Docker Sandboxes reported:", details] : []),
-      ...(details && logPath ? [`Docker Sandboxes log: ${logPath}`] : []),
-    ];
-    return new SandboxError("SANDBOX_START_LINK_MISSING", lines.join("\n"));
   }
 }
 

@@ -1,183 +1,174 @@
-import {
-  closeSync,
-  existsSync,
-  fstatSync,
-  openSync,
-  readdirSync,
-  readlinkSync,
-  readSync,
-  realpathSync,
-  symlinkSync,
-} from "node:fs";
+import { SandboxError } from "../../modules/sandbox/errors";
 import type { SandboxDoctorLink, SandboxDoctorReport } from "../../modules/sandbox/provider";
+import { defaultSandboxdLinkProbe, type SandboxdLinkProbe } from "./sandboxd-link-probe";
 
-export type SandboxdLinkProbe = {
-  platform: string;
-  env: Record<string, string | undefined>;
-  readText: (path: string) => string | undefined;
-  exists: (path: string) => boolean;
-  readLink: (path: string) => string | undefined;
-  readDir: (path: string) => string[];
-  realPath?: (path: string) => string;
-  createJunction: (path: string, target: string) => void;
-};
+export type { SandboxdLinkProbe } from "./sandboxd-link-probe";
 
-export type MissingSandboxdLinks = {
+type MissingSandboxdLinks = {
   links: string[];
   stateDir: string;
   temp: string | undefined;
 };
 
 const LOG_TAIL_LINES = 200;
-const LOG_TAIL_BYTES = 256 * 1024;
 const MISSING_ROOTFS = /rootfs disk does not exist: (.+?\\sboxd-[0-9a-f]+)\\/g;
 const LINK_NAME_PREFIX = "sboxd-";
 const NUMERIC_FOLDER = /^\d+$/;
 
-export function defaultSandboxdLinkProbe(): SandboxdLinkProbe {
-  return {
-    platform: process.platform,
-    env: process.env,
-    readText: readFileTail,
-    exists: existsSync,
-    readLink: readLinkTarget,
-    readDir: readDirNames,
-    realPath: resolveRealPath,
-    createJunction: (path, target) => symlinkSync(target, path, "junction"),
-  };
-}
+export class SandboxdLinks {
+  constructor(private readonly probe: SandboxdLinkProbe = defaultSandboxdLinkProbe()) {}
 
-export function findMissingSandboxdLinks(
-  probe: SandboxdLinkProbe,
-): MissingSandboxdLinks | undefined {
-  if (probe.platform !== "win32") return undefined;
-  const stateDir = sandboxdStateDir(probe.env);
-  if (stateDir === undefined) return undefined;
-  const logText = probe.readText(`${stateDir}\\daemon.log`);
-  if (logText === undefined) return undefined;
-  const links = missingRootfsLinks(lastLines(logText, LOG_TAIL_LINES), probe.exists);
-  if (links.length === 0) return undefined;
-  return { links, stateDir, temp: probe.env.TEMP ?? probe.env.TMP };
-}
+  diagnose(options: { fix: boolean }): SandboxDoctorReport {
+    const stateDir = this.stateDirectory();
+    if (stateDir === undefined) {
+      return { applicable: false, links: [] };
+    }
+    const temp = this.probe.env.TEMP ?? this.probe.env.TMP;
+    const paths = this.linkPaths(stateDir, temp);
+    const links = paths.map((path) => this.inspectLink(path, stateDir));
 
-export function diagnoseSandboxdLinks(
-  probe: SandboxdLinkProbe,
-  options: { fix: boolean },
-): SandboxDoctorReport {
-  const stateDir = sandboxdStateDir(probe.env);
-  if (probe.platform !== "win32" || stateDir === undefined) {
-    return { applicable: false, links: [] };
+    return {
+      applicable: true,
+      stateDir,
+      temp,
+      links: options.fix ? links.map((link) => this.repairLink(link, stateDir)) : links,
+    };
   }
-  const temp = probe.env.TEMP ?? probe.env.TMP;
-  const logText = probe.readText(`${stateDir}\\daemon.log`);
-  const logLinks = logText === undefined ? [] : rootfsLinkPaths(lastLines(logText, LOG_TAIL_LINES));
-  const links = linkPaths(probe, stateDir, temp, logLinks).map((path) =>
-    inspectLink(probe, path, stateDir),
-  );
 
-  return {
-    applicable: true,
-    stateDir,
-    temp,
-    links: options.fix ? links.map((link) => repairLink(probe, link, stateDir)) : links,
-  };
+  logPath(): string | undefined {
+    const stateDir = this.stateDirectory();
+    return stateDir === undefined ? undefined : `${stateDir}\\daemon.log`;
+  }
+
+  startFailure(name: string, exitCode: number, diagnostics: string): SandboxError | undefined {
+    const missing = this.findMissingLinks();
+    if (missing === undefined) return undefined;
+    const details = diagnostics.trim();
+    const logPath = this.logPath();
+    const lines = [
+      `Docker Sandboxes could not start sandbox ${name} (exit ${exitCode}) because sandboxd's temp link is missing. No retry or cleanup was attempted.`,
+      "",
+      "Missing link:",
+      ...missing.links.map((link) => `  ${link}`),
+      "",
+      `Current TEMP: ${missing.temp ?? "unknown"}`,
+      `It should point to: ${missing.stateDir}`,
+      "",
+      "Recreate it with: eden sbx doctor --fix",
+      "Or in PowerShell:",
+      ...missing.links.map((link) => `  ${sandboxdLinkRepairCommand(link, missing.stateDir)}`),
+      ...(details ? ["", "Docker Sandboxes reported:", details] : []),
+      ...(details && logPath ? [`Docker Sandboxes log: ${logPath}`] : []),
+    ];
+    return new SandboxError("SANDBOX_START_LINK_MISSING", lines.join("\n"));
+  }
+
+  private findMissingLinks(): MissingSandboxdLinks | undefined {
+    const stateDir = this.stateDirectory();
+    if (stateDir === undefined) return undefined;
+    const links = this.linksFromLog(stateDir).filter((link) => !this.probe.exists(link));
+    if (links.length === 0) return undefined;
+    return { links, stateDir, temp: this.probe.env.TEMP ?? this.probe.env.TMP };
+  }
+
+  private stateDirectory(): string | undefined {
+    if (this.probe.platform !== "win32") return undefined;
+    const localAppData = this.probe.env.LOCALAPPDATA;
+    if (!localAppData) return undefined;
+    return `${localAppData}\\DockerSandboxes\\sandboxes\\state\\sandboxd`;
+  }
+
+  private linksFromLog(stateDir: string): string[] {
+    const text = this.probe.readText(`${stateDir}\\daemon.log`);
+    if (text === undefined) return [];
+    const tail = text.split(/\r?\n/).slice(-LOG_TAIL_LINES).join("\n");
+    return rootfsLinkPaths(tail);
+  }
+
+  private linkPaths(stateDir: string, temp: string | undefined): string[] {
+    const logLinks = this.linksFromLog(stateDir);
+    const directories = this.tempDirectories(temp);
+    const names = this.linkNames(stateDir, temp, logLinks);
+    const candidates = directories.flatMap((directory) =>
+      [...names].map((name) => `${directory}\\${name}`),
+    );
+    return this.uniquePaths([...candidates, ...logLinks]);
+  }
+
+  private tempDirectories(temp: string | undefined): string[] {
+    const base = `${this.probe.env.LOCALAPPDATA}\\Temp`;
+    return [
+      base,
+      ...this.probe
+        .readDir(base)
+        .filter((name) => NUMERIC_FOLDER.test(name))
+        .map((name) => `${base}\\${name}`),
+      ...(temp === undefined ? [] : [stripTrailingSeparators(temp)]),
+    ];
+  }
+
+  private linkNames(stateDir: string, temp: string | undefined, logLinks: string[]): Set<string> {
+    const names = new Set(logLinks.map(lastSegment));
+    if (temp !== undefined) {
+      for (const name of this.probe.readDir(temp)) {
+        const candidate = `${stripTrailingSeparators(temp)}\\${name}`;
+        if (
+          name.startsWith(LINK_NAME_PREFIX) &&
+          pointsTo(this.probe.readLink(candidate), stateDir)
+        ) {
+          names.add(name);
+        }
+      }
+    }
+    return names;
+  }
+
+  private uniquePaths(candidates: string[]): string[] {
+    const realPath = this.probe.realPath ?? ((directory: string) => directory);
+    const paths = new Map<string, string>();
+    for (const path of candidates) {
+      const key = normalizePath(`${realPath(parentOf(path))}\\${lastSegment(path)}`);
+      if (!paths.has(key)) paths.set(key, path);
+    }
+    return [...paths.values()];
+  }
+
+  private inspectLink(path: string, stateDir: string): SandboxDoctorLink {
+    const actual = this.probe.readLink(path);
+    if (actual === undefined) {
+      return this.probe.exists(path)
+        ? { path, status: "wrong-target", actual: "not a link" }
+        : { path, status: "missing" };
+    }
+
+    return pointsTo(actual, stateDir)
+      ? { path, status: "ok" }
+      : { path, status: "wrong-target", actual };
+  }
+
+  private repairLink(link: SandboxDoctorLink, stateDir: string): SandboxDoctorLink {
+    if (link.status !== "missing") return link;
+    try {
+      this.probe.createJunction(link.path, stateDir);
+      return { path: link.path, status: "created" };
+    } catch (error) {
+      return {
+        path: link.path,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 }
 
-export function sandboxdLinkRepairCommand(link: string, stateDir: string): string {
+function sandboxdLinkRepairCommand(link: string, stateDir: string): string {
   return `New-Item -ItemType Junction -Path "${link}" -Target "${stateDir}"`;
-}
-
-export function sandboxdLogPath(
-  platform: string,
-  env: Record<string, string | undefined>,
-): string | undefined {
-  if (platform !== "win32") return undefined;
-  const stateDir = sandboxdStateDir(env);
-  return stateDir === undefined ? undefined : `${stateDir}\\daemon.log`;
-}
-
-function sandboxdStateDir(env: Record<string, string | undefined>): string | undefined {
-  const localAppData = env.LOCALAPPDATA;
-  if (!localAppData) return undefined;
-  return `${localAppData}\\DockerSandboxes\\sandboxes\\state\\sandboxd`;
 }
 
 function rootfsLinkPaths(logText: string): string[] {
   const links = new Set<string>();
   for (const match of logText.matchAll(MISSING_ROOTFS)) links.add(match[1]!);
   return [...links];
-}
-
-function missingRootfsLinks(logText: string, exists: (path: string) => boolean): string[] {
-  return rootfsLinkPaths(logText).filter((link) => !exists(link));
-}
-
-function linkPaths(
-  probe: SandboxdLinkProbe,
-  stateDir: string,
-  temp: string | undefined,
-  logLinks: string[],
-): string[] {
-  const base = `${probe.env.LOCALAPPDATA}\\Temp`;
-  const directories = [
-    base,
-    ...probe
-      .readDir(base)
-      .filter((name) => NUMERIC_FOLDER.test(name))
-      .map((name) => `${base}\\${name}`),
-    ...(temp === undefined ? [] : [stripTrailingSeparators(temp)]),
-  ];
-  const names = new Set(logLinks.map(lastSegment));
-  if (temp !== undefined) {
-    for (const name of probe.readDir(temp)) {
-      const candidate = `${stripTrailingSeparators(temp)}\\${name}`;
-      if (name.startsWith(LINK_NAME_PREFIX) && pointsTo(probe.readLink(candidate), stateDir)) {
-        names.add(name);
-      }
-    }
-  }
-
-  const paths = new Map<string, string>();
-  const add = (path: string) => {
-    const realPath = probe.realPath ?? ((directory: string) => directory);
-    const key = normalizePath(`${realPath(parentOf(path))}\\${lastSegment(path)}`);
-    if (!paths.has(key)) paths.set(key, path);
-  };
-  for (const directory of directories) for (const name of names) add(`${directory}\\${name}`);
-  for (const link of logLinks) add(link);
-
-  return [...paths.values()];
-}
-
-function inspectLink(probe: SandboxdLinkProbe, path: string, stateDir: string): SandboxDoctorLink {
-  const actual = probe.readLink(path);
-  if (actual === undefined) {
-    return probe.exists(path)
-      ? { path, status: "wrong-target", actual: "not a link" }
-      : { path, status: "missing" };
-  }
-
-  return pointsTo(actual, stateDir)
-    ? { path, status: "ok" }
-    : { path, status: "wrong-target", actual };
-}
-
-function repairLink(
-  probe: SandboxdLinkProbe,
-  link: SandboxDoctorLink,
-  stateDir: string,
-): SandboxDoctorLink {
-  if (link.status !== "missing") return link;
-  try {
-    probe.createJunction(link.path, stateDir);
-    return { path: link.path, status: "created" };
-  } catch (error) {
-    return {
-      path: link.path,
-      status: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
 }
 
 function pointsTo(actual: string | undefined, stateDir: string): boolean {
@@ -198,48 +189,4 @@ function parentOf(path: string): string {
 
 function lastSegment(path: string): string {
   return path.slice(path.lastIndexOf("\\") + 1);
-}
-
-function lastLines(text: string, count: number): string {
-  return text.split(/\r?\n/).slice(-count).join("\n");
-}
-
-function readFileTail(path: string): string | undefined {
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(path, "r");
-    const { size } = fstatSync(descriptor);
-    const length = Math.min(size, LOG_TAIL_BYTES);
-    const buffer = Buffer.alloc(length);
-    readSync(descriptor, buffer, 0, length, size - length);
-    return buffer.toString("utf8");
-  } catch {
-    return undefined;
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
-}
-
-function readLinkTarget(path: string): string | undefined {
-  try {
-    return readlinkSync(path);
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveRealPath(path: string): string {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    return path;
-  }
-}
-
-function readDirNames(path: string): string[] {
-  try {
-    return readdirSync(path);
-  } catch {
-    return [];
-  }
 }
