@@ -350,7 +350,12 @@ test("project init supports default path, human and JSON output, and dry-run", a
   await git("init", repository);
   const options = {
     cwd: repository,
-    env: { HOME: directory.path, XDG_CONFIG_HOME: configHome, XDG_STATE_HOME: stateHome },
+    env: {
+      HOME: directory.path,
+      USERPROFILE: directory.path,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+    },
   };
 
   const dryRun = await runCliWith(options, "project", "init", "--dry-run", "--json");
