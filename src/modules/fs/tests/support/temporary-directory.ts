@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export async function createTemporaryDirectory() {
-  const path = await mkdtemp(join(tmpdir(), "eden-fs-"));
+  const createdPath = await mkdtemp(join(tmpdir(), "eden-fs-"));
+  const path = await realpath(createdPath);
 
   return {
     path,
