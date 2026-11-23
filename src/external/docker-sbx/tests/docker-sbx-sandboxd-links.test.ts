@@ -55,6 +55,7 @@ test("start explains a missing sandboxd temp link", async () => {
       "",
       "Docker Sandboxes reported:",
       "500 Internal Server Error: failed to start runtime",
+      `Docker Sandboxes log: ${stateDir}\\daemon.log`,
     ].join("\n"),
   );
 });
@@ -89,4 +90,41 @@ test("stop failures ignore the daemon log", async () => {
   await expect(provider.stop("example")).rejects.toMatchObject({
     code: "SANDBOX_STOP_FAILED",
   });
+});
+
+test("a generic start failure points to the Docker Sandboxes daemon log on Windows", async () => {
+  const error = await providerWith(probe({ readText: () => undefined }))
+    .start("example")
+    .catch((caught: unknown) => caught);
+
+  expect(error).toMatchObject({ code: "SANDBOX_START_FAILED" });
+  expect((error as Error).message).toBe(
+    [
+      "Docker Sandboxes could not start sandbox example (exit 1). No retry or cleanup was attempted.",
+      "",
+      "Docker Sandboxes reported:",
+      "500 Internal Server Error: failed to start runtime",
+      `Docker Sandboxes log: ${stateDir}\\daemon.log`,
+    ].join("\n"),
+  );
+});
+
+test("a failure on another platform shows no daemon log line", async () => {
+  const error = await providerWith(probe({ platform: "linux" }))
+    .start("example")
+    .catch((caught: unknown) => caught);
+
+  expect((error as Error).message).not.toContain("Docker Sandboxes log:");
+});
+
+test("an error with a specific fix does not show the daemon log line", async () => {
+  const provider = new DockerSandboxProvider(undefined, {
+    run: async () => ({ exitCode: 1, stdout: "", stderr: "not signed in to Docker" }),
+    sandboxdLinkProbe: probe(),
+  });
+
+  const error = await provider.start("example").catch((caught: unknown) => caught);
+
+  expect(error).toMatchObject({ code: "SANDBOX_AUTH_REQUIRED" });
+  expect((error as Error).message).not.toContain("Docker Sandboxes log:");
 });

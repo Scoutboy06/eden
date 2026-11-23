@@ -22,6 +22,7 @@ import {
   diagnoseSandboxdLinks,
   findMissingSandboxdLinks,
   sandboxdLinkRepairCommand,
+  sandboxdLogPath,
   type SandboxdLinkProbe,
 } from "./sandboxd-links";
 
@@ -107,7 +108,13 @@ export class DockerSandboxProvider implements SandboxProvider {
 
       if (result.exitCode === 0) return { state: "ready", label: readyLabel };
 
-      throw diagnoseFailure(undefined, result.exitCode, `${result.stdout}\n${result.stderr}`);
+      throw diagnoseFailure(
+        undefined,
+        result.exitCode,
+        `${result.stdout}\n${result.stderr}`,
+        "create",
+        this.daemonLogPath(),
+      );
     } catch (error) {
       if (signal.aborted) throw error;
 
@@ -127,7 +134,13 @@ export class DockerSandboxProvider implements SandboxProvider {
 
     if (result.exitCode !== 0) {
       const diagnostics = `${result.stdout}\n${result.stderr}`;
-      throw diagnoseFailure(undefined, result.exitCode, diagnostics);
+      throw diagnoseFailure(
+        undefined,
+        result.exitCode,
+        diagnostics,
+        "create",
+        this.daemonLogPath(),
+      );
     }
 
     let sandboxes: unknown;
@@ -342,6 +355,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         `${result.stdout}
 ${result.stderr}`,
         "network",
+        this.daemonLogPath(),
       );
     }
 
@@ -400,11 +414,22 @@ ${result.stderr}`,
       throw credentialApprovalError(sandboxName, exitCode);
     }
     if (exitCode !== 0) {
-      const failure = diagnoseFailure(sandboxName, exitCode, diagnostics, operation);
+      const failure = diagnoseFailure(
+        sandboxName,
+        exitCode,
+        diagnostics,
+        operation,
+        this.daemonLogPath(),
+      );
       throw failure.code === "SANDBOX_START_FAILED" && sandboxName !== undefined
         ? (this.missingLinkFailure(sandboxName, exitCode, diagnostics) ?? failure)
         : failure;
     }
+  }
+
+  private daemonLogPath(): string | undefined {
+    const probe = this.dependencies.sandboxdLinkProbe ?? defaultSandboxdLinkProbe();
+    return sandboxdLogPath(probe.platform, probe.env);
   }
 
   private missingLinkFailure(
@@ -417,6 +442,7 @@ ${result.stderr}`,
     );
     if (missing === undefined) return undefined;
     const details = diagnostics.trim();
+    const logPath = this.daemonLogPath();
     const lines = [
       `Docker Sandboxes could not start sandbox ${name} (exit ${exitCode}) because sandboxd's temp link is missing. No retry or cleanup was attempted.`,
       "",
@@ -430,6 +456,7 @@ ${result.stderr}`,
       "Or in PowerShell:",
       ...missing.links.map((link) => `  ${sandboxdLinkRepairCommand(link, missing.stateDir)}`),
       ...(details ? ["", "Docker Sandboxes reported:", details] : []),
+      ...(details && logPath ? [`Docker Sandboxes log: ${logPath}`] : []),
     ];
     return new SandboxError("SANDBOX_START_LINK_MISSING", lines.join("\n"));
   }
@@ -640,6 +667,7 @@ function diagnoseFailure(
   exitCode: number,
   diagnostics: string,
   operation: DockerOperation = "create",
+  daemonLog?: string,
 ): SandboxError {
   if (/unknown (?:flag|option):?\s*["']?--json\b/i.test(diagnostics)) {
     return new SandboxError(
@@ -670,7 +698,9 @@ function diagnoseFailure(
   }
 
   const details = diagnostics.trim();
-  const providerDetails = details ? `\n\nDocker Sandboxes reported:\n${details}` : "";
+  const reported = details ? `\n\nDocker Sandboxes reported:\n${details}` : "";
+  const providerDetails =
+    details && daemonLog ? `${reported}\nDocker Sandboxes log: ${daemonLog}` : reported;
 
   if (name === undefined) {
     return new SandboxError(
@@ -687,7 +717,7 @@ function diagnoseFailure(
   }
 
   if (operation === "kit") {
-    return kitFailure(name, exitCode, details, providerDetails);
+    return kitFailure(name, exitCode, details, providerDetails, reported);
   }
 
   if (operation === "remove") {
@@ -722,11 +752,12 @@ function kitFailure(
   exitCode: number,
   details: string,
   providerDetails: string,
+  reported: string,
 ): SandboxError {
   if (/cannot mix v3 kits with v1.v2 kits/i.test(details)) {
     return new SandboxError(
       "SANDBOX_KIT_FAILED",
-      `Docker Sandboxes cannot mix v3 kits with v1/v2 kits in one sandbox, so the kit could not be added to ${name}. Use a kit with the same schemaVersion as the sandbox's agent kit.${providerDetails}`,
+      `Docker Sandboxes cannot mix v3 kits with v1/v2 kits in one sandbox, so the kit could not be added to ${name}. Use a kit with the same schemaVersion as the sandbox's agent kit.${reported}`,
     );
   }
 

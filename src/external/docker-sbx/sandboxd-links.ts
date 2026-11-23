@@ -87,6 +87,15 @@ export function sandboxdLinkRepairCommand(link: string, stateDir: string): strin
   return `New-Item -ItemType Junction -Path "${link}" -Target "${stateDir}"`;
 }
 
+export function sandboxdLogPath(
+  platform: string,
+  env: Record<string, string | undefined>,
+): string | undefined {
+  if (platform !== "win32") return undefined;
+  const stateDir = sandboxdStateDir(env);
+  return stateDir === undefined ? undefined : `${stateDir}\\daemon.log`;
+}
+
 function sandboxdStateDir(env: Record<string, string | undefined>): string | undefined {
   const localAppData = env.LOCALAPPDATA;
   if (!localAppData) return undefined;
