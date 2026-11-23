@@ -54,7 +54,7 @@ test("rejects invalid legacy data without partially importing it", async () => {
   const databasePath = join(directory.path, "registry.sqlite");
   await writeFile(
     config,
-    "projects:\n  first:\n    name: First\n    path: /first\n  second:\n    name: Second\n    path: relative\n",
+    `projects:\n  first:\n    name: First\n    path: ${JSON.stringify(resolve(tmpdir(), "first"))}\n  second:\n    name: Second\n    path: relative\n`,
   );
   const registry = createProjectRegistry({ databasePath, legacyConfigPath: config });
 
