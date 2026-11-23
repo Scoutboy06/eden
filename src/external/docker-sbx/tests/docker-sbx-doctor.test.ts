@@ -62,6 +62,29 @@ test("doctor reports ok, missing and wrong-target links across temp folders", as
   });
 });
 
+test("doctor lists a link once when TEMP is a short path to a scanned folder", async () => {
+  const shortTemp = String.raw`C:\Users\EXAMPL~1\AppData\Local\Temp\1`;
+  const { probe } = fake(
+    { [`${numbered}\\${linkName}`]: stateDir },
+    {
+      env: { LOCALAPPDATA: localAppData, TEMP: shortTemp },
+      readDir: (path) => (path === base ? ["1"] : path === shortTemp ? [linkName] : []),
+      readLink: (path) =>
+        path === `${numbered}\\${linkName}` || path === `${shortTemp}\\${linkName}`
+          ? stateDir
+          : undefined,
+      realPath: (path) => (path === shortTemp ? numbered : path),
+    },
+  );
+
+  const report = await provider(probe).diagnose({ fix: false });
+
+  expect(report.links).toEqual([
+    { path: `${base}\\${linkName}`, status: "missing" },
+    { path: `${numbered}\\${linkName}`, status: "ok" },
+  ]);
+});
+
 test("doctor compares targets case-insensitively and ignores the extended prefix", async () => {
   const { probe } = fake({
     [`${base}\\${linkName}`]: stateDir.toUpperCase(),

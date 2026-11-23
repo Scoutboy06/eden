@@ -6,6 +6,7 @@ import {
   readdirSync,
   readlinkSync,
   readSync,
+  realpathSync,
   symlinkSync,
 } from "node:fs";
 import type { SandboxDoctorLink, SandboxDoctorReport } from "../../modules/sandbox/provider";
@@ -17,6 +18,7 @@ export type SandboxdLinkProbe = {
   exists: (path: string) => boolean;
   readLink: (path: string) => string | undefined;
   readDir: (path: string) => string[];
+  realPath?: (path: string) => string;
   createJunction: (path: string, target: string) => void;
 };
 
@@ -40,6 +42,7 @@ export function defaultSandboxdLinkProbe(): SandboxdLinkProbe {
     exists: existsSync,
     readLink: readLinkTarget,
     readDir: readDirNames,
+    realPath: resolveRealPath,
     createJunction: (path, target) => symlinkSync(target, path, "junction"),
   };
 }
@@ -127,7 +130,8 @@ function linkPaths(
 
   const paths = new Map<string, string>();
   const add = (path: string) => {
-    const key = normalizePath(path);
+    const realPath = probe.realPath ?? ((directory: string) => directory);
+    const key = normalizePath(`${realPath(parentOf(path))}\\${lastSegment(path)}`);
     if (!paths.has(key)) paths.set(key, path);
   };
   for (const directory of directories) for (const name of names) add(`${directory}\\${name}`);
@@ -179,6 +183,10 @@ function stripTrailingSeparators(path: string): string {
   return path.replace(/[\\/]+$/, "");
 }
 
+function parentOf(path: string): string {
+  return path.slice(0, path.lastIndexOf("\\"));
+}
+
 function lastSegment(path: string): string {
   return path.slice(path.lastIndexOf("\\") + 1);
 }
@@ -208,6 +216,14 @@ function readLinkTarget(path: string): string | undefined {
     return readlinkSync(path);
   } catch {
     return undefined;
+  }
+}
+
+function resolveRealPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
   }
 }
 
