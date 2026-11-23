@@ -147,6 +147,7 @@ test("project remove unregisters by key and preserves the repository, branch, an
   const worktree = join(directory.path, "linked-worktree");
   await mkdir(repository);
   await git("init", repository);
+  await git("-C", repository, "config", "core.autocrlf", "false");
   await Bun.write(join(repository, "keep.txt"), "repository contents\n");
   await git("-C", repository, "add", "keep.txt");
   await git(
@@ -188,7 +189,9 @@ test("project remove unregisters by key and preserves the repository, branch, an
   expect(await Bun.file(join(worktree, "keep.txt")).text()).toBe("repository contents\n");
   expect(await gitOutput("-C", repository, "branch", "--show-current")).toBe(`${baseBranch}\n`);
   expect(await gitOutput("-C", worktree, "branch", "--show-current")).toBe("linked-branch\n");
-  expect(await gitOutput("-C", repository, "worktree", "list", "--porcelain")).toContain(worktree);
+  expect(await gitOutput("-C", repository, "worktree", "list", "--porcelain")).toContain(
+    worktree.replaceAll("\\", "/"),
+  );
 
   const previousConfig = process.env.XDG_CONFIG_HOME;
   const previousState = process.env.XDG_STATE_HOME;
