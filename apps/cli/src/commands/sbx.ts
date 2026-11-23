@@ -10,6 +10,7 @@ import { formatMessage } from "../../../../src/modules/cli/format";
 import type { SnapshotResult } from "../../../../src/modules/sandbox/sandbox-snapshot";
 import type { SandboxSnapshot } from "../../../../src/modules/sandbox/snapshot-store";
 import type { Freshness } from "../../../../src/modules/sandbox/template-freshness";
+import type { SandboxDoctorReport } from "../../../../src/modules/sandbox/provider";
 import type { SandboxService } from "../../../../src/modules/sandbox/sandbox.service";
 import { deriveSandboxName, findCheckout } from "../../../../src/modules/sandbox/sandbox-checkout";
 
@@ -401,6 +402,37 @@ const status = defineCommand({
   },
 });
 
+const doctor = defineCommand({
+  name: "doctor",
+  description: "Check sandboxd's temp links and optionally recreate missing ones",
+  args: {
+    provider: {
+      type: "enum",
+      choices: sandboxProviderNames,
+      description: "Sandbox provider (defaults to configured sandbox.default_provider)",
+    },
+    fix: {
+      type: "boolean",
+      description: "Create missing links as junctions; existing links are never changed",
+    },
+  },
+
+  async run(ctx, { sandbox, output }) {
+    const service = await sandbox({ provider: ctx.values.provider });
+    const report = await service.doctor({ fix: ctx.values.fix ?? false });
+    const problems = report.links.filter(
+      (link) =>
+        link.status === "missing" || link.status === "wrong-target" || link.status === "failed",
+    );
+    if (problems.length > 0) process.exitCode = 1;
+
+    output.write({
+      data: { provider: service.providerName, ...report, healthy: problems.length === 0 },
+      human: () => formatDoctor(service.providerName, report, problems.length),
+    });
+  },
+});
+
 const rebuild = defineCommand({
   name: "rebuild",
   description: "Remove a sandbox and recreate it from its profile, keeping its snapshot paths",
@@ -632,6 +664,7 @@ export default defineCommand({
     rebuild,
     "refresh-kit": refreshKit,
     status,
+    doctor,
     snapshot,
     restore,
     rm: remove,
@@ -843,4 +876,42 @@ function formatSandboxes(sandboxes: readonly SandboxSummary[]): string {
         .trimEnd(),
     )
     .join("\n");
+}
+
+function formatDoctor(provider: string, report: SandboxDoctorReport, problemCount: number): string {
+  if (!report.applicable) {
+    return `The sandboxd link check does not apply to ${provider} on this host.`;
+  }
+  const lines = [
+    `State folder: ${report.stateDir}`,
+    `Current TEMP: ${report.temp ?? "unknown"}`,
+    "",
+    ...report.links.map(formatDoctorLink),
+    "",
+  ];
+  const hasMissing = report.links.some((link) => link.status === "missing");
+  if (problemCount === 0) {
+    lines.push(
+      report.links.some((link) => link.status === "created")
+        ? "Missing links were recreated."
+        : "All sandboxd links are in place.",
+    );
+  } else {
+    lines.push(`${problemCount} sandboxd link problem${problemCount === 1 ? "" : "s"} found.`);
+    if (hasMissing) lines.push("Recreate missing links with: eden sbx doctor --fix");
+    lines.push("Existing links with the wrong target are never changed; fix them manually.");
+  }
+
+  return lines.join("\n");
+}
+
+function formatDoctorLink(link: SandboxDoctorReport["links"][number]): string {
+  const detail =
+    link.status === "wrong-target"
+      ? ` (points to: ${link.actual})`
+      : link.status === "failed"
+        ? ` (${link.error})`
+        : "";
+
+  return `  ${link.status.padEnd(12)} ${link.path}${detail}`;
 }

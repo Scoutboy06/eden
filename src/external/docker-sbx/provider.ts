@@ -7,6 +7,7 @@ import type {
   CreateSandboxInput,
   ExecSandboxInput,
   ExecSandboxResult,
+  SandboxDoctorReport,
   SandboxProvider,
   SandboxSummary,
   SshAccess,
@@ -18,6 +19,7 @@ import { attachDockerExec, attachDockerSandbox } from "./attach";
 import { transferDockerFiles } from "./transfer";
 import {
   defaultSandboxdLinkProbe,
+  diagnoseSandboxdLinks,
   findMissingSandboxdLinks,
   sandboxdLinkRepairCommand,
   type SandboxdLinkProbe,
@@ -223,6 +225,13 @@ export class DockerSandboxProvider implements SandboxProvider {
     await this.execute(["stop", "--", name], name, "stop");
   }
 
+  async diagnose(options: { fix: boolean }): Promise<SandboxDoctorReport> {
+    return diagnoseSandboxdLinks(
+      this.dependencies.sandboxdLinkProbe ?? defaultSandboxdLinkProbe(),
+      options,
+    );
+  }
+
   async remove(name: string, options: { skipConfirmation?: boolean } = {}): Promise<void> {
     const skipConfirmation = options.skipConfirmation ?? false;
     await this.execute(
@@ -417,7 +426,8 @@ ${result.stderr}`,
       `Current TEMP: ${missing.temp ?? "unknown"}`,
       `It should point to: ${missing.stateDir}`,
       "",
-      "Recreate it in PowerShell:",
+      "Recreate it with: eden sbx doctor --fix",
+      "Or in PowerShell:",
       ...missing.links.map((link) => `  ${sandboxdLinkRepairCommand(link, missing.stateDir)}`),
       ...(details ? ["", "Docker Sandboxes reported:", details] : []),
     ];

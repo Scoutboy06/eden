@@ -45,6 +45,7 @@ import type {
   SandboxProvider,
   SandboxProviderName,
   SandboxRemoveOptions,
+  SandboxDoctorReport,
   SandboxSummary,
   SshAccess,
 } from "./provider";
@@ -261,6 +262,30 @@ export class SandboxService {
         : {}),
       status: sandbox.status,
     };
+  }
+
+  async doctor(options: { fix: boolean }): Promise<SandboxDoctorReport> {
+    const inspected = (await this.provider.diagnose?.({ fix: false })) ?? {
+      applicable: false,
+      links: [],
+    };
+    if (!options.fix || !inspected.links.some((link) => link.status === "missing")) {
+      return inspected;
+    }
+
+    let repaired = inspected;
+    await this.execution.mutate(
+      {
+        type: "sandbox.doctor.fix",
+        description: `Recreate missing sandboxd links using ${this.provider.name}`,
+        input: { provider: this.provider.name },
+      },
+      async () => {
+        repaired = await this.provider.diagnose!({ fix: true });
+      },
+    );
+
+    return repaired;
   }
 
   async start(name: string): Promise<{ started: boolean }> {

@@ -19,6 +19,9 @@ function probe(overrides: Partial<SandboxdLinkProbe> = {}): SandboxdLinkProbe {
     env: { LOCALAPPDATA: localAppData, TEMP: temp },
     readText: (path) => (path === `${stateDir}\\daemon.log` ? recordedLog : undefined),
     exists: () => false,
+    readLink: () => undefined,
+    readDir: () => [],
+    createJunction: () => {},
     ...overrides,
   };
 }
@@ -46,7 +49,8 @@ test("start explains a missing sandboxd temp link", async () => {
       `Current TEMP: ${temp}`,
       `It should point to: ${stateDir}`,
       "",
-      "Recreate it in PowerShell:",
+      "Recreate it with: eden sbx doctor --fix",
+      "Or in PowerShell:",
       `  New-Item -ItemType Junction -Path "${link}" -Target "${stateDir}"`,
       "",
       "Docker Sandboxes reported:",

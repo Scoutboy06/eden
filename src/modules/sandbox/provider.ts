@@ -56,6 +56,19 @@ export type SshAccess = {
 };
 export type SandboxRemoveOptions = { force?: boolean; skipConfirmation?: boolean };
 
+export type SandboxDoctorLink = {
+  path: string;
+  status: "ok" | "missing" | "wrong-target" | "created" | "failed";
+  actual?: string;
+  error?: string;
+};
+export type SandboxDoctorReport = {
+  applicable: boolean;
+  stateDir?: string;
+  temp?: string;
+  links: SandboxDoctorLink[];
+};
+
 export interface SandboxProvider {
   readonly name: SandboxProviderName;
 
@@ -73,6 +86,7 @@ export interface SandboxProvider {
   sshAccess?(name: string): SshAccess;
   start?(name: string): Promise<void>;
   stop(name: string): Promise<void>;
+  diagnose?(options: { fix: boolean }): Promise<SandboxDoctorReport>;
   remove?(name: string, options?: { skipConfirmation?: boolean }): Promise<void>;
 }
 import type { ReadinessCheck } from "./readiness";
