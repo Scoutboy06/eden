@@ -1,0 +1,3 @@
+time=2026-11-23T07:29:41.100Z level=INFO msg="sandboxd started"
+time=2026-11-23T07:31:02.512Z level=ERROR msg="creating containerd task for container 464ef3a7e907: failed to create shim task: ttrpc err: rootfs disk does not exist: C:\Users\example\AppData\Local\Temp\sboxd-fafa863a\containerd\root\io.containerd.snapshotter.v1.erofs\snapshots\46\rwlayer.img"
+time=2026-11-23T07:31:02.530Z level=ERROR msg="start runtime failed" error="failed to start runtime"

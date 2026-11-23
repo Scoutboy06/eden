@@ -16,6 +16,12 @@ import type {
 import type { ReadinessCheck, ReadinessResult } from "../../modules/sandbox/readiness";
 import { attachDockerExec, attachDockerSandbox } from "./attach";
 import { transferDockerFiles } from "./transfer";
+import {
+  defaultSandboxdLinkProbe,
+  findMissingSandboxdLinks,
+  sandboxdLinkRepairCommand,
+  type SandboxdLinkProbe,
+} from "./sandboxd-links";
 
 export { attachDockerSandbox } from "./attach";
 export type { AttachDependencies } from "./attach";
@@ -47,6 +53,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       attachExec?: (input: ExecSandboxInput) => Promise<number>;
       transfer?: (input: TransferSandboxInput) => Promise<TransferSandboxResult>;
       isInstalled?: () => boolean;
+      sandboxdLinkProbe?: SandboxdLinkProbe;
       interactiveCreate?: boolean;
     } = {},
   ) {}
@@ -383,7 +390,38 @@ ${result.stderr}`,
     if (missingCredentialApproval) {
       throw credentialApprovalError(sandboxName, exitCode);
     }
-    if (exitCode !== 0) throw diagnoseFailure(sandboxName, exitCode, diagnostics, operation);
+    if (exitCode !== 0) {
+      const failure = diagnoseFailure(sandboxName, exitCode, diagnostics, operation);
+      throw failure.code === "SANDBOX_START_FAILED" && sandboxName !== undefined
+        ? (this.missingLinkFailure(sandboxName, exitCode, diagnostics) ?? failure)
+        : failure;
+    }
+  }
+
+  private missingLinkFailure(
+    name: string,
+    exitCode: number,
+    diagnostics: string,
+  ): SandboxError | undefined {
+    const missing = findMissingSandboxdLinks(
+      this.dependencies.sandboxdLinkProbe ?? defaultSandboxdLinkProbe(),
+    );
+    if (missing === undefined) return undefined;
+    const details = diagnostics.trim();
+    const lines = [
+      `Docker Sandboxes could not start sandbox ${name} (exit ${exitCode}) because sandboxd's temp link is missing. No retry or cleanup was attempted.`,
+      "",
+      "Missing link:",
+      ...missing.links.map((link) => `  ${link}`),
+      "",
+      `Current TEMP: ${missing.temp ?? "unknown"}`,
+      `It should point to: ${missing.stateDir}`,
+      "",
+      "Recreate it in PowerShell:",
+      ...missing.links.map((link) => `  ${sandboxdLinkRepairCommand(link, missing.stateDir)}`),
+      ...(details ? ["", "Docker Sandboxes reported:", details] : []),
+    ];
+    return new SandboxError("SANDBOX_START_LINK_MISSING", lines.join("\n"));
   }
 }
 
