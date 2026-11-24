@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { CIStatus } from "@/components/ci-status";
@@ -17,6 +17,12 @@ import { formatPullRequestReference } from "@/pages/prs-data";
 import { createWorktreeDemoTask } from "@/pages/worktree-demo";
 import { worktreeSelectionKey } from "@/pages/worktree-selection";
 import type { WorktreeProjection } from "@/pages/worktrees";
+import { randomId } from "@/pages/random-id";
+import { useWorktreeTerminals } from "@/pages/use-worktree-terminals";
+
+const TerminalPane = lazy(() =>
+  import("@/pages/TerminalPane").then((module) => ({ default: module.TerminalPane })),
+);
 
 export function DoingPage() {
   const { project, worktrees, selectedWorktreeKey } = useOutletContext<{
@@ -41,7 +47,7 @@ export function DoingPage() {
               hidden={!selected}
               className={selected ? "flex min-h-0 flex-1 flex-col" : "hidden"}
             >
-              <Workspace task={task} />
+              <Workspace task={task} project={project} selected={selected} />
             </div>
           );
         })
@@ -57,14 +63,39 @@ export function DoingPage() {
   );
 }
 
-function Workspace({ task }: { task: Task }) {
+function Workspace({
+  task,
+  project,
+  selected,
+}: {
+  task: Task;
+  project: string;
+  selected: boolean;
+}) {
   const [state, setState] = useState(() => createWorkspaceTabs(task));
+  const { sessions, connected, error, create, end } = useWorktreeTerminals(
+    project,
+    task.worktree?.name,
+    task.worktree?.branch ?? null,
+    selected,
+    (active) => setState((current) => ({ ...current, active })),
+  );
+  const terminalTabs: SessionTab[] = sessions.map((id, index) => ({
+    id,
+    title: `Terminal ${index + 1}`,
+    kind: "terminal",
+  }));
+  const tabs = [...state.sessions, ...terminalTabs];
+  const active =
+    state.active === "reviews" || tabs.some(({ id }) => id === state.active)
+      ? state.active
+      : "diff";
 
-  function addSession(kind: SessionTab["kind"], harness?: AgentHarness) {
+  function addAgent(harness: AgentHarness) {
     const tab: SessionTab = {
-      id: crypto.randomUUID(),
-      kind,
-      title: kind === "terminal" ? "Terminal" : agentHarnesses[harness!].title,
+      id: randomId(),
+      kind: "agent",
+      title: agentHarnesses[harness].title,
       harness,
     };
 
@@ -87,7 +118,7 @@ function Workspace({ task }: { task: Task }) {
         </span>
       </header>
       <Tabs
-        value={state.active}
+        value={active}
         onValueChange={(value) => setState((current) => ({ ...current, active: String(value) }))}
         className="min-h-0 flex-1 gap-0"
       >
@@ -111,7 +142,7 @@ function Workspace({ task }: { task: Task }) {
               >
                 Diff
               </TabsTrigger>
-              {state.sessions.map((tab) => (
+              {tabs.map((tab) => (
                 <div key={tab.id} className="relative flex shrink-0 items-center">
                   <TabsTrigger
                     value={tab.id}
@@ -125,7 +156,11 @@ function Workspace({ task }: { task: Task }) {
                   <button
                     type="button"
                     aria-label={`Close ${tab.title}`}
-                    onClick={() => setState((current) => closeSessionTab(current, tab.id))}
+                    onClick={() =>
+                      tab.kind === "terminal"
+                        ? end(tab.id)
+                        : setState((current) => closeSessionTab(current, tab.id))
+                    }
                     className="absolute right-1.5 rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                   >
                     ×
@@ -143,17 +178,22 @@ function Workspace({ task }: { task: Task }) {
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               {(Object.keys(agentHarnesses) as AgentHarness[]).map((harness) => (
-                <DropdownMenuItem key={harness} onClick={() => addSession("agent", harness)}>
+                <DropdownMenuItem key={harness} onClick={() => addAgent(harness)}>
                   New {agentHarnesses[harness].title} agent
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => addSession("terminal")}>
+              <DropdownMenuItem disabled={!connected} onClick={create}>
                 New terminal
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {error && (
+          <p role="alert" className="px-4 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <TabsContent value="reviews" className="overflow-y-auto p-6">
           <Reviews task={task} />
         </TabsContent>
@@ -167,7 +207,20 @@ function Workspace({ task }: { task: Task }) {
             keepMounted
             className="min-h-0 overflow-y-auto data-hidden:hidden"
           >
-            <Session tab={tab} task={task} />
+            <AgentPreview tab={tab} task={task} />
+          </TabsContent>
+        ))}
+        {terminalTabs.map(({ id }) => (
+          <TabsContent key={id} value={id} className="relative min-h-0 overflow-hidden">
+            {selected && active === id && (
+              <Suspense
+                fallback={
+                  <div className="p-4 text-sm text-muted-foreground">Loading terminal…</div>
+                }
+              >
+                <TerminalPane sessionId={id} />
+              </Suspense>
+            )}
           </TabsContent>
         ))}
       </Tabs>
@@ -273,40 +326,25 @@ function Diff({ task }: { task: Task }) {
   );
 }
 
-function Session({ tab, task }: { tab: SessionTab; task: Task }) {
+function AgentPreview({ tab, task }: { tab: SessionTab; task: Task }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
-  const terminal = tab.kind === "terminal";
-  const sessionTitle = terminal ? "Terminal" : agentHarnesses[tab.harness!].title;
-  const terminalWorktree = task.worktree?.name ?? task.key;
-  const sessionDescription = terminal
-    ? `Terminal preview for ${terminalWorktree}. Commands entered here are not executed.`
-    : `Agent session for ${task.title}. Messages stay in this local preview; no agent is running.`;
-  const inputLabel = terminal ? "Preview command" : "Message agent";
-  const inputPlaceholder = terminal ? "Enter a preview command…" : "Message agent…";
-  const submitLabel = terminal ? "Enter" : "Send";
-  const sessionClassName = terminal
-    ? "flex min-h-full flex-col bg-muted/15 font-mono"
-    : "mx-auto flex min-h-full max-w-3xl flex-col";
 
   return (
-    <div className={sessionClassName}>
+    <div className="mx-auto flex min-h-full max-w-3xl flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-3 text-xs">
-        <span className="font-medium">{sessionTitle}</span>
+        <span className="font-medium">{tab.title}</span>
         <span className="text-muted-foreground">Preview · not connected</span>
       </div>
       <div className="flex-1 space-y-4 p-6 text-sm">
-        <p className="text-xs leading-relaxed text-muted-foreground">{sessionDescription}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Agent session for {task.title}. Messages stay in this local preview; no agent is running.
+        </p>
         {messages.map((message, index) => (
           <div
             key={index}
-            className={
-              terminal
-                ? "whitespace-pre-wrap break-words"
-                : "ml-auto w-fit max-w-[90%] whitespace-pre-wrap break-words rounded-lg bg-muted px-4 py-3"
-            }
+            className="ml-auto w-fit max-w-[90%] whitespace-pre-wrap break-words rounded-lg bg-muted px-4 py-3"
           >
-            {terminal ? "$ " : ""}
             {message}
           </div>
         ))}
@@ -321,21 +359,16 @@ function Session({ tab, task }: { tab: SessionTab; task: Task }) {
         }}
       >
         <label className="flex min-w-0 flex-1 items-center gap-2">
-          {terminal ? (
-            <span aria-hidden="true" className="text-muted-foreground">
-              $
-            </span>
-          ) : null}
           <input
-            aria-label={inputLabel}
+            aria-label="Message agent"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={inputPlaceholder}
+            placeholder="Message agent…"
             className="w-full bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           />
         </label>
         <Button type="submit" size="sm" variant="secondary" disabled={!draft.trim()}>
-          {submitLabel}
+          Send
         </Button>
       </form>
     </div>

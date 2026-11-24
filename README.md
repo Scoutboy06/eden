@@ -30,4 +30,17 @@ once; the YAML file remains unchanged. Use `eden project list` to inspect regist
 and import or remove projects from the web project picker. Project keys remain the
 stable URL keys used at `/p/<key>`; the root route is the project picker.
 
+The Doing page can start shared host-shell terminals in registered Git worktrees.
+Terminals are available to anyone who can reach the Eden server and grant the same
+permissions as the Eden OS user. There is no separate terminal login or sandbox.
+The web server binds to `127.0.0.1` by default. For a private Tailscale deployment,
+bind explicitly to this machine's Tailscale IP with `EDEN_WEB_HOST=100.x.y.z bun run web:dev`.
+Only loopback and Tailscale addresses are accepted; do not expose Eden on a LAN or
+public interface. Browser requests require a matching origin and host.
+
+Terminals use Bun's native PTY (POSIX PTY/Windows ConPTY), live in memory only, and
+end when Eden restarts or a user explicitly ends the session. Only the current
+screen is shared; scrollback and transcripts are not saved. Linux PTY behavior is
+covered by integration tests; Windows compatibility is implemented but not tested.
+
 See [CODE.md](CODE.md) for contribution rules.
