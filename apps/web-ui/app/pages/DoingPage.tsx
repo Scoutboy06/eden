@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useCallback, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { CIStatus } from "@/components/ci-status";
@@ -18,7 +18,7 @@ import { createWorktreeDemoTask } from "@/pages/worktree-demo";
 import { worktreeSelectionKey } from "@/pages/worktree-selection";
 import type { WorktreeProjection } from "@/pages/worktrees";
 import { useWorktreeTerminals } from "@/pages/use-worktree-terminals";
-import { agentHarnesses, isAgentHarness } from "../../shared/agent-harnesses";
+import { agentHarnesses, isAgentHarness, type AgentHarness } from "../../shared/agent-harnesses";
 
 const TerminalPane = lazy(() =>
   import("@/pages/TerminalPane").then((module) => ({ default: module.TerminalPane })),
@@ -73,13 +73,33 @@ function Workspace({
   selected: boolean;
 }) {
   const [selectedTab, setSelectedTab] = useState("reviews");
+  const focusSession = useRef<string | null>(null);
+  const launching = useRef(false);
   const { sessions, availableHarnesses, connected, error, create, end } = useWorktreeTerminals(
     project,
     task.worktree?.name,
     task.worktree?.branch ?? null,
     selected,
-    setSelectedTab,
+    (id) => {
+      focusSession.current = id;
+      setSelectedTab(id);
+    },
   );
+  const claimLaunchFocus = useCallback((id: string) => {
+    if (focusSession.current !== id) return false;
+    focusSession.current = null;
+    return true;
+  }, []);
+
+  function launch(harness?: AgentHarness) {
+    launching.current = create(harness);
+  }
+
+  function restoreMenuFocus() {
+    const shouldRestore = !launching.current;
+    launching.current = false;
+    return shouldRestore;
+  }
   let terminalNumber = 0;
   const tabs = sessions.map(({ id, harness }) => ({
     id,
@@ -159,7 +179,7 @@ function Workspace({
             >
               +
             </DropdownMenuTrigger>
-            <DropdownMenuContent>
+            <DropdownMenuContent finalFocus={restoreMenuFocus}>
               {Object.keys(agentHarnesses)
                 .filter(isAgentHarness)
                 .map((harness) => {
@@ -187,14 +207,14 @@ function Workspace({
                     <DropdownMenuItem
                       key={harness}
                       disabled={!connected}
-                      onClick={() => create(harness)}
+                      onClick={() => launch(harness)}
                     >
                       {label}
                     </DropdownMenuItem>
                   );
                 })}
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={!connected} onClick={() => create()}>
+              <DropdownMenuItem disabled={!connected} onClick={() => launch()}>
                 <LauncherIcon />
                 Terminal
               </DropdownMenuItem>
@@ -220,7 +240,7 @@ function Workspace({
                   <div className="p-4 text-sm text-muted-foreground">Loading terminal…</div>
                 }
               >
-                <TerminalPane sessionId={id} />
+                <TerminalPane sessionId={id} claimLaunchFocus={claimLaunchFocus} />
               </Suspense>
             )}
           </TabsContent>

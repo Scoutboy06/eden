@@ -76,7 +76,10 @@ export function useWorktreeTerminals(
     setError(null);
     if (sendTerminal({ type: "create", project, worktree, branch, requestId, harness })) {
       pending.current.add(requestId);
-    } else setError("Terminal service is reconnecting. Try again in a moment.");
+      return true;
+    }
+    setError("Terminal service is reconnecting. Try again in a moment.");
+    return false;
   }
 
   function end(sessionId: string) {

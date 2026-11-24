@@ -44,7 +44,8 @@ public interface. Browser requests require a matching origin and host.
 Eden rediscovers live worktree terminals from its private `eden-web` core session
 after a restart. Closing a terminal tab ends the process; restarting Eden does not.
 herdr-core may save terminal screens in its private state directory. Eden sends
-the current screen, not scrollback, to browsers.
+the current screen, not old scrollback, on attach. The open pane keeps recent
+output locally for mouse scrolling.
 
 Set `EDEN_TERMINAL_BACKEND=bun` to use Bun's native PTY instead. Those sessions end
 when Eden shuts down and cannot be restored.

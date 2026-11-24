@@ -8,15 +8,21 @@ import { sendTerminal, subscribeTerminals, terminalClientId } from "@/pages/term
 
 type Mode = "connecting" | "controller" | "viewer";
 
-export function TerminalPane({ sessionId }: { sessionId: string }) {
+export function TerminalPane({
+  sessionId,
+  claimLaunchFocus,
+}: {
+  sessionId: string;
+  claimLaunchFocus: (sessionId: string) => boolean;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>("connecting");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
-    return openTerminal(host.current, sessionId, setMode, setError);
-  }, [sessionId]);
+    return openTerminal(host.current, sessionId, claimLaunchFocus, setMode, setError);
+  }, [sessionId, claimLaunchFocus]);
 
   return (
     <div className="absolute inset-0 bg-[#101214] text-[#e8e8e8]">
@@ -46,6 +52,7 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
 function openTerminal(
   host: HTMLDivElement,
   sessionId: string,
+  claimLaunchFocus: (sessionId: string) => boolean,
   setMode: (mode: Mode) => void,
   setError: (error: string | null) => void,
 ) {
@@ -53,13 +60,16 @@ function openTerminal(
     cursorBlink: true,
     fontFamily: "'JetBrains Mono Variable', monospace",
     fontSize: 13,
-    scrollback: 0,
+    scrollback: 2000,
     disableStdin: true,
   });
   const fit = new FitAddon();
   const requestId = `pane:${sessionId}`;
   terminal.loadAddon(fit);
   terminal.open(host);
+  terminal.attachCustomWheelEventHandler(
+    () => terminal.buffer.active.type === "normal" || terminal.modes.mouseTrackingMode !== "none",
+  );
 
   function resize() {
     if (terminal.options.disableStdin || !host.clientWidth || !host.clientHeight) return;
@@ -72,6 +82,11 @@ function openTerminal(
     terminal.options.disableStdin = !controls;
     setMode(controls ? "controller" : "viewer");
     if (controls) resize();
+  }
+
+  function finishAttach(controller: unknown) {
+    setController(controller);
+    if (!terminal.options.disableStdin && claimLaunchFocus(sessionId)) terminal.focus();
   }
 
   const unsubscribe = subscribeTerminals((message) => {
@@ -89,8 +104,8 @@ function openTerminal(
           terminal.reset();
           terminal.resize(Number(message.cols), Number(message.rows));
           if (typeof message.screen === "string" && message.screen) {
-            terminal.write(message.screen, () => setController(message.controller));
-          } else setController(message.controller);
+            terminal.write(message.screen, () => finishAttach(message.controller));
+          } else finishAttach(message.controller);
           break;
         case "resize":
           terminal.resize(Number(message.cols), Number(message.rows));
