@@ -32,7 +32,6 @@ test("builds a generic demo detail model from the selected live worktree identit
     title: "topic",
     worktree: { name: "topic", branch: "feature/topic" },
     pullRequest: { provider: "github", number: 42 },
-    runningAgents: [],
     ci: "passing",
     reviewCount: 2,
   });

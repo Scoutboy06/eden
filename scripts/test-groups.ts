@@ -46,6 +46,7 @@ function isIntegration(file: string): boolean {
     file === "apps/web-ui/server/tasks.test.ts" ||
     file === "apps/web-ui/server/task-detail.test.ts" ||
     file === "apps/web-ui/server/import-project.test.ts" ||
+    file === "apps/web-ui/server/terminals.test.ts" ||
     file === "src/external/beads/tests/process.test.ts" ||
     file === "src/external/azure-devops/tests/file-diff.test.ts" ||
     file === "src/modules/pull-requests/tests/resolve.test.ts" ||

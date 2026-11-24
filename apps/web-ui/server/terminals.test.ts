@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -43,8 +43,12 @@ test("starts a host PTY only from the registered project's live worktree and mul
   const branch = (
     await execute("git", ["-C", repository, "branch", "--show-current"])
   ).stdout.trim();
+  await writeFile(join(root, "pi"), '#!/bin/sh\nprintf "AGENT_WORKDIR:%s\\n" "$PWD"\nread line\n', {
+    mode: 0o755,
+  });
   const server = createTerminalServer({
     readProjects: async () => ({ project: { name: "Project", path: repository } }),
+    findExecutable: (name: string) => Bun.which(name, { PATH: root }),
   });
   servers.push(server);
   const http = createServer();
@@ -108,21 +112,27 @@ test("starts a host PTY only from the registered project's live worktree and mul
     viewer.once("error", reject);
   });
   viewer.send(JSON.stringify({ type: "list", project: "project", worktree: "checkout", branch }));
-  expect(await waitFor(viewed, "sessions")).toMatchObject({ items: [{ id: sessionId }] });
-  socket.send(
-    JSON.stringify({
-      type: "create",
-      project: "project",
-      worktree: "checkout",
-      branch,
-      requestId: "second",
-    }),
-  );
+  expect(await waitFor(viewed, "sessions")).toMatchObject({
+    items: [{ id: sessionId }],
+    availableHarnesses: ["pi"],
+  });
+  const createAgent = { type: "create", project: "project", worktree: "checkout", branch };
+  for (const [harness, error] of [
+    ["codex", "Codex is not on the Eden server's PATH."],
+    ["/bin/sh", "Unknown agent harness."],
+  ]) {
+    socket.send(JSON.stringify({ ...createAgent, harness, requestId: harness }));
+    expect(
+      await waitFor(received, "error", ({ requestId }) => requestId === harness),
+    ).toMatchObject({ error });
+  }
+  socket.send(JSON.stringify({ ...createAgent, harness: "pi", requestId: "second" }));
   const second = await waitFor(received, "created", (message) => message.requestId === "second");
   const secondId = String(second.sessionId);
   expect(
     await waitFor(viewed, "sessions", ({ items }) => Array.isArray(items) && items.length === 2),
-  ).toMatchObject({ items: [{ id: sessionId }, { id: secondId }] });
+  ).toMatchObject({ items: [{ id: sessionId }, { id: secondId, harness: "pi" }] });
+  expect(await waitForOutput(received, `AGENT_WORKDIR:${repository}`)).toContain(repository);
   viewer.send(JSON.stringify({ type: "end", sessionId: secondId }));
   expect(
     await waitFor(

@@ -2,8 +2,8 @@ import { lazy, Suspense, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { CIStatus } from "@/components/ci-status";
-import { agentHarnesses, type AgentHarness, type Task } from "@/components/tasks-sidebar-data";
-import { Button } from "@/components/ui/button";
+import { LauncherIcon } from "@/components/launcher-icon";
+import type { Task } from "@/components/tasks-sidebar-data";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,13 +12,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { closeSessionTab, createWorkspaceTabs, type SessionTab } from "@/pages/doing-tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatPullRequestReference } from "@/pages/prs-data";
 import { createWorktreeDemoTask } from "@/pages/worktree-demo";
 import { worktreeSelectionKey } from "@/pages/worktree-selection";
 import type { WorktreeProjection } from "@/pages/worktrees";
-import { randomId } from "@/pages/random-id";
 import { useWorktreeTerminals } from "@/pages/use-worktree-terminals";
+import { agentHarnesses, isAgentHarness } from "../../shared/agent-harnesses";
 
 const TerminalPane = lazy(() =>
   import("@/pages/TerminalPane").then((module) => ({ default: module.TerminalPane })),
@@ -72,35 +72,22 @@ function Workspace({
   project: string;
   selected: boolean;
 }) {
-  const [state, setState] = useState(() => createWorkspaceTabs(task));
-  const { sessions, connected, error, create, end } = useWorktreeTerminals(
+  const [selectedTab, setSelectedTab] = useState("reviews");
+  const { sessions, availableHarnesses, connected, error, create, end } = useWorktreeTerminals(
     project,
     task.worktree?.name,
     task.worktree?.branch ?? null,
     selected,
-    (active) => setState((current) => ({ ...current, active })),
+    setSelectedTab,
   );
-  const terminalTabs: SessionTab[] = sessions.map((id, index) => ({
+  let terminalNumber = 0;
+  const tabs = sessions.map(({ id, harness }) => ({
     id,
-    title: `Terminal ${index + 1}`,
-    kind: "terminal",
+    harness,
+    title: isAgentHarness(harness) ? agentHarnesses[harness].title : `Terminal ${++terminalNumber}`,
   }));
-  const tabs = [...state.sessions, ...terminalTabs];
   const active =
-    state.active === "reviews" || tabs.some(({ id }) => id === state.active)
-      ? state.active
-      : "diff";
-
-  function addAgent(harness: AgentHarness) {
-    const tab: SessionTab = {
-      id: randomId(),
-      kind: "agent",
-      title: agentHarnesses[harness].title,
-      harness,
-    };
-
-    setState((current) => ({ active: tab.id, sessions: [...current.sessions, tab] }));
-  }
+    selectedTab === "reviews" || tabs.some(({ id }) => id === selectedTab) ? selectedTab : "diff";
 
   return (
     <section aria-label={`${task.title} workspace`} className="flex min-h-0 flex-1 flex-col">
@@ -119,7 +106,7 @@ function Workspace({
       </header>
       <Tabs
         value={active}
-        onValueChange={(value) => setState((current) => ({ ...current, active: String(value) }))}
+        onValueChange={(value) => setSelectedTab(String(value))}
         className="min-h-0 flex-1 gap-0"
       >
         <div className="flex shrink-0 items-center border-b border-border bg-muted/20 px-4">
@@ -149,18 +136,14 @@ function Workspace({
                     className="h-11 flex-none rounded-none pr-8 pl-4 after:bottom-0!"
                   >
                     <span aria-hidden="true" className="font-mono text-xs text-muted-foreground">
-                      {tab.kind === "terminal" ? ">_" : "◉"}
+                      {tab.harness ? "◉" : ">_"}
                     </span>
                     <span className="max-w-40 truncate">{tab.title}</span>
                   </TabsTrigger>
                   <button
                     type="button"
                     aria-label={`Close ${tab.title}`}
-                    onClick={() =>
-                      tab.kind === "terminal"
-                        ? end(tab.id)
-                        : setState((current) => closeSessionTab(current, tab.id))
-                    }
+                    onClick={() => end(tab.id)}
                     className="absolute right-1.5 rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                   >
                     ×
@@ -177,14 +160,43 @@ function Workspace({
               +
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {(Object.keys(agentHarnesses) as AgentHarness[]).map((harness) => (
-                <DropdownMenuItem key={harness} onClick={() => addAgent(harness)}>
-                  New {agentHarnesses[harness].title} agent
-                </DropdownMenuItem>
-              ))}
+              {Object.keys(agentHarnesses)
+                .filter(isAgentHarness)
+                .map((harness) => {
+                  const { title, executable } = agentHarnesses[harness];
+                  const label = (
+                    <>
+                      <LauncherIcon harness={harness} />
+                      {title}
+                    </>
+                  );
+                  if (connected && !availableHarnesses.includes(harness))
+                    return (
+                      <TooltipProvider key={harness} delay={550} timeout={0}>
+                        <Tooltip>
+                          <TooltipTrigger render={<div />}>
+                            <DropdownMenuItem disabled>{label}</DropdownMenuItem>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">
+                            {executable} was not found on the Eden server’s PATH.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    );
+                  return (
+                    <DropdownMenuItem
+                      key={harness}
+                      disabled={!connected}
+                      onClick={() => create(harness)}
+                    >
+                      {label}
+                    </DropdownMenuItem>
+                  );
+                })}
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={!connected} onClick={create}>
-                New terminal
+              <DropdownMenuItem disabled={!connected} onClick={() => create()}>
+                <LauncherIcon />
+                Terminal
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -200,17 +212,7 @@ function Workspace({
         <TabsContent value="diff" className="overflow-y-auto p-6">
           <Diff task={task} />
         </TabsContent>
-        {state.sessions.map((tab) => (
-          <TabsContent
-            key={tab.id}
-            value={tab.id}
-            keepMounted
-            className="min-h-0 overflow-y-auto data-hidden:hidden"
-          >
-            <AgentPreview tab={tab} task={task} />
-          </TabsContent>
-        ))}
-        {terminalTabs.map(({ id }) => (
+        {tabs.map(({ id }) => (
           <TabsContent key={id} value={id} className="relative min-h-0 overflow-hidden">
             {selected && active === id && (
               <Suspense
@@ -322,55 +324,6 @@ function Diff({ task }: { task: Task }) {
           description="Diff details are illustrative and are not connected to this live worktree."
         />
       )}
-    </div>
-  );
-}
-
-function AgentPreview({ tab, task }: { tab: SessionTab; task: Task }) {
-  const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<string[]>([]);
-
-  return (
-    <div className="mx-auto flex min-h-full max-w-3xl flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-3 text-xs">
-        <span className="font-medium">{tab.title}</span>
-        <span className="text-muted-foreground">Preview · not connected</span>
-      </div>
-      <div className="flex-1 space-y-4 p-6 text-sm">
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Agent session for {task.title}. Messages stay in this local preview; no agent is running.
-        </p>
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className="ml-auto w-fit max-w-[90%] whitespace-pre-wrap break-words rounded-lg bg-muted px-4 py-3"
-          >
-            {message}
-          </div>
-        ))}
-      </div>
-      <form
-        className="m-6 mt-0 flex items-end gap-3 rounded-lg border border-border bg-background p-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!draft.trim()) return;
-          setMessages((current) => [...current, draft]);
-          setDraft("");
-        }}
-      >
-        <label className="flex min-w-0 flex-1 items-center gap-2">
-          <input
-            aria-label="Message agent"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Message agent…"
-            className="w-full bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-          />
-        </label>
-        <Button type="submit" size="sm" variant="secondary" disabled={!draft.trim()}>
-          Send
-        </Button>
-      </form>
     </div>
   );
 }

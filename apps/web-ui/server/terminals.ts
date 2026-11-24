@@ -7,6 +7,7 @@ import HeadlessTerminalPackage from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 
 import { GitModule } from "../../../src/modules/git/git.module";
+import { agentHarnesses, isAgentHarness, type AgentHarness } from "../shared/agent-harnesses";
 
 const { Terminal: HeadlessTerminal } = HeadlessTerminalPackage;
 
@@ -21,6 +22,7 @@ type TerminalSession = {
   project: string;
   worktree: string;
   branch: string | null;
+  harness?: AgentHarness;
   process: ReturnType<typeof Bun.spawn>;
   screenTerminal: InstanceType<typeof HeadlessTerminal>;
   clients: Map<WebSocket, string>;
@@ -37,11 +39,15 @@ export type TerminalDependencies = {
   readProjects: () => Promise<Record<string, { name: string; path: string }>>;
   worktrees?: typeof GitModule.worktrees;
   spawn?: typeof Bun.spawn;
+  findExecutable?: (name: string) => string | null;
 };
+
+class HarnessLaunchError extends Error {}
 
 export function createTerminalServer(dependencies: TerminalDependencies) {
   const sessions = new Map<string, TerminalSession>();
   const watches = new Map<WebSocket, TerminalScope>();
+  const findExecutable = dependencies.findExecutable ?? ((name) => Bun.which(name));
   const publish = (scope: TerminalScope) => {
     for (const [socket, watch] of watches) {
       if (sameScope(scope, watch)) listSessions(socket, watch, sessions);
@@ -75,7 +81,10 @@ export function createTerminalServer(dependencies: TerminalDependencies) {
       if (message.type === "list") {
         const scope = terminalScope(message);
         watches.set(socket, scope);
-        return listSessions(socket, scope, sessions);
+        const availableHarnesses = Object.keys(agentHarnesses)
+          .filter(isAgentHarness)
+          .filter((harness) => findExecutable(agentHarnesses[harness].executable));
+        return listSessions(socket, scope, sessions, availableHarnesses);
       }
       if (message.type === "unwatch") {
         watches.delete(socket);
@@ -149,11 +158,12 @@ function listSessions(
   socket: WebSocket,
   scope: TerminalScope,
   sessions: Map<string, TerminalSession>,
+  availableHarnesses?: AgentHarness[],
 ) {
   const items = [...sessions.values()]
     .filter((session) => sameScope(session, scope))
-    .map(({ id }) => ({ id }));
-  send(socket, { type: "sessions", ...scope, items });
+    .map(({ id, harness }) => ({ id, harness }));
+  send(socket, { type: "sessions", ...scope, items, availableHarnesses });
 }
 
 async function createSession(
@@ -180,6 +190,7 @@ async function createSession(
       type: "created",
       requestId: message.requestId,
       sessionId: session.id,
+      harness: session.harness,
       controller: clientId,
       cols: session.cols,
       rows: session.rows,
@@ -190,11 +201,14 @@ async function createSession(
       endSession(session, sessions, false);
       publish(session);
     });
-  } catch {
+  } catch (error) {
     send(socket, {
       type: "error",
       requestId: message.requestId,
-      error: "Could not start a terminal for that project worktree.",
+      error:
+        error instanceof HarnessLaunchError
+          ? error.message
+          : "Could not start a terminal for that project worktree.",
     });
   }
 }
@@ -217,6 +231,7 @@ async function startSession(
   const match = matches.length === 1 ? matches[0] : undefined;
   if (!match || !isAbsolute(match.path)) throw new Error("Worktree not found.");
   const cwd = await realpath(match.path);
+  const { harness, executable } = terminalProgram(message.harness, dependencies.findExecutable);
   const cols = dimension(message.cols, 120);
   const rows = dimension(message.rows, 32);
   const screenTerminal = new HeadlessTerminal({
@@ -228,12 +243,8 @@ async function startSession(
   const screenSerializer = new SerializeAddon();
   screenTerminal.loadAddon(screenSerializer);
   let session!: TerminalSession;
-  const shell =
-    process.platform === "win32"
-      ? (process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe")
-      : (process.env.SHELL ?? "/bin/bash");
   const spawn = dependencies.spawn ?? Bun.spawn;
-  const child = spawn([shell], {
+  const child = spawn([executable], {
     cwd,
     env: { ...process.env, TERM: "xterm-256color" },
     terminal: {
@@ -257,6 +268,7 @@ async function startSession(
     project: projectKey,
     worktree: name,
     branch,
+    harness,
     process: child,
     screenTerminal,
     clients: new Map(),
@@ -266,6 +278,26 @@ async function startSession(
     rows,
   };
   return session;
+}
+
+function terminalProgram(
+  requested: unknown,
+  findExecutable = (name: string) => Bun.which(name),
+): { executable: string; harness?: AgentHarness } {
+  if (requested === undefined) {
+    return {
+      executable:
+        process.platform === "win32"
+          ? (process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe")
+          : (process.env.SHELL ?? "/bin/bash"),
+    };
+  }
+  if (!isAgentHarness(requested)) throw new HarnessLaunchError("Unknown agent harness.");
+  const { executable, title } = agentHarnesses[requested];
+  const path = findExecutable(executable);
+  if (!path || !isAbsolute(path))
+    throw new HarnessLaunchError(`${title} is not on the Eden server's PATH.`);
+  return { executable: path, harness: requested };
 }
 
 function handleExistingSessionMessage(

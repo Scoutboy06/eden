@@ -23,7 +23,6 @@ export function createWorktreeDemoTask(worktree: WorktreeProjection, project: st
       worktree.pr?.ref.provider === "github" && worktree.pr.ref.number !== undefined
         ? { provider: "github", number: worktree.pr.ref.number }
         : null,
-    runningAgents: [],
     ...(ci ? { ci } : {}),
     ...(worktree.pr ? { reviewCount: 2 } : {}),
   };
