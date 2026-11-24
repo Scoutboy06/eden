@@ -6,13 +6,18 @@ import { defineConfig } from "vite";
 import { listRegisteredProjects } from "../../src/modules/projects/project-registry";
 
 import { createTasksMiddleware } from "./server/tasks";
+import { createBunTerminalRuntime } from "./server/bun-terminal-runtime";
+import { createHcTerminalRuntime } from "./server/hc-terminal-runtime";
 import { createTerminalServer, isAllowedTerminalHost } from "./server/terminals";
 
 const checkout = resolve(import.meta.dirname, "../..");
 const webHost = process.env.EDEN_WEB_HOST ?? "127.0.0.1";
+const terminalBackend = process.env.EDEN_TERMINAL_BACKEND ?? "hc";
 
 if (!isAllowedTerminalHost(webHost))
   throw new Error("EDEN_WEB_HOST must be localhost or a Tailscale IP address.");
+if (terminalBackend !== "hc" && terminalBackend !== "bun")
+  throw new Error("EDEN_TERMINAL_BACKEND must be hc or bun.");
 
 export default defineConfig({
   plugins: [
@@ -47,6 +52,7 @@ export default defineConfig({
 
 function attachTerminalServer(httpServer: import("node:http").Server) {
   const terminals = createTerminalServer({
+    runtime: terminalBackend === "hc" ? createHcTerminalRuntime() : createBunTerminalRuntime(),
     readProjects: async () =>
       Object.fromEntries(
         (await listRegisteredProjects()).map(({ key, name, path }) => [key, { name, path }]),

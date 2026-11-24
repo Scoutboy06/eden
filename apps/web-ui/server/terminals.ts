@@ -8,6 +8,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 
 import { GitModule } from "../../../src/modules/git/git.module";
 import { agentHarnesses, isAgentHarness, type AgentHarness } from "../shared/agent-harnesses";
+import type { RuntimeTerminal, TerminalAttachment, TerminalRuntime } from "./terminal-runtime";
 
 const { Terminal: HeadlessTerminal } = HeadlessTerminalPackage;
 
@@ -17,20 +18,13 @@ const reconnectGraceMs = 5000;
 const sessionLimit = 32;
 const clientLimit = 8;
 
-type TerminalSession = {
-  id: string;
-  project: string;
-  worktree: string;
-  branch: string | null;
-  harness?: AgentHarness;
-  process: ReturnType<typeof Bun.spawn>;
+type TerminalSession = RuntimeTerminal & {
+  attachment: TerminalAttachment;
   screenTerminal: InstanceType<typeof HeadlessTerminal>;
   clients: Map<WebSocket, string>;
   controller: string | null;
   graceTimer?: ReturnType<typeof setTimeout>;
   screen: string;
-  cols: number;
-  rows: number;
 };
 
 type TerminalScope = { project: string; worktree: string; branch: string | null };
@@ -38,7 +32,7 @@ type TerminalScope = { project: string; worktree: string; branch: string | null 
 export type TerminalDependencies = {
   readProjects: () => Promise<Record<string, { name: string; path: string }>>;
   worktrees?: typeof GitModule.worktrees;
-  spawn?: typeof Bun.spawn;
+  runtime: TerminalRuntime;
   findExecutable?: (name: string) => string | null;
 };
 
@@ -46,13 +40,39 @@ class HarnessLaunchError extends Error {}
 
 export function createTerminalServer(dependencies: TerminalDependencies) {
   const sessions = new Map<string, TerminalSession>();
+  const { runtime } = dependencies;
   const watches = new Map<WebSocket, TerminalScope>();
+  let closed = false;
+  let recovery: Promise<void> | undefined;
   const findExecutable = dependencies.findExecutable ?? ((name) => Bun.which(name));
   const publish = (scope: TerminalScope) => {
     for (const [socket, watch] of watches) {
       if (sameScope(scope, watch)) listSessions(socket, watch, sessions);
     }
   };
+  function register(session: TerminalSession) {
+    sessions.set(session.id, session);
+    void session.attachment.closed.then(({ code, exited }) => {
+      if (sessions.get(session.id) !== session) return;
+      if (exited) broadcast(session, { type: "exit", sessionId: session.id, code });
+      else recovery = undefined;
+      removeSession(session, sessions);
+      publish(session);
+    });
+  }
+
+  function recover() {
+    if (!runtime.capabilities.recoverSessions) return Promise.resolve();
+    return (recovery ??= recoverSessions(dependencies, sessions, (session) => {
+      if (closed) return session.attachment.detach();
+      register(session);
+      publish(session);
+    }).catch((error: unknown) => {
+      recovery = undefined;
+      throw error;
+    }));
+  }
+  void recover().catch(() => {});
   const server = new WebSocketServer({
     noServer: true,
     maxPayload: 192 * 1024,
@@ -68,7 +88,7 @@ export function createTerminalServer(dependencies: TerminalDependencies) {
         ? requestedClientId
         : randomUUID();
     const joined = new Set<string>();
-    socket.on("message", (raw) => {
+    socket.on("message", async (raw) => {
       const text = raw.toString();
       if (text.length > 64 * 1024) return socket.close(1009, "Message too large");
       let message: Record<string, unknown>;
@@ -78,6 +98,15 @@ export function createTerminalServer(dependencies: TerminalDependencies) {
         return socket.close(1003, "Invalid message");
       }
       if (!message || typeof message !== "object") return;
+      try {
+        await recover();
+      } catch (error) {
+        return send(socket, {
+          type: "runtime-error",
+          error: error instanceof Error ? error.message : "Terminal backend unavailable.",
+        });
+      }
+      if (closed || socket.readyState !== WebSocket.OPEN) return;
       if (message.type === "list") {
         const scope = terminalScope(message);
         watches.set(socket, scope);
@@ -91,7 +120,25 @@ export function createTerminalServer(dependencies: TerminalDependencies) {
         return;
       }
       if (message.type === "create") {
-        void createSession(socket, clientId, joined, message, sessions, dependencies, publish);
+        void createSession(
+          socket,
+          clientId,
+          joined,
+          message,
+          sessions,
+          dependencies,
+          (session) => {
+            if (closed) {
+              if (!runtime.capabilities.recoverSessions) void runtime.stop(session).catch(() => {});
+              session.attachment.detach();
+              session.screenTerminal.dispose();
+              return false;
+            }
+            register(session);
+            return true;
+          },
+          publish,
+        );
         return;
       }
       handleExistingSessionMessage(
@@ -102,6 +149,7 @@ export function createTerminalServer(dependencies: TerminalDependencies) {
         sessions,
         watches.get(socket),
         publish,
+        runtime,
       );
     });
     socket.on("close", () => {
@@ -131,8 +179,14 @@ export function createTerminalServer(dependencies: TerminalDependencies) {
       return true;
     },
     close() {
+      if (closed) return;
+      closed = true;
+      for (const socket of server.clients) socket.terminate();
       server.close();
-      for (const session of sessions.values()) endSession(session, sessions);
+      for (const session of sessions.values()) {
+        if (!runtime.capabilities.recoverSessions) void runtime.stop(session).catch(() => {});
+        removeSession(session, sessions);
+      }
     },
     sessions,
   };
@@ -173,6 +227,7 @@ async function createSession(
   message: Record<string, unknown>,
   sessions: Map<string, TerminalSession>,
   dependencies: TerminalDependencies,
+  register: (session: TerminalSession) => boolean,
   publish: (scope: TerminalScope) => void,
 ) {
   if (sessions.size >= sessionLimit)
@@ -183,7 +238,7 @@ async function createSession(
     });
   try {
     const session = await startSession(message, clientId, dependencies);
-    sessions.set(session.id, session);
+    if (!register(session)) return;
     joined.add(session.id);
     session.clients.set(socket, clientId);
     send(socket, {
@@ -196,11 +251,6 @@ async function createSession(
       rows: session.rows,
     });
     publish(session);
-    session.process.exited.then((code) => {
-      broadcast(session, { type: "exit", sessionId: session.id, code });
-      endSession(session, sessions, false);
-      publish(session);
-    });
   } catch (error) {
     send(socket, {
       type: "error",
@@ -218,22 +268,64 @@ async function startSession(
   clientId: string,
   dependencies: TerminalDependencies,
 ): Promise<TerminalSession> {
-  const projectKey = typeof message.project === "string" ? message.project : "";
-  const name = typeof message.worktree === "string" ? message.worktree : "";
+  const scope = terminalScope(message);
+  const cwd = await resolveWorktree(scope, dependencies);
+  const { harness, executable } = terminalProgram(message.harness, dependencies.findExecutable);
+  const terminal = await dependencies.runtime.start(
+    {
+      ...scope,
+      id: randomUUID(),
+      cwd,
+      harness,
+      cols: dimension(message.cols, 120),
+      rows: dimension(message.rows, 32),
+    },
+    executable,
+  );
+  try {
+    return await attachRuntime(terminal, clientId, dependencies.runtime);
+  } catch (error) {
+    await dependencies.runtime.stop(terminal).catch(() => {});
+    throw error;
+  }
+}
+
+async function resolveWorktree(
+  { project: projectKey, worktree: name, branch }: TerminalScope,
+  dependencies: TerminalDependencies,
+) {
   const projects = await dependencies.readProjects();
   const project = Object.hasOwn(projects, projectKey) ? projects[projectKey] : undefined;
   if (!project || !name || name.length > 255) throw new Error("Project or worktree not found.");
-  const branch = typeof message.branch === "string" ? message.branch : null;
   const worktrees = await (dependencies.worktrees ?? GitModule.worktrees)(project.path);
   const matches = worktrees.filter(
     (worktree) => worktree.path.split(/[\\/]/).at(-1) === name && worktree.branch === branch,
   );
   const match = matches.length === 1 ? matches[0] : undefined;
   if (!match || !isAbsolute(match.path)) throw new Error("Worktree not found.");
-  const cwd = await realpath(match.path);
-  const { harness, executable } = terminalProgram(message.harness, dependencies.findExecutable);
-  const cols = dimension(message.cols, 120);
-  const rows = dimension(message.rows, 32);
+  return realpath(match.path);
+}
+
+async function recoverSessions(
+  dependencies: TerminalDependencies,
+  sessions: Map<string, TerminalSession>,
+  register: (session: TerminalSession) => void,
+) {
+  for (const terminal of await dependencies.runtime.discover()) {
+    if (sessions.has(terminal.id)) continue;
+    const cwd = await resolveWorktree(terminal, dependencies).catch(() => null);
+    if (cwd !== terminal.cwd) continue;
+    const session = await attachRuntime(terminal, null, dependencies.runtime).catch(() => null);
+    if (session) register(session);
+  }
+}
+
+async function attachRuntime(
+  terminal: RuntimeTerminal,
+  controller: string | null,
+  runtime: TerminalRuntime,
+) {
+  const { cols, rows } = terminal;
   const screenTerminal = new HeadlessTerminal({
     cols,
     rows,
@@ -242,42 +334,32 @@ async function startSession(
   });
   const screenSerializer = new SerializeAddon();
   screenTerminal.loadAddon(screenSerializer);
-  let session!: TerminalSession;
-  const spawn = dependencies.spawn ?? Bun.spawn;
-  const child = spawn([executable], {
-    cwd,
-    env: { ...process.env, TERM: "xterm-256color" },
-    terminal: {
-      cols,
-      rows,
-      name: "xterm-256color",
-      data: (_terminal, data) => {
-        if (!session) return;
-        const chunk = Buffer.from(data).toString("base64");
-        screenTerminal.write(data, () => {
-          const snapshot = screenSerializer.serialize({ scrollback: 0 });
-          if (snapshot.length <= screenLimit) session.screen = snapshot;
-          for (const client of session.clients.keys())
-            send(client, { type: "output", sessionId: session.id, data: chunk });
-        });
-      },
-    },
-  });
-  session = {
-    id: randomUUID(),
-    project: projectKey,
-    worktree: name,
-    branch,
-    harness,
-    process: child,
+  const state = {
+    ...terminal,
     screenTerminal,
-    clients: new Map(),
-    controller: clientId,
+    clients: new Map<WebSocket, string>(),
+    controller,
     screen: "",
-    cols,
-    rows,
   };
-  return session;
+  try {
+    const attachment = await runtime.attach(terminal, (data) => {
+      const bytes = Uint8Array.from(data);
+      screenTerminal.write(bytes, () => {
+        const snapshot = screenSerializer.serialize({ scrollback: 0 });
+        if (snapshot.length <= screenLimit) state.screen = snapshot;
+        broadcast(state, {
+          type: "output",
+          sessionId: terminal.id,
+          data: Buffer.from(bytes).toString("base64"),
+        });
+      });
+    });
+    await new Promise<void>((resolve) => screenTerminal.write("", resolve));
+    return Object.assign(state, { attachment });
+  } catch (error) {
+    screenTerminal.dispose();
+    throw error;
+  }
 }
 
 function terminalProgram(
@@ -308,6 +390,7 @@ function handleExistingSessionMessage(
   sessions: Map<string, TerminalSession>,
   watch: TerminalScope | undefined,
   publish: (scope: TerminalScope) => void,
+  runtime: TerminalRuntime,
 ) {
   const id = typeof message.sessionId === "string" ? message.sessionId : "";
   const session = sessions.get(id);
@@ -322,8 +405,14 @@ function handleExistingSessionMessage(
     session &&
     (joined.has(id) || (watch && sameScope(session, watch)))
   ) {
-    endSession(session, sessions);
-    publish(session);
+    void runtime
+      .stop(session)
+      .then(() => {
+        if (sessions.get(id) !== session) return;
+        removeSession(session, sessions);
+        publish(session);
+      })
+      .catch(() => send(socket, { type: "terminal-error", error: "Could not stop the terminal." }));
     return;
   }
   if (!session?.clients.has(socket)) return;
@@ -384,7 +473,7 @@ function writeInput(session: TerminalSession, clientId: string, message: Record<
     message.data.length > 16_384
   )
     return;
-  session.process.terminal?.write(Buffer.from(message.data, "base64"));
+  session.attachment.write(Buffer.from(message.data, "base64"));
 }
 
 function resizeSession(
@@ -395,7 +484,7 @@ function resizeSession(
   if (session.controller !== clientId) return;
   session.cols = dimension(message.cols, 120);
   session.rows = dimension(message.rows, 32);
-  session.process.terminal?.resize(session.cols, session.rows);
+  session.attachment.resize(session.cols, session.rows);
   session.screenTerminal.resize(session.cols, session.rows);
   broadcast(session, {
     type: "resize",
@@ -444,16 +533,15 @@ function send(socket: WebSocket, message: object) {
     socket.send(JSON.stringify(message));
 }
 
-function broadcast(session: TerminalSession, message: object) {
+function broadcast(session: Pick<TerminalSession, "clients">, message: object) {
   for (const socket of session.clients.keys()) send(socket, message);
 }
 
-function endSession(session: TerminalSession, sessions: Map<string, TerminalSession>, kill = true) {
+function removeSession(session: TerminalSession, sessions: Map<string, TerminalSession>) {
   if (!sessions.has(session.id)) return;
   sessions.delete(session.id);
   if (session.graceTimer) clearTimeout(session.graceTimer);
-  if (kill) session.process.kill();
-  session.process.terminal?.close();
+  session.attachment.detach();
   session.screenTerminal.dispose();
   broadcast(session, { type: "ended", sessionId: session.id });
   session.clients.clear();

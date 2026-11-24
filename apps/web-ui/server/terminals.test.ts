@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { WebSocket } from "ws";
 
 import { createTerminalServer } from "./terminals";
+import { createBunTerminalRuntime } from "./bun-terminal-runtime";
 
 const execute = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -43,10 +44,15 @@ test("starts a host PTY only from the registered project's live worktree and mul
   const branch = (
     await execute("git", ["-C", repository, "branch", "--show-current"])
   ).stdout.trim();
-  await writeFile(join(root, "pi"), '#!/bin/sh\nprintf "AGENT_WORKDIR:%s\\n" "$PWD"\nread line\n', {
-    mode: 0o755,
-  });
+  await writeFile(
+    join(root, "pi"),
+    '#!/bin/sh\nread line\nprintf "AGENT_WORKDIR:%s\\n" "$PWD"\nread line\n',
+    {
+      mode: 0o755,
+    },
+  );
   const server = createTerminalServer({
+    runtime: createBunTerminalRuntime(),
     readProjects: async () => ({ project: { name: "Project", path: repository } }),
     findExecutable: (name: string) => Bun.which(name, { PATH: root }),
   });
@@ -132,6 +138,7 @@ test("starts a host PTY only from the registered project's live worktree and mul
   expect(
     await waitFor(viewed, "sessions", ({ items }) => Array.isArray(items) && items.length === 2),
   ).toMatchObject({ items: [{ id: sessionId }, { id: secondId, harness: "pi" }] });
+  socket.send(JSON.stringify({ type: "input", sessionId: secondId, data: btoa("\n") }));
   expect(await waitForOutput(received, `AGENT_WORKDIR:${repository}`)).toContain(repository);
   viewer.send(JSON.stringify({ type: "end", sessionId: secondId }));
   expect(
@@ -246,3 +253,101 @@ async function expectWebSocketRejected(socket: WebSocket) {
     socket.once("open", () => reject(new Error("Cross-origin WebSocket unexpectedly opened")));
   });
 }
+
+const hc = process.env.EDEN_TEST_HC ?? Bun.which("hc") ?? Bun.which("herdr-core");
+
+test.skipIf(!hc || process.platform === "win32")(
+  "rediscovers the same hc worktree shell after an Eden server process is killed",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "eden-hc-"));
+    temporaryDirectories.push(root);
+    await execute("git", ["init", "-b", "main", root]);
+    const env = {
+      ...process.env,
+      XDG_CONFIG_HOME: root,
+      XDG_RUNTIME_DIR: root,
+      XDG_STATE_HOME: root,
+      SHELL: "/bin/sh",
+      HC_SESSION: "eden-web-test",
+      HC_SOCKET: "",
+      HC_TERMINAL_ID: "",
+    };
+    delete (env as NodeJS.ProcessEnv).HC_SOCKET;
+    const source = `
+      import { createServer } from "node:http";
+      import { createTerminalServer } from ${JSON.stringify(import.meta.resolve("./terminals.ts"))};
+      import { createHcTerminalRuntime } from ${JSON.stringify(import.meta.resolve("./hc-terminal-runtime.ts"))};
+      const terminals = createTerminalServer({
+        runtime: createHcTerminalRuntime({ executable: ${JSON.stringify(hc)}, session: "eden-web-test" }),
+        readProjects: async () => ({ project: { name: "Project", path: ${JSON.stringify(root)} } }),
+      });
+      const server = createServer();
+      server.on("upgrade", (request, socket, head) => {
+        if (!terminals.upgrade(request, socket, head)) socket.destroy();
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+    async function launch() {
+      const process = Bun.spawn([Bun.which("bun")!, "-e", source], { env, stderr: "inherit" });
+      children.push(process);
+      const reader = process.stdout.getReader();
+      const line = await reader.read();
+      const address = `http://127.0.0.1:${new TextDecoder().decode(line.value).trim()}`;
+      const socket = new WebSocket(`${address.replace("http", "ws")}/api/terminals/socket`, {
+        origin: address,
+      });
+      sockets.push(socket);
+      const messages: Record<string, unknown>[] = [];
+      socket.on("message", (data) => messages.push(JSON.parse(data.toString())));
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      });
+      return { process, messages, send: (message: object) => socket.send(JSON.stringify(message)) };
+    }
+    const children: ReturnType<typeof Bun.spawn>[] = [];
+    const sockets: WebSocket[] = [];
+    const scope = { project: "project", worktree: root.split("/").at(-1), branch: "main" };
+    function input(sessionId: string, value: string) {
+      return { type: "input", sessionId, data: btoa(value) };
+    }
+    try {
+      const first = await launch();
+      first.send({ type: "create", ...scope });
+      const created = await waitFor(first.messages, "created");
+      const sessionId = String(created.sessionId);
+      first.send(input(sessionId, 'printf "BEFORE_PID:%s\\nCWD:%s\\n" "$$" "$PWD"\r'));
+      const output = await waitForOutput(first.messages, "BEFORE_PID:", root);
+      const pid = output.match(/BEFORE_PID:(\d+)/)?.[1];
+      expect(pid).toBeTruthy();
+
+      first.process.kill("SIGKILL");
+      await first.process.exited;
+      const second = await launch();
+      second.send({ type: "list", ...scope });
+      expect(await waitFor(second.messages, "sessions")).toMatchObject({
+        items: [{ id: sessionId }],
+      });
+      second.send({ type: "attach", sessionId });
+      expect(await waitFor(second.messages, "attached")).toMatchObject({
+        controller: null,
+        screen: expect.stringContaining(`BEFORE_PID:${pid}`),
+      });
+      second.send(input(sessionId, 'printf "VIEWER_WROTE:%s\\n" "$$"\r'));
+      second.send({ type: "take-control", sessionId });
+      second.send(input(sessionId, 'printf "AFTER_PID:%s\\n" "$$"\r'));
+      const after = await waitForOutput(second.messages, `AFTER_PID:${pid}`);
+      expect(after).not.toContain(`VIEWER_WROTE:${pid}`);
+      second.send({ type: "end", sessionId });
+      await waitFor(second.messages, "ended");
+      const live = await execute(hc!, ["ls", "--json"], { env });
+      expect(JSON.parse(live.stdout).terminals).toEqual([]);
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      for (const process of children) process.kill();
+      await Promise.all(children.map((process) => process.exited));
+      await execute(hc!, ["server", "stop"], { env }).catch(() => {});
+    }
+  },
+  20_000,
+);

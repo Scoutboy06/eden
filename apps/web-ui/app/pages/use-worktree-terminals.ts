@@ -27,7 +27,6 @@ export function useWorktreeTerminals(
     const unsubscribe = subscribeTerminals((message) => {
       switch (message.type) {
         case "connected":
-          setConnected(true);
           sendTerminal({ type: "list", ...scope });
           break;
         case "disconnected":
@@ -41,10 +40,19 @@ export function useWorktreeTerminals(
             message.worktree === worktree &&
             message.branch === branch
           ) {
+            setConnected(true);
             setSessions(message.items as WorktreeSession[]);
             if (Array.isArray(message.availableHarnesses))
               setAvailableHarnesses(message.availableHarnesses.filter(isAgentHarness));
           }
+          break;
+        case "runtime-error":
+          setConnected(false);
+          pending.current.clear();
+          setError(String(message.error));
+          break;
+        case "terminal-error":
+          setError(String(message.error));
           break;
         case "created":
         case "error":
