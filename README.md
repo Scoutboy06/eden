@@ -21,7 +21,13 @@ bun run web:dev
 bun run check
 bun run test:fast
 bun run test:full
+bun run test:opencode-e2e
 ```
+
+The OpenCode conversation E2E suite requires Chromium (`bunx playwright install chromium`).
+It runs Eden with isolated HOME/XDG state and a scratch Git project, using only a
+test-owned fake OpenCode service on loopback. It owns a random-port Vite process
+and does not contact installed OpenCode services or real models.
 
 The task board reads each configured repository's existing Beads (`bd`) configuration.
 Install `bd` and verify `bd list` first. Task data requires the Vite dev or preview server.

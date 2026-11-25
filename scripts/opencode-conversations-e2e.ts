@@ -1,0 +1,616 @@
+import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { createProjectRegistry } from "../src/modules/projects/project-registry";
+
+const repository = resolve(import.meta.dirname, "..");
+const projectName = "opencode-e2e-fixture";
+const nativeSessionID = "eden-e2e-native-session";
+
+async function main() {
+  const scratch = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "eden-opencode-e2e-"));
+  const home = join(scratch, "home");
+  const stateHome = join(scratch, "state");
+  const configHome = join(scratch, "config");
+  const projectPath = join(scratch, projectName);
+  const fake = new FakeOpenCode();
+  let vite: ViteInstance | undefined;
+  let browser: Browser | undefined;
+  const contexts: BrowserContext[] = [];
+
+  try {
+    await Promise.all([
+      mkdir(home, { recursive: true }),
+      mkdir(stateHome, { recursive: true }),
+      mkdir(configHome, { recursive: true }),
+      mkdir(projectPath, { recursive: true }),
+    ]);
+    await initializeGitProject(projectPath, configHome);
+    const registered = await createProjectRegistry({
+      stateHome,
+      configHome,
+      legacyConfigPath: join(configHome, "eden", "config.yaml"),
+      home,
+    }).registerNamed(projectName, projectPath);
+    await fake.listen();
+    const env = isolatedEnvironment({
+      home,
+      stateHome,
+      configHome,
+      fakeUrl: fake.url,
+    });
+    vite = await startVite(env);
+    browser = await chromium.launch({ headless: true });
+
+    const firstContext = await browser.newContext({ viewport: { width: 1400, height: 950 } });
+    contexts.push(firstContext);
+    const firstPage = await firstContext.newPage();
+    await openDoingPage(firstPage, vite.url, registered.key, basename(projectPath));
+    const createdResponse = firstPage.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/conversations") && response.request().method() === "POST",
+    );
+    await firstPage.getByRole("button", { name: "New session tab" }).click();
+    await firstPage.getByRole("menuitem", { name: "OpenCode conversation" }).click();
+    const created = (await (await createdResponse).json()) as { conversation: { id: string } };
+    const conversationID = String(created.conversation.id);
+    const firstComposer = firstPage.getByRole("textbox", { name: "Message OpenCode" });
+    await firstComposer.waitFor({ state: "visible" });
+
+    await firstComposer.fill("first fake prompt");
+    await firstComposer.press("Enter");
+    const firstPrompt = await fake.waitForPromptCount(1);
+    let messageListCount = fake.messageLists;
+    const firstTurn = fake.startTurn(firstPrompt);
+    fake.emitTextStarted(firstTurn);
+    fake.emitTextDelta(firstTurn, "Partial fake reply");
+    await fake.waitForMessageListCount(++messageListCount);
+
+    await firstPage.getByText("Partial fake reply", { exact: true }).waitFor();
+    const secondContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    contexts.push(secondContext);
+    const secondPage = await secondContext.newPage();
+    await openDoingPage(secondPage, vite.url, registered.key, basename(projectPath));
+    const secondTab = secondPage.getByRole("tab", { name: "OpenCode conversation 1" });
+    await secondTab.waitFor({ state: "visible" });
+    await secondTab.click();
+    await secondPage.getByText("Partial fake reply", { exact: true }).waitFor();
+
+    const overlapping = await secondPage.evaluate(async (id) => {
+      const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "must be rejected" }),
+      });
+      return response.status;
+    }, conversationID);
+    assert.equal(overlapping, 409, "a second browser cannot overlap a running turn");
+    assert.equal(fake.prompts.length, 1, "a conflicting send never reaches OpenCode");
+
+    fake.completeTurn(firstTurn, "First fake final reply");
+    await firstPage.getByText("First fake final reply", { exact: true }).waitFor();
+    await secondPage.getByText("First fake final reply", { exact: true }).waitFor();
+    assert.equal(fake.sessionCreates, 1);
+
+    for (const context of contexts.splice(0)) await context.close();
+    await stopVite(vite);
+    vite = await startVite(env);
+
+    const reopenedContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    contexts.push(reopenedContext);
+    const reopenedPage = await reopenedContext.newPage();
+    await openDoingPage(reopenedPage, vite.url, registered.key, basename(projectPath));
+    const reopenedTab = reopenedPage.getByRole("tab", { name: "OpenCode conversation 1" });
+    await reopenedTab.waitFor({ state: "visible" });
+    await reopenedTab.click();
+    await reopenedPage.getByText("First fake final reply", { exact: true }).waitFor();
+    assert.equal(fake.prompts.length, 1, "reopening after server restart does not replay a turn");
+    assert.equal(fake.sessionCreates, 1, "reopening reuses the durable Eden transcript");
+
+    const composer = reopenedPage.getByRole("textbox", { name: "Message OpenCode" });
+    await composer.fill("prompt whose settlement event is lost");
+    await composer.press("Enter");
+    const eofPrompt = await fake.waitForPromptCount(2);
+    messageListCount = fake.messageLists;
+    const eofTurn = fake.startTurn(eofPrompt);
+    fake.emitTextStarted(eofTurn);
+    await fake.waitForMessageListCount(++messageListCount);
+    fake.completeTurn(eofTurn, "Native reply recovered after EOF", false);
+    await reopenedPage
+      .getByText("The last turn did not finish. Your transcript is preserved.", { exact: true })
+      .waitFor();
+    const incomplete = await reopenedPage.evaluate(async (id) => {
+      const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+      const body = (await response.json()) as { conversation: { status: string } };
+      return body.conversation.status;
+    }, conversationID);
+    assert.equal(incomplete, "incomplete", "EOF preserves the transcript in an incomplete state");
+    assert.equal(fake.prompts.length, 2, "the interrupted prompt was only submitted once");
+
+    await composer.fill("new prompt after reconciliation");
+    await composer.press("Enter");
+    const followUpPrompt = await fake.waitForPromptCount(3);
+    assert.equal(followUpPrompt.sessionID, nativeSessionID);
+    assert.equal(
+      fake.sessionCreates,
+      1,
+      "reconciliation does not create a replacement native session",
+    );
+    assert.equal(
+      fake.prompts.filter(({ text }) => text === "prompt whose settlement event is lost").length,
+      1,
+      "the uncertain prompt is reconciled, never replayed",
+    );
+    const followUpTurn = fake.startTurn(followUpPrompt);
+    fake.emitTextStarted(followUpTurn);
+    fake.emitTextDelta(followUpTurn, "Recovered session still streams");
+    fake.completeTurn(followUpTurn, "Recovered session still streams to final");
+    await reopenedPage
+      .getByText("Recovered session still streams to final", { exact: true })
+      .waitFor();
+    assert.deepEqual(fake.errors, []);
+
+    console.log(
+      JSON.stringify({
+        result: "passed",
+        project: registered.key,
+        nativeSessionID,
+        prompts: fake.prompts.map(({ text, sessionID }) => ({ text, sessionID })),
+        restarts: 1,
+        conflictStatus: overlapping,
+        incompleteStatusAfterEOF: incomplete,
+        sentPromptCount: fake.prompts.length,
+      }),
+    );
+  } finally {
+    for (const context of contexts.splice(0)) await context.close().catch(() => {});
+    await browser?.close().catch(() => {});
+    if (vite) await stopVite(vite);
+    await fake.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+type ViteInstance = { child: ChildProcess; url: string; output: () => string };
+
+async function initializeGitProject(path: string, configHome: string) {
+  const git = Bun.which("git");
+  if (!git) throw new Error("Git is required for the isolated E2E project.");
+  const env = {
+    ...process.env,
+    HOME: join(configHome, "home"),
+    GIT_CONFIG_GLOBAL: join(configHome, "gitconfig"),
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+  await writeFile(join(path, "README.md"), "# OpenCode E2E fixture\n");
+  await run(git, ["-C", path, "init", "--initial-branch=e2e"], env);
+  await run(git, ["-C", path, "config", "user.name", "Eden E2E"], env);
+  await run(git, ["-C", path, "config", "user.email", "e2e@example.invalid"], env);
+  await run(git, ["-C", path, "add", "README.md"], env);
+  await run(git, ["-C", path, "commit", "--quiet", "-m", "fixture"], env);
+}
+
+function isolatedEnvironment({
+  home,
+  stateHome,
+  configHome,
+  fakeUrl,
+}: {
+  home: string;
+  stateHome: string;
+  configHome: string;
+  fakeUrl: string;
+}) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^(OPENCODE_|OPENAI_|ANTHROPIC_|AZURE_|GEMINI_|GOOGLE_API_KEY|AWS_)/.test(key))
+      delete env[key];
+  }
+  return {
+    ...env,
+    HOME: home,
+    XDG_STATE_HOME: stateHome,
+    XDG_CONFIG_HOME: configHome,
+    GIT_CONFIG_GLOBAL: join(configHome, "gitconfig"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    EDEN_CONVERSATION_E2E: "1",
+    EDEN_OPENCODE_E2E_FAKE_URL: fakeUrl,
+    EDEN_WEB_HOST: "127.0.0.1",
+    EDEN_TERMINAL_BACKEND: "bun",
+  };
+}
+
+async function startVite(env: NodeJS.ProcessEnv): Promise<ViteInstance> {
+  const executable = Bun.which("bun");
+  if (!executable) throw new Error("Bun is required to run the Vite E2E server.");
+  const port = await randomLoopbackPort();
+  const child = spawn(
+    executable,
+    ["--bun", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
+    {
+      cwd: join(repository, "apps", "web-ui"),
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  let settled = false;
+  let resolveReady!: (url: string) => void;
+  let rejectReady!: (error: Error) => void;
+  const ready = new Promise<string>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const collect = (chunk: Buffer) => {
+    output += chunk.toString();
+    const match = output.match(/Local:\s+http:\/\/127\.0\.0\.1:(\d+)\//);
+    if (match && !settled) {
+      settled = true;
+      resolveReady(`http://127.0.0.1:${match[1]}`);
+    }
+  };
+  child.stdout?.on("data", collect);
+  child.stderr?.on("data", collect);
+  child.once("error", (error) => rejectReady(error));
+  child.once("exit", (code) => {
+    if (!settled) rejectReady(new Error(`Vite exited before ready (${code}).\n${output}`));
+  });
+  const watchdog = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    rejectReady(new Error(`Vite did not become ready.\n${output}`));
+  }, 30_000);
+  try {
+    const url = await ready;
+    return { child, url, output: () => output };
+  } catch (error) {
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGTERM");
+      await exited;
+    }
+    throw error;
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+async function randomLoopbackPort() {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Could not reserve a Vite port.");
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return address.port;
+}
+
+async function stopVite(instance: ViteInstance) {
+  if (instance.child.exitCode !== null || instance.child.signalCode !== null) return;
+  const exited = once(instance.child, "exit");
+  instance.child.kill("SIGTERM");
+  const watchdog = setTimeout(() => instance.child.kill("SIGKILL"), 5000);
+  try {
+    await exited;
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+async function openDoingPage(
+  page: Page,
+  baseUrl: string,
+  projectKey: string,
+  worktreeName: string,
+) {
+  await page.goto(`${baseUrl}/p/${encodeURIComponent(projectKey)}/doing`);
+  const worktree = page.getByRole("button", {
+    name: `Open ${worktreeName} on e2e in Doing`,
+  });
+  await worktree.waitFor({ state: "visible" });
+  await worktree.click();
+  await page.getByRole("button", { name: "New session tab" }).waitFor({ state: "visible" });
+}
+
+async function run(executable: string, args: string[], env: NodeJS.ProcessEnv) {
+  const child = spawn(executable, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+  const [code, stdout, stderr] = await Promise.all([
+    once(child, "exit").then(([value]) => value as number),
+    readStream(child.stdout),
+    readStream(child.stderr),
+  ]);
+  if (code !== 0)
+    throw new Error(`Command failed: ${executable} ${args.join(" ")}\n${stderr}\n${stdout}`);
+}
+
+async function readStream(stream: NodeJS.ReadableStream | null) {
+  if (!stream) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString();
+}
+
+type FakePrompt = { sessionID: string; id: string; text: string };
+type FakeTurn = { prompt: FakePrompt; assistantID: string };
+
+class FakeOpenCode {
+  private readonly server = createServer((request, response) => {
+    void this.handle(request, response).catch((error: unknown) => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.errors.push(failure.message);
+      for (const waiter of this.promptWaiters.splice(0)) waiter.reject(failure);
+      for (const waiter of this.messageListWaiters.splice(0)) waiter.reject(failure);
+      if (!response.headersSent)
+        json(response, 500, { errors: [{ message: "Fake service failed." }] });
+      else response.destroy();
+    });
+  });
+  private readonly eventStreams = new Set<ServerResponse>();
+  private readonly promptWaiters: {
+    count: number;
+    resolve: (prompt: FakePrompt) => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  private readonly messageListWaiters: {
+    count: number;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  private readonly sessionMessages: Record<string, unknown>[] = [];
+  private active = false;
+  private messageListCount = 0;
+  readonly prompts: FakePrompt[] = [];
+  readonly errors: string[] = [];
+  sessionCreates = 0;
+  url = "";
+
+  get messageLists() {
+    return this.messageListCount;
+  }
+
+  async listen() {
+    await new Promise<void>((resolve, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = this.server.address();
+    assert(address && typeof address !== "string");
+    this.url = `http://127.0.0.1:${address.port}`;
+  }
+
+  async waitForPromptCount(count: number) {
+    const existing = this.prompts[count - 1];
+    if (existing) return existing;
+    return new Promise<FakePrompt>((resolve, reject) => {
+      const timeout = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Timed out waiting for fake prompt ${count}.${this.errors.length ? ` ${this.errors.join("; ")}` : ""}`,
+            ),
+          ),
+        15_000,
+      );
+      this.promptWaiters.push({
+        count,
+        resolve: (prompt) => {
+          clearTimeout(timeout);
+          resolve(prompt);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+    });
+  }
+
+  async waitForMessageListCount(count: number) {
+    if (this.messageListCount >= count) return;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error(`Timed out waiting for fake message list ${count}.`)),
+        15_000,
+      );
+      this.messageListWaiters.push({
+        count,
+        resolve: () => {
+          clearTimeout(timeout);
+          resolve();
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+    });
+  }
+
+  startTurn(prompt: FakePrompt): FakeTurn {
+    assert.equal(prompt.sessionID, nativeSessionID);
+    this.active = true;
+    const assistantID = `assistant-${this.prompts.indexOf(prompt) + 1}`;
+    this.sessionMessages.push({
+      id: assistantID,
+      sessionID: nativeSessionID,
+      type: "assistant",
+      time: { created: Date.now() },
+      agent: "build",
+      model: { providerID: "fake", modelID: "fixture" },
+      content: [{ type: "text", text: "" }],
+    });
+    return { prompt, assistantID };
+  }
+
+  emitTextStarted(turn: FakeTurn) {
+    this.emit({
+      type: "session.text.started",
+      id: randomID(),
+      created: Date.now(),
+      data: { sessionID: nativeSessionID, assistantMessageID: turn.assistantID, ordinal: 0 },
+    });
+  }
+
+  emitTextDelta(turn: FakeTurn, delta: string) {
+    this.updateAssistant(turn, delta);
+    this.emit({
+      type: "session.text.delta",
+      id: randomID(),
+      created: Date.now(),
+      data: { sessionID: nativeSessionID, assistantMessageID: turn.assistantID, ordinal: 0, delta },
+    });
+  }
+
+  completeTurn(turn: FakeTurn, reply: string, emitSettled = true) {
+    this.updateAssistant(turn, reply, true);
+    this.active = false;
+    if (emitSettled) {
+      this.emit({
+        type: "session.execution.succeeded",
+        id: randomID(),
+        created: Date.now(),
+        data: { sessionID: nativeSessionID },
+      });
+    } else {
+      for (const response of this.eventStreams) response.end();
+      this.eventStreams.clear();
+    }
+  }
+
+  async close() {
+    for (const response of this.eventStreams) response.end();
+    this.eventStreams.clear();
+    if (!this.server.listening) return;
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  private async handle(request: IncomingMessage, response: ServerResponse) {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const path = url.pathname;
+    if (path === "/api/info" && request.method === "GET")
+      return json(response, 200, {
+        version: "2.4.1",
+        pid: process.pid,
+        urls: [this.url],
+        paths: { tmp: "/tmp" },
+      });
+    if (path === "/api/event" && request.method === "GET") {
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      this.eventStreams.add(response);
+      response.on("close", () => this.eventStreams.delete(response));
+      response.write(
+        `data: ${JSON.stringify({ type: "server.connected", id: randomID(), data: {} })}\n\n`,
+      );
+      return;
+    }
+    if (path === "/api/session" && request.method === "POST") {
+      await readJson(request);
+      this.sessionCreates += 1;
+      return json(response, 200, { data: { id: nativeSessionID } });
+    }
+    if (path === "/api/session/active" && request.method === "GET")
+      return json(response, 200, { data: this.active ? { [nativeSessionID]: {} } : {} });
+
+    const promptMatch = path.match(/^\/api\/session\/([^/]+)\/prompt$/);
+    if (promptMatch && request.method === "POST") {
+      const sessionID = decodeURIComponent(promptMatch[1]!);
+      const body = await readJson(request);
+      if (sessionID !== nativeSessionID)
+        return json(response, 409, { errors: [{ message: "Unexpected native session." }] });
+      const prompt: FakePrompt = {
+        sessionID,
+        id: String(body.id ?? `user-${this.prompts.length + 1}`),
+        text: String(body.text ?? ""),
+      };
+      assert.match(prompt.id, /^msg_[0-9a-f]{32}$/);
+      this.prompts.push(prompt);
+      this.sessionMessages.push({
+        id: prompt.id,
+        sessionID,
+        type: "user",
+        time: { created: Date.now() },
+        payload: { text: prompt.text },
+        delivery: { status: "delivered" },
+      });
+      for (const waiter of this.promptWaiters.splice(0)) {
+        const item = this.prompts[waiter.count - 1];
+        if (item) waiter.resolve(item);
+        else this.promptWaiters.push(waiter);
+      }
+      return json(response, 200, {
+        data: {
+          id: prompt.id,
+          sessionID,
+          type: "user",
+          time: { created: Date.now() },
+          payload: { text: prompt.text },
+          delivery: { status: "delivered" },
+        },
+      });
+    }
+
+    const messageMatch = path.match(/^\/api\/session\/([^/]+)\/message$/);
+    if (messageMatch && request.method === "GET") {
+      const cursor = url.searchParams.get("cursor");
+      assert.equal(url.searchParams.has("order"), !cursor);
+      this.messageListCount += 1;
+      for (const waiter of this.messageListWaiters.splice(0)) {
+        if (this.messageListCount >= waiter.count) waiter.resolve();
+        else this.messageListWaiters.push(waiter);
+      }
+      return json(response, 200, {
+        data: cursor ? [] : this.sessionMessages,
+        cursor: cursor ? {} : { next: "fake-next-page" },
+      });
+    }
+
+    const sessionMatch = path.match(/^\/api\/session\/([^/]+)$/);
+    if (sessionMatch && request.method === "GET")
+      return json(response, 200, { data: { id: decodeURIComponent(sessionMatch[1]!) } });
+
+    return json(response, 404, { errors: [{ message: "Fake OpenCode route not found." }] });
+  }
+
+  private updateAssistant(turn: FakeTurn, text: string, finished = false) {
+    const message = this.sessionMessages.find((entry) => entry.id === turn.assistantID)!;
+    message.content = [{ type: "text", text }];
+    if (finished) {
+      message.finish = "stop";
+      message.time = { created: Date.now(), completed: Date.now() };
+    }
+  }
+
+  private emit(event: object) {
+    for (const response of this.eventStreams) response.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+}
+
+function json(response: ServerResponse, status: number, body: unknown) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+
+async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(Buffer.from(chunk));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+}
+
+function randomID() {
+  return crypto.randomUUID();
+}
+
+await main();

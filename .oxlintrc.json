@@ -10,6 +10,8 @@
               "@octokit/**",
               "azure-devops-node-api",
               "azure-devops-node-api/**",
+              "@opencode/client",
+              "@opencode/client/**",
               "simple-git",
               "simple-git/**"
             ],

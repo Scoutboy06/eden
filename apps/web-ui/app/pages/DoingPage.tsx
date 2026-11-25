@@ -18,6 +18,8 @@ import { createWorktreeDemoTask } from "@/pages/worktree-demo";
 import { worktreeSelectionKey } from "@/pages/worktree-selection";
 import type { WorktreeProjection } from "@/pages/worktrees";
 import { useWorktreeTerminals } from "@/pages/use-worktree-terminals";
+import { useWorktreeConversations } from "@/pages/use-worktree-conversations";
+import { OpenCodeConversationPane } from "@/pages/OpenCodeConversationPane";
 import { agentHarnesses, isAgentHarness, type AgentHarness } from "../../shared/agent-harnesses";
 
 const TerminalPane = lazy(() =>
@@ -73,6 +75,7 @@ function Workspace({
   selected: boolean;
 }) {
   const [selectedTab, setSelectedTab] = useState("reviews");
+  const [conversationError, setConversationError] = useState<string | null>(null);
   const focusSession = useRef<string | null>(null);
   const launching = useRef(false);
   const { sessions, availableHarnesses, connected, error, create, end } = useWorktreeTerminals(
@@ -85,6 +88,12 @@ function Workspace({
       setSelectedTab(id);
     },
   );
+  const conversationsState = useWorktreeConversations(
+    project,
+    task.worktree?.name,
+    task.worktree?.branch ?? null,
+    selected,
+  );
   const claimLaunchFocus = useCallback((id: string) => {
     if (focusSession.current !== id) return false;
     focusSession.current = null;
@@ -95,17 +104,33 @@ function Workspace({
     launching.current = create(harness);
   }
 
+  async function launchConversation() {
+    try {
+      const conversation = await conversationsState.create();
+      if (conversation) setSelectedTab(conversation.id);
+    } catch {
+      setConversationError("Could not create an OpenCode conversation.");
+    }
+  }
+
   function restoreMenuFocus() {
     const shouldRestore = !launching.current;
     launching.current = false;
     return shouldRestore;
   }
   let terminalNumber = 0;
-  const tabs = sessions.map(({ id, harness }) => ({
+  const terminalTabs = sessions.map(({ id, harness }) => ({
     id,
     harness,
     title: isAgentHarness(harness) ? agentHarnesses[harness].title : `Terminal ${++terminalNumber}`,
+    kind: "terminal" as const,
   }));
+  const conversationTabs = conversationsState.conversations.map((conversation, index) => ({
+    id: conversation.id,
+    title: `OpenCode conversation ${index + 1}`,
+    kind: "conversation" as const,
+  }));
+  const tabs = [...terminalTabs, ...conversationTabs];
   const active =
     selectedTab === "reviews" || tabs.some(({ id }) => id === selectedTab) ? selectedTab : "diff";
 
@@ -156,18 +181,20 @@ function Workspace({
                     className="h-11 flex-none rounded-none pr-8 pl-4 after:bottom-0!"
                   >
                     <span aria-hidden="true" className="font-mono text-xs text-muted-foreground">
-                      {tab.harness ? "◉" : ">_"}
+                      {tab.kind === "conversation" ? "✳" : tab.harness ? "◉" : ">_"}
                     </span>
                     <span className="max-w-40 truncate">{tab.title}</span>
                   </TabsTrigger>
-                  <button
-                    type="button"
-                    aria-label={`Close ${tab.title}`}
-                    onClick={() => end(tab.id)}
-                    className="absolute right-1.5 rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-                  >
-                    ×
-                  </button>
+                  {tab.kind === "terminal" ? (
+                    <button
+                      type="button"
+                      aria-label={`Close ${tab.title}`}
+                      onClick={() => end(tab.id)}
+                      className="absolute right-1.5 rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      ×
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </TabsList>
@@ -180,6 +207,11 @@ function Workspace({
               +
             </DropdownMenuTrigger>
             <DropdownMenuContent finalFocus={restoreMenuFocus}>
+              <DropdownMenuItem onClick={() => void launchConversation()}>
+                <span aria-hidden="true">✳</span>
+                OpenCode conversation
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               {Object.keys(agentHarnesses)
                 .filter(isAgentHarness)
                 .map((harness) => {
@@ -221,9 +253,9 @@ function Workspace({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {error && (
+        {(error || conversationError || conversationsState.error) && (
           <p role="alert" className="px-4 py-2 text-sm text-destructive">
-            {error}
+            {error ?? conversationError ?? conversationsState.error}
           </p>
         )}
         <TabsContent value="reviews" className="overflow-y-auto p-6">
@@ -232,17 +264,28 @@ function Workspace({
         <TabsContent value="diff" className="overflow-y-auto p-6">
           <Diff task={task} />
         </TabsContent>
-        {tabs.map(({ id }) => (
-          <TabsContent key={id} value={id} className="relative min-h-0 overflow-hidden">
-            {selected && active === id && (
+        {tabs.map((tab) => (
+          <TabsContent
+            key={tab.id}
+            value={tab.id}
+            className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
+            {tab.kind === "conversation" ? (
+              selected && active === tab.id ? (
+                <OpenCodeConversationPane
+                  conversation={conversationsState.conversations.find(({ id }) => id === tab.id)!}
+                  refresh={conversationsState.refresh}
+                />
+              ) : null
+            ) : selected && active === tab.id ? (
               <Suspense
                 fallback={
                   <div className="p-4 text-sm text-muted-foreground">Loading terminal…</div>
                 }
               >
-                <TerminalPane sessionId={id} claimLaunchFocus={claimLaunchFocus} />
+                <TerminalPane sessionId={tab.id} claimLaunchFocus={claimLaunchFocus} />
               </Suspense>
-            )}
+            ) : null}
           </TabsContent>
         ))}
       </Tabs>

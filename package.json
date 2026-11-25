@@ -14,6 +14,7 @@
     "test:fast": "bun run scripts/test.ts fast",
     "test:integration": "bun run scripts/test.ts integration",
     "test:full": "bun run scripts/test.ts full",
+    "test:opencode-e2e": "bun run scripts/opencode-conversations-e2e.ts",
     "test:profile": "bun run scripts/profile-tests.ts",
     "lint": "oxlint",
     "fmt": "oxfmt",
@@ -31,6 +32,7 @@
     "@clack/core": "^1.5.1",
     "@clack/prompts": "^1.8.1",
     "@octokit/rest": "^22.0.1",
+    "@opencode/client": "2.4.1",
     "azure-devops-node-api": "^17.0.1",
     "gunshi": "^0.37.3",
     "simple-git": "^4.0.2",
@@ -42,7 +44,8 @@
     "fallow": "^3.33.1",
     "husky": "^9.1.7",
     "oxfmt": "^0.72.0",
-    "oxlint": "^1.87.0"
+    "oxlint": "^1.87.0",
+    "playwright": "1.62.1"
   },
   "peerDependencies": {
     "typescript": "^7"

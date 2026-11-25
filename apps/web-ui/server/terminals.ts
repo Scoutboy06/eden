@@ -27,7 +27,7 @@ type TerminalSession = RuntimeTerminal & {
   screen: string;
 };
 
-type TerminalScope = { project: string; worktree: string; branch: string | null };
+export type TerminalScope = { project: string; worktree: string; branch: string | null };
 
 export type TerminalDependencies = {
   readProjects: () => Promise<Record<string, { name: string; path: string }>>;
@@ -290,9 +290,9 @@ async function startSession(
   }
 }
 
-async function resolveWorktree(
+export async function resolveWorktree(
   { project: projectKey, worktree: name, branch }: TerminalScope,
-  dependencies: TerminalDependencies,
+  dependencies: Pick<TerminalDependencies, "readProjects" | "worktrees">,
 ) {
   const projects = await dependencies.readProjects();
   const project = Object.hasOwn(projects, projectKey) ? projects[projectKey] : undefined;
