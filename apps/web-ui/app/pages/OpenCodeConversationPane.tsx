@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/input-group";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import { sendConversationMessage, type Conversation } from "@/pages/conversations";
+import { Streamdown } from "streamdown";
 
 export function OpenCodeConversationPane({
   conversation,
@@ -75,9 +76,12 @@ export function OpenCodeConversationPane({
                       <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
                     </Bubble>
                   ) : (
-                    <div className="whitespace-pre-wrap px-3 py-2 text-sm leading-relaxed">
+                    <Streamdown
+                      className="px-3 py-2 text-sm leading-relaxed"
+                      isAnimating={conversation.status === "active"}
+                    >
                       {message.text}
-                    </div>
+                    </Streamdown>
                   )}
                 </MessageContent>
               </Message>

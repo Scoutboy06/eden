@@ -62,16 +62,47 @@ async function main() {
     const firstComposer = firstPage.getByRole("textbox", { name: "Message OpenCode" });
     await firstComposer.waitFor({ state: "visible" });
 
-    await firstComposer.fill("first fake prompt");
+    await firstComposer.fill("**first fake prompt**");
     await firstComposer.press("Enter");
     const firstPrompt = await fake.waitForPromptCount(1);
     let messageListCount = fake.messageLists;
     const firstTurn = fake.startTurn(firstPrompt);
     fake.emitTextStarted(firstTurn);
-    fake.emitTextDelta(firstTurn, "Partial fake reply");
+    const markdownPartial = [
+      "# Streamed reply",
+      "",
+      "This has **bold formatting** and a streamed list:",
+      "",
+      ...Array.from({ length: 42 }, (_, index) => `- item ${index + 1}`),
+      "",
+      "```ts",
+      "const answer = 42;",
+    ].join("\n");
+    fake.emitTextDelta(firstTurn, markdownPartial);
     await fake.waitForMessageListCount(++messageListCount);
 
-    await firstPage.getByText("Partial fake reply", { exact: true }).waitFor();
+    await firstPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
+    await firstPage.getByText("bold formatting", { exact: true }).waitFor();
+    await firstPage.getByRole("listitem").filter({ hasText: "item 42" }).waitFor();
+    const firstTranscript = firstPage.getByRole("region", { name: "Conversation transcript" });
+    const promptMarkup = firstPage.locator('[data-slot="bubble"] strong');
+    assert.equal(await promptMarkup.count(), 0, "user prompts remain plain text");
+    assert.equal(
+      await firstPage
+        .locator('[data-slot="bubble"]')
+        .getByText("**first fake prompt**", { exact: true })
+        .count(),
+      1,
+    );
+    const partialCode = firstPage.locator("pre code");
+    await partialCode.filter({ hasText: "const answer = 42;" }).waitFor();
+    assert.ok(
+      await firstTranscript.evaluate(
+        (element) => element.scrollHeight > element.clientHeight + 100,
+      ),
+      "long streamed Markdown creates a scrollable transcript",
+    );
+
     const secondContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     contexts.push(secondContext);
     const secondPage = await secondContext.newPage();
@@ -79,7 +110,21 @@ async function main() {
     const secondTab = secondPage.getByRole("tab", { name: "OpenCode conversation 1" });
     await secondTab.waitFor({ state: "visible" });
     await secondTab.click();
-    await secondPage.getByText("Partial fake reply", { exact: true }).waitFor();
+    await secondPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
+    await secondPage.locator("pre code").filter({ hasText: "const answer = 42;" }).waitFor();
+
+    await firstTranscript.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    fake.emitTextDelta(firstTurn, "\n```\n\nCompleted fenced code.");
+    await firstPage.getByText("Completed fenced code.", { exact: true }).waitFor();
+    assert.equal(
+      await firstTranscript.evaluate((element) => element.scrollTop),
+      0,
+      "streaming Markdown does not pull a reader away from earlier content",
+    );
+    await secondPage.getByText("Completed fenced code.", { exact: true }).waitFor();
 
     const overlapping = await secondPage.evaluate(async (id) => {
       const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
@@ -92,9 +137,11 @@ async function main() {
     assert.equal(overlapping, 409, "a second browser cannot overlap a running turn");
     assert.equal(fake.prompts.length, 1, "a conflicting send never reaches OpenCode");
 
-    fake.completeTurn(firstTurn, "First fake final reply");
-    await firstPage.getByText("First fake final reply", { exact: true }).waitFor();
-    await secondPage.getByText("First fake final reply", { exact: true }).waitFor();
+    const markdownFinal = `${markdownPartial}\n\`\`\`\n\nCompleted fenced code.`;
+    fake.completeTurn(firstTurn, markdownFinal);
+    await firstPage.getByText("Completed fenced code.", { exact: true }).waitFor();
+    await secondPage.getByText("Completed fenced code.", { exact: true }).waitFor();
+    await firstPage.locator("pre code").filter({ hasText: "const answer = 42;" }).waitFor();
     assert.equal(fake.sessionCreates, 1);
 
     for (const context of contexts.splice(0)) await context.close();
@@ -108,7 +155,7 @@ async function main() {
     const reopenedTab = reopenedPage.getByRole("tab", { name: "OpenCode conversation 1" });
     await reopenedTab.waitFor({ state: "visible" });
     await reopenedTab.click();
-    await reopenedPage.getByText("First fake final reply", { exact: true }).waitFor();
+    await reopenedPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
     assert.equal(fake.prompts.length, 1, "reopening after server restart does not replay a turn");
     assert.equal(fake.sessionCreates, 1, "reopening reuses the durable Eden transcript");
 
@@ -154,6 +201,9 @@ async function main() {
       .getByText("Recovered session still streams to final", { exact: true })
       .waitFor();
     assert.deepEqual(fake.errors, []);
+
+    if (process.env.EDEN_CONVERSATION_E2E_SCREENSHOT)
+      await reopenedPage.screenshot({ path: process.env.EDEN_CONVERSATION_E2E_SCREENSHOT });
 
     console.log(
       JSON.stringify({
