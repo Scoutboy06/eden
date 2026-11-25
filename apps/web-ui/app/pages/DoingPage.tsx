@@ -17,6 +17,7 @@ import { formatPullRequestReference } from "@/pages/prs-data";
 import { createWorktreeDemoTask } from "@/pages/worktree-demo";
 import { worktreeSelectionKey } from "@/pages/worktree-selection";
 import type { WorktreeProjection } from "@/pages/worktrees";
+import { useWorktreeDiff } from "@/pages/use-worktree-diff";
 import { useWorktreeTerminals } from "@/pages/use-worktree-terminals";
 import { useWorktreeConversations } from "@/pages/use-worktree-conversations";
 import { OpenCodeConversationPane } from "@/pages/OpenCodeConversationPane";
@@ -24,6 +25,9 @@ import { agentHarnesses, isAgentHarness, type AgentHarness } from "../../shared/
 
 const TerminalPane = lazy(() =>
   import("@/pages/TerminalPane").then((module) => ({ default: module.TerminalPane })),
+);
+const DiffViewer = lazy(() =>
+  import("@/components/diff-viewer").then((module) => ({ default: module.DiffViewer })),
 );
 
 export function DoingPage() {
@@ -94,6 +98,12 @@ function Workspace({
     task.worktree?.branch ?? null,
     selected,
   );
+  const diffState = useWorktreeDiff(
+    project,
+    task.worktree?.name,
+    task.worktree?.branch ?? null,
+    selected,
+  );
   const claimLaunchFocus = useCallback((id: string) => {
     if (focusSession.current !== id) return false;
     focusSession.current = null;
@@ -146,7 +156,7 @@ function Workspace({
           <h1 className="mt-1 truncate text-sm font-semibold">{task.worktree?.name}</h1>
         </div>
         <span className="shrink-0 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground">
-          Demo workspace
+          Local worktree
         </span>
       </header>
       <Tabs
@@ -262,7 +272,7 @@ function Workspace({
           <Reviews task={task} />
         </TabsContent>
         <TabsContent value="diff" className="overflow-y-auto p-6">
-          <Diff task={task} />
+          <Diff task={task} diffState={diffState} />
         </TabsContent>
         {tabs.map((tab) => (
           <TabsContent
@@ -342,7 +352,7 @@ function Reviews({ task }: { task: Task }) {
   );
 }
 
-function Diff({ task }: { task: Task }) {
+function Diff({ task, diffState }: { task: Task; diffState: ReturnType<typeof useWorktreeDiff> }) {
   if (!task.worktree)
     return (
       <EmptyPanel
@@ -352,41 +362,47 @@ function Diff({ task }: { task: Task }) {
     );
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      <div>
-        <h2 className="text-sm font-semibold">Working tree changes</h2>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">
-          {task.worktree.branch ?? task.worktree.name}
-        </p>
-      </div>
-      {task.key === "CODE-20388" ? (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-3 text-xs">
-            <span className="font-mono">src/page-metadata.ts</span>
-            <span className="text-muted-foreground">Illustrative diff · not live Git data</span>
-          </div>
-          <pre className="overflow-x-auto py-4 font-mono text-xs leading-7">
-            <code>
-              <span className="block px-4 text-muted-foreground">@@ -12,3 +12,4 @@</span>
-              <span className="block bg-red-500/10 px-4 text-red-700 dark:text-red-300">
-                - const title = page.title;
-              </span>
-              <span className="block bg-emerald-500/10 px-4 text-emerald-700 dark:text-emerald-300">
-                + const title = translatePageTitle(page, locale);
-              </span>
-              <span className="block bg-emerald-500/10 px-4 text-emerald-700 dark:text-emerald-300">
-                + const socialTitle = title;
-              </span>
-              <span className="block px-4"> return createMeta(title, socialTitle);</span>
-            </code>
-          </pre>
+    <div className="mx-auto max-w-5xl space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold">Working tree changes</h2>
+          <p className="mt-1 font-mono text-xs text-muted-foreground">
+            {task.worktree.branch ?? task.worktree.name} · compared with{" "}
+            {diffState.diff?.base ?? "HEAD"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Includes staged, unstaged, and untracked changes; excludes commit history.
+          </p>
         </div>
-      ) : (
+        <button
+          type="button"
+          onClick={() => void diffState.refresh()}
+          disabled={diffState.loading}
+          className="shrink-0 rounded border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          {diffState.loading ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      {diffState.error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {diffState.error}
+        </p>
+      ) : null}
+      {diffState.loading && !diffState.diff ? (
         <EmptyPanel
-          title="No demo changes"
-          description="Diff details are illustrative and are not connected to this live worktree."
+          title="Loading changes"
+          description="Reading staged, unstaged, and untracked files from the selected worktree."
         />
-      )}
+      ) : diffState.diff ? (
+        <Suspense
+          fallback={<div className="p-4 text-sm text-muted-foreground">Loading diff viewer…</div>}
+        >
+          <DiffViewer
+            files={diffState.diff.files}
+            omittedFileCount={diffState.diff.omittedFileCount}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

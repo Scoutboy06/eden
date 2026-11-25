@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -31,6 +31,7 @@ async function main() {
       mkdir(projectPath, { recursive: true }),
     ]);
     await initializeGitProject(projectPath, configHome);
+    await prepareDiffFixture(projectPath);
     const registered = await createProjectRegistry({
       stateHome,
       configHome,
@@ -51,6 +52,38 @@ async function main() {
     contexts.push(firstContext);
     const firstPage = await firstContext.newPage();
     await openDoingPage(firstPage, vite.url, registered.key, basename(projectPath));
+    const diffResponsePromise = firstPage.waitForResponse((response) =>
+      response.url().includes("/api/worktree-diff"),
+    );
+    await firstPage.getByRole("tab", { name: "Diff" }).click();
+    const diffResponse = await diffResponsePromise;
+    if (!diffResponse.ok())
+      throw new Error(
+        `Worktree diff returned ${diffResponse.status()}: ${await diffResponse.text()}`,
+      );
+    await firstPage.getByText(/state = 'working'/).waitFor();
+    await firstPage.getByText(/state = 'before'/).waitFor();
+    await firstPage.getByText("staged only").waitFor();
+    await firstPage.getByText("staged addition").waitFor();
+    await firstPage.getByText("untracked addition").waitFor();
+    await firstPage.getByText("Binary file; text preview is not available.").waitFor();
+    await firstPage.getByText("File exceeds the preview size limit.").waitFor();
+    await firstPage.getByTitle("rename-old.txt").waitFor();
+    await firstPage.getByTitle("deleted.txt").waitFor();
+    await firstPage.getByTitle("outside-link").waitFor();
+    await firstPage.getByTitle("odd\nname.txt").waitFor();
+    await firstPage.getByText("excludes commit history").waitFor();
+    if (process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT)
+      await firstPage.screenshot({ path: process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT });
+    await firstPage.setViewportSize({ width: 900, height: 900 });
+    const documentWidth = await firstPage.evaluate(
+      () => [document.documentElement.scrollWidth, window.innerWidth] as const,
+    );
+    assert.ok(
+      documentWidth[0] <= documentWidth[1] + 1,
+      "the diff viewer stays within a narrow browser viewport",
+    );
+    await firstPage.getByRole("tab", { name: "Reviews" }).click();
     const createdResponse = firstPage.waitForResponse(
       (response) =>
         response.url().endsWith("/api/conversations") && response.request().method() === "POST",
@@ -237,12 +270,44 @@ async function initializeGitProject(path: string, configHome: string) {
     GIT_CONFIG_GLOBAL: join(configHome, "gitconfig"),
     GIT_CONFIG_NOSYSTEM: "1",
   };
-  await writeFile(join(path, "README.md"), "# OpenCode E2E fixture\n");
+  await Promise.all([
+    writeFile(join(path, "README.md"), "# OpenCode E2E fixture\n"),
+    writeFile(join(path, "modified.ts"), "export const state = 'before';\n"),
+    writeFile(join(path, "staged.txt"), "before\n"),
+    writeFile(join(path, "deleted.txt"), "before\n"),
+    writeFile(join(path, "rename-old.txt"), "rename me\n"),
+  ]);
   await run(git, ["-C", path, "init", "--initial-branch=e2e"], env);
   await run(git, ["-C", path, "config", "user.name", "Eden E2E"], env);
   await run(git, ["-C", path, "config", "user.email", "e2e@example.invalid"], env);
-  await run(git, ["-C", path, "add", "README.md"], env);
+  await run(git, ["-C", path, "add", "."], env);
   await run(git, ["-C", path, "commit", "--quiet", "-m", "fixture"], env);
+}
+
+async function prepareDiffFixture(path: string) {
+  const git = Bun.which("git");
+  if (!git) throw new Error("Git is required for the isolated E2E project.");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: join(path, "gitconfig"),
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+  await writeFile(join(path, "modified.ts"), "export const state = 'staged';\n");
+  await run(git, ["-C", path, "add", "modified.ts"], env);
+  await writeFile(join(path, "modified.ts"), "export const state = 'working';\n");
+  await writeFile(join(path, "staged.txt"), "staged only\n");
+  await run(git, ["-C", path, "add", "staged.txt"], env);
+  await writeFile(join(path, "new-staged.txt"), "staged addition\n");
+  await run(git, ["-C", path, "add", "new-staged.txt"], env);
+  await run(git, ["-C", path, "rm", "--quiet", "deleted.txt"], env);
+  await run(git, ["-C", path, "mv", "rename-old.txt", "renamed.txt"], env);
+  await Promise.all([
+    writeFile(join(path, "untracked.txt"), "untracked addition\n"),
+    writeFile(join(path, "odd\nname.txt"), "unusual filename\n"),
+    writeFile(join(path, "binary.dat"), new Uint8Array([0, 1, 2, 255])),
+    writeFile(join(path, "large.txt"), "x".repeat(256 * 1024 + 1)),
+  ]);
+  await symlink("/etc/passwd", join(path, "outside-link"));
 }
 
 function isolatedEnvironment({

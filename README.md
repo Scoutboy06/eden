@@ -26,8 +26,10 @@ bun run test:opencode-e2e
 
 The OpenCode conversation E2E suite requires Chromium (`bunx playwright install chromium`).
 It runs Eden with isolated HOME/XDG state and a scratch Git project, using only a
-test-owned fake OpenCode service on loopback. It owns a random-port Vite process
-and does not contact installed OpenCode services or real models.
+test-owned fake OpenCode service on loopback. It also verifies the Doing diff
+viewer against staged, unstaged, untracked, binary, large, renamed, and unusual-name
+files in that scratch repository. It owns a random-port Vite process and does not
+contact installed OpenCode services or real models.
 
 The task board reads each configured repository's existing Beads (`bd`) configuration.
 Install `bd` and verify `bd list` first. Task data requires the Vite dev or preview server.

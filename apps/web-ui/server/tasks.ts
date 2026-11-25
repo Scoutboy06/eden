@@ -6,6 +6,7 @@ import { handleProjectImport } from "./import-project";
 import { listProjectDirectories } from "./project-directories";
 import { handleTaskDetail, taskDetails } from "./task-detail";
 import { projectWorktrees } from "./worktrees";
+import { createWorktreeDiffMiddleware } from "./worktree-diff";
 
 type Projects = Record<string, { name: string; path: string }>;
 
@@ -22,12 +23,16 @@ export function createTasksMiddleware(
 ) {
   const tasks = createTaskMiddleware(readTasks, readProjects, details);
   const worktrees = createWorktreeMiddleware(readProjects, readWorktrees);
+  const diffs = createWorktreeDiffMiddleware({ readProjects });
 
   return (
     request: IncomingMessage & { originalUrl?: string },
     response: ServerResponse,
     next: () => void,
-  ) => worktrees(request, response, () => tasks(request, response, next));
+  ) =>
+    worktrees(request, response, () =>
+      diffs(request, response, () => tasks(request, response, next)),
+    );
 }
 
 function createTaskMiddleware(
