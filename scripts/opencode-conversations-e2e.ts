@@ -252,6 +252,51 @@ async function main() {
     await reopenedPage
       .getByText("Recovered session still streams to final", { exact: true })
       .waitFor();
+
+    await composer.fill("stop this turn and keep its partial reply");
+    await composer.press("Enter");
+    const stoppablePrompt = await fake.waitForPromptCount(4);
+    const stoppableTurn = fake.startTurn(stoppablePrompt);
+    fake.emitTextStarted(stoppableTurn);
+    fake.emitTextDelta(stoppableTurn, "Partial text before Stop.");
+    await reopenedPage.getByText("Partial text before Stop.", { exact: true }).waitFor();
+
+    const stopContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    contexts.push(stopContext);
+    const stopPage = await stopContext.newPage();
+    await openDoingPage(stopPage, vite.url, registered.key, basename(projectPath));
+    await stopPage.getByRole("tab", { name: "OpenCode conversation 1" }).click();
+    const stopButton = stopPage.getByRole("button", { name: "Stop" });
+    await stopButton.waitFor({ state: "visible" });
+    const stopResponsePromise = stopPage.waitForResponse((response) =>
+      response.url().endsWith(`/api/conversations/${conversationID}/stop`),
+    );
+    await stopButton.click();
+    const stopResponse = await stopResponsePromise;
+    assert.equal(stopResponse.status(), 202, await stopResponse.text());
+    await stopPage.getByText("Partial text before Stop.", { exact: true }).waitFor();
+    await reopenedPage.waitForFunction(async (id) => {
+      const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+      const body = (await response.json()) as { conversation: { status: string } };
+      return body.conversation.status === "ready";
+    }, conversationID);
+    await reopenedPage.getByText("Partial text before Stop.", { exact: true }).waitFor();
+    assert.equal(stoppablePrompt.sessionID, nativeSessionID);
+    assert.equal(fake.interruptions, 1, "Stop uses OpenCode's native interrupt API");
+    assert.equal(fake.prompts.length, 4, "Stop never replays the active prompt");
+
+    await composer.fill("continue after stopping");
+    await composer.press("Enter");
+    const postStopPrompt = await fake.waitForPromptCount(5);
+    assert.equal(
+      postStopPrompt.sessionID,
+      nativeSessionID,
+      "Send continues the same native session",
+    );
+    const postStopTurn = fake.startTurn(postStopPrompt);
+    fake.emitTextStarted(postStopTurn);
+    fake.completeTurn(postStopTurn, "Continued after Stop.");
+    await reopenedPage.getByText("Continued after Stop.", { exact: true }).waitFor();
     assert.deepEqual(fake.errors, []);
 
     if (process.env.EDEN_CONVERSATION_E2E_SCREENSHOT)
@@ -505,6 +550,7 @@ class FakeOpenCode {
   readonly prompts: FakePrompt[] = [];
   readonly errors: string[] = [];
   sessionCreates = 0;
+  interruptions = 0;
   url = "";
 
   get messageLists() {
@@ -694,6 +740,28 @@ class FakeOpenCode {
           delivery: { status: "delivered" },
         },
       });
+    }
+
+    const interruptMatch = path.match(/^\/api\/session\/([^/]+)\/interrupt$/);
+    if (interruptMatch && request.method === "POST") {
+      assert.equal(decodeURIComponent(interruptMatch[1]!), nativeSessionID);
+      this.interruptions += 1;
+      if (!this.active) return json(response, 200, { interrupted: false });
+      this.active = false;
+      const assistant = [...this.sessionMessages]
+        .reverse()
+        .find((message) => message.type === "assistant");
+      if (assistant) {
+        assistant.finish = "interrupted";
+        assistant.time = { created: Date.now(), completed: Date.now() };
+      }
+      this.emit({
+        type: "session.execution.interrupted",
+        id: randomID(),
+        created: Date.now(),
+        data: { sessionID: nativeSessionID },
+      });
+      return json(response, 200, { interrupted: true });
     }
 
     const messageMatch = path.match(/^\/api\/session\/([^/]+)\/message$/);

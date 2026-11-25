@@ -42,6 +42,9 @@ test("creates a local conversation without a provider session and reuses its nat
     async reconcileAvailable() {
       return null;
     },
+    async interrupt() {
+      return false;
+    },
     async observe() {},
     async send(id, _directory, promptID, text, onEvent) {
       expect(id).toBe(nativeSessionID);
@@ -119,6 +122,7 @@ test("rejects cross-origin requests before touching conversation storage", async
       inspect: async () => ({ active: false }),
       reconcile: async () => ({ active: false, reply: null }),
       reconcileAvailable: async () => null,
+      interrupt: async () => false,
       observe: async () => {},
       send: async () => ({ reply: "reply" }),
     },
@@ -136,6 +140,8 @@ test("rejects a second prompt while the first turn is active", async () => {
   const worktree = join(root, "checkout");
   await mkdir(worktree);
   let release!: () => void;
+  let finishActiveTurn!: () => void;
+  let sends = 0;
   const turn = new Promise<void>((resolve) => {
     release = resolve;
   });
@@ -145,13 +151,25 @@ test("rejects a second prompt while the first turn is active", async () => {
     inspect: async () => ({ active: false }),
     reconcile: async () => ({ active: false, reply: null }),
     reconcileAvailable: async () => null,
+    interrupt: async () => {
+      finishActiveTurn();
+      return true;
+    },
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
+      sends += 1;
       onEvent?.({ type: "attempting" });
       onEvent?.({ type: "accepted", userMessageID: "user-id" });
-      await turn;
-      onEvent?.({ type: "settled", reply: "reply" });
-      return { reply: "reply" };
+      if (sends === 1) {
+        finishActiveTurn = () => {
+          onEvent?.({ type: "settled", reply: "partial reply" });
+          release();
+        };
+        await turn;
+        return { reply: "partial reply" };
+      }
+      onEvent?.({ type: "settled", reply: "continued reply" });
+      return { reply: "continued reply" };
     },
   };
   const url = await start({
@@ -182,8 +200,25 @@ test("rejects a second prompt while the first turn is active", async () => {
     body: JSON.stringify({ text: "second" }),
   });
   expect(second.status).toBe(409);
-  release();
+  const stopped = await fetch(`${url}/api/conversations/${conversation.id}/stop`, {
+    method: "POST",
+    headers: { origin: url },
+  });
+  expect(stopped.status).toBe(202);
   expect((await first).status).toBe(200);
+  const stoppedConversation = await fetch(`${url}/api/conversations/${conversation.id}`);
+  const stoppedBody = (await stoppedConversation.json()) as {
+    conversation: { status: string; messages: { role: string; text: string }[] };
+  };
+  expect(stoppedBody.conversation.status).toBe("ready");
+  expect(stoppedBody.conversation.messages.at(-1)?.text).toBe("partial reply");
+  const followUp = await fetch(`${url}/api/conversations/${conversation.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "continue" }),
+  });
+  expect(followUp.status).toBe(200);
+  expect(sends).toBe(2);
 });
 
 test("two browser clients read one durable live transcript without waking the provider", async () => {
@@ -205,6 +240,7 @@ test("two browser clients read one durable live transcript without waking the pr
     inspect: async () => ({ active: false }),
     reconcile: async () => ({ active: false, reply: null }),
     reconcileAvailable: async () => null,
+    interrupt: async () => false,
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
       onEvent?.({ type: "attempting" });
@@ -309,6 +345,7 @@ test("a definitive provider preflight failure removes the unsent draft from the 
     inspect: async () => ({ active: false }),
     reconcile: async () => ({ active: false, reply: null }),
     reconcileAvailable: async () => null,
+    interrupt: async () => false,
     observe: async () => {},
     send: async () => {
       sends += 1;

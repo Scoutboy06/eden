@@ -8,7 +8,11 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
-import { sendConversationMessage, type Conversation } from "@/pages/conversations";
+import {
+  sendConversationMessage,
+  stopConversation,
+  type Conversation,
+} from "@/pages/conversations";
 import { Streamdown } from "streamdown";
 
 export function OpenCodeConversationPane({
@@ -20,6 +24,7 @@ export function OpenCodeConversationPane({
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -47,6 +52,20 @@ export function OpenCodeConversationPane({
       await refresh();
     } finally {
       setSending(false);
+    }
+  }
+
+  async function stop() {
+    setStopping(true);
+    setError(null);
+    try {
+      await stopConversation(conversation.id);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not stop this reply.");
+      await refresh();
+    } finally {
+      setStopping(false);
     }
   }
 
@@ -127,15 +146,27 @@ export function OpenCodeConversationPane({
               className="min-h-14 p-3"
             />
             <InputGroupAddon align="block-end" className="justify-end">
-              <InputGroupButton
-                type="submit"
-                variant="default"
-                size="icon-sm"
-                disabled={!draft.trim() || active}
-                aria-label="Send message"
-              >
-                ↑
-              </InputGroupButton>
+              {conversation.status === "active" || conversation.status === "blocked" ? (
+                <InputGroupButton
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={stopping}
+                  onClick={() => void stop()}
+                >
+                  {stopping ? "Stopping…" : "Stop"}
+                </InputGroupButton>
+              ) : (
+                <InputGroupButton
+                  type="submit"
+                  variant="default"
+                  size="icon-sm"
+                  disabled={!draft.trim() || active}
+                  aria-label="Send message"
+                >
+                  ↑
+                </InputGroupButton>
+              )}
             </InputGroupAddon>
           </InputGroup>
         </form>

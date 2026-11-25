@@ -248,6 +248,26 @@ async function handleConversationRequest(
     saveVisibility(database, conversation);
     return respond(response, 200, { conversation: publicConversation(conversation) });
   }
+  if (parts.length === 4 && parts[3] === "stop" && request.method === "POST") {
+    const conversation = get(database, id);
+    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+    if (
+      (conversation.status !== "active" && conversation.status !== "blocked") ||
+      !conversation.nativeSessionID
+    )
+      return respond(response, 409, { error: "There is no active reply to stop." });
+    try {
+      const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+      if (!(await client.interrupt(conversation.nativeSessionID, directory)))
+        return respond(response, 409, { error: "OpenCode no longer has an active reply." });
+      return respond(response, 202, {
+        stopping: true,
+        conversation: publicConversation(conversation),
+      });
+    } catch {
+      return respond(response, 503, { error: "OpenCode could not stop this reply." });
+    }
+  }
   if (parts.length !== 4 || parts[3] !== "send" || request.method !== "POST")
     return respond(response, 405, { error: "Method not allowed." });
   if (!acquireAction(actions, id))

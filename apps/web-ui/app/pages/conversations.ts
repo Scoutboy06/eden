@@ -71,3 +71,11 @@ export async function setConversationHidden(
   if (!response.ok) throw new Error(result.error ?? "Could not update conversation visibility.");
   return result.conversation as Conversation;
 }
+
+export async function stopConversation(id: string) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/stop`, {
+    method: "POST",
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Could not stop this reply.");
+}

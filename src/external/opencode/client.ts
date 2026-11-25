@@ -40,6 +40,7 @@ export type OpenCodeConversationClient = {
     directory: string,
     promptID: string,
   ): Promise<{ active: boolean; reply: string | null } | null>;
+  interrupt(sessionID: string, directory: string): Promise<boolean>;
   observe(
     sessionID: string,
     directory: string,
@@ -88,6 +89,13 @@ export function createOpenCodeConversationClient(
       if (!endpoint) return null;
       const client = await makeClient(endpoint, directory);
       return reconcile(client, sessionID, promptID);
+    },
+    async interrupt(sessionID, directory) {
+      const endpoint = await discover();
+      if (!endpoint) throw new Error("OpenCode is not currently reachable.");
+      const client = await makeClient(endpoint, directory);
+      const result = await client.session.interrupt({ sessionID });
+      return result.interrupted;
     },
     async observe(sessionID, directory, promptID, onEvent) {
       const endpoint = await discover();
