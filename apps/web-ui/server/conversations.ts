@@ -10,6 +10,7 @@ import { isAllowedTerminalHost, resolveWorktree } from "./terminals";
 
 type Scope = { project: string; worktree: string; branch: string | null };
 type StoredMessage = { role: "user" | "assistant"; text: string; createdAt: number };
+type Approval = { id: string; action: string; resources: string[]; message?: string };
 type Conversation = Scope & {
   id: string;
   projectPath: string;
@@ -60,7 +61,7 @@ export function createConversationMiddleware(dependencies: ConversationDependenc
 
     try {
       const db = await database();
-      if (!(await handleCollectionRequest(request, response, url, db, dependencies))) {
+      if (!(await handleCollectionRequest(request, response, url, db, client, dependencies))) {
         const parts = url.pathname.split("/").filter(Boolean);
         await handleConversationRequest(
           request,
@@ -176,16 +177,23 @@ async function handleCollectionRequest(
   response: ServerResponse,
   url: URL,
   database: Database,
+  client: OpenCodeConversationClient,
   dependencies: ConversationDependencies,
 ) {
   if (url.pathname !== "/api/conversations") return false;
   if (request.method === "GET") {
+    const conversations = list(
+      database,
+      url.searchParams.get("project"),
+      url.searchParams.get("worktree"),
+      url.searchParams.get("branch") || null,
+    );
     respond(response, 200, {
-      ...list(
-        database,
-        url.searchParams.get("project"),
-        url.searchParams.get("worktree"),
-        url.searchParams.get("branch") || null,
+      conversations: await Promise.all(
+        conversations.conversations.map((item) => withApprovals(item, client)),
+      ),
+      hiddenConversations: await Promise.all(
+        conversations.hiddenConversations.map((item) => withApprovals(item, client)),
       ),
     });
     return true;
@@ -231,7 +239,19 @@ async function handleConversationRequest(
   if (parts.length === 3 && request.method === "GET") {
     const conversation = get(database, id);
     if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-    return respond(response, 200, { conversation: publicConversation(conversation) });
+    return respond(response, 200, { conversation: await withApprovals(conversation, client) });
+  }
+  if (parts.length === 5 && parts[3] === "permissions" && request.method === "POST") {
+    return handlePermissionReply({
+      conversationID: id,
+      requestID: decodeURIComponent(parts[4]!),
+      request,
+      response,
+      database,
+      client,
+      dependencies,
+      actions,
+    });
   }
   if (
     parts.length === 4 &&
@@ -306,6 +326,70 @@ async function handleConversationRequest(
   } finally {
     releaseAction(actions, id);
   }
+}
+
+async function handlePermissionReply({
+  conversationID,
+  requestID,
+  request,
+  response,
+  database,
+  client,
+  dependencies,
+  actions,
+}: {
+  conversationID: string;
+  requestID: string;
+  request: IncomingMessage;
+  response: ServerResponse;
+  database: Database;
+  client: OpenCodeConversationClient;
+  dependencies: ConversationDependencies;
+  actions: Set<string>;
+}) {
+  const conversation = get(database, conversationID);
+  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+  const body = await readBody(request);
+  if (body.decision !== "once" && body.decision !== "always" && body.decision !== "reject")
+    return respond(response, 400, { error: "Choose a native OpenCode permission response." });
+  const actionID = `permission:${conversationID}:${requestID}`;
+  if (!acquireAction(actions, actionID))
+    return respond(response, 409, { error: "This permission request has already been answered." });
+  try {
+    if (
+      !conversation.nativeSessionID ||
+      (conversation.status !== "blocked" &&
+        conversation.status !== "active" &&
+        conversation.status !== "incomplete")
+    )
+      return respond(response, 409, { error: "This permission request is no longer pending." });
+    const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+    const pending = await client.permissions(conversation.nativeSessionID, directory);
+    if (!pending.some(({ id }) => id === requestID))
+      return respond(response, 409, { error: "This permission request is no longer pending." });
+    await client.replyPermission(conversation.nativeSessionID, directory, requestID, body.decision);
+    return respond(response, 200, {
+      conversation: await withApprovals(conversation, client),
+    });
+  } catch {
+    return respond(response, 409, { error: "This permission request is no longer pending." });
+  } finally {
+    releaseAction(actions, actionID);
+  }
+}
+
+async function withApprovals(conversation: Conversation, client: OpenCodeConversationClient) {
+  let approvals: Approval[] = [];
+  if (conversation.nativeSessionID && conversation.activePromptID) {
+    try {
+      approvals = await client.permissions(conversation.nativeSessionID, conversation.directory);
+    } catch {}
+  }
+  return {
+    ...publicConversation(conversation),
+    status: approvals.length ? "blocked" : conversation.status,
+    approvals,
+  };
 }
 
 async function sendMessage(
@@ -545,8 +629,8 @@ function list(
     .map((row) => parseRow(row as Record<string, unknown>))
     .filter((item) => item.branch === branch);
   return {
-    conversations: conversations.filter((item) => !item.hidden).map(publicConversation),
-    hiddenConversations: conversations.filter((item) => item.hidden).map(publicConversation),
+    conversations: conversations.filter((item) => !item.hidden),
+    hiddenConversations: conversations.filter((item) => item.hidden),
   };
 }
 

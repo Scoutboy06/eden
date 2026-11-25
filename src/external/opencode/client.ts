@@ -41,6 +41,16 @@ export type OpenCodeConversationClient = {
     promptID: string,
   ): Promise<{ active: boolean; reply: string | null } | null>;
   interrupt(sessionID: string, directory: string): Promise<boolean>;
+  permissions(
+    sessionID: string,
+    directory: string,
+  ): Promise<Array<{ id: string; action: string; resources: string[]; message?: string }>>;
+  replyPermission(
+    sessionID: string,
+    directory: string,
+    requestID: string,
+    decision: "once" | "always" | "reject",
+  ): Promise<void>;
   observe(
     sessionID: string,
     directory: string,
@@ -96,6 +106,18 @@ export function createOpenCodeConversationClient(
       const client = await makeClient(endpoint, directory);
       const result = await client.session.interrupt({ sessionID });
       return result.interrupted;
+    },
+    async permissions(sessionID, directory) {
+      const endpoint = await discover();
+      if (!endpoint) throw new Error("OpenCode is not currently reachable.");
+      const client = await makeClient(endpoint, directory);
+      return client.permission.list({ sessionID });
+    },
+    async replyPermission(sessionID, directory, requestID, decision) {
+      const endpoint = await discover();
+      if (!endpoint) throw new Error("OpenCode is not currently reachable.");
+      const client = await makeClient(endpoint, directory);
+      await client.permission.reply({ sessionID, requestID, decision });
     },
     async observe(sessionID, directory, promptID, onEvent) {
       const endpoint = await discover();

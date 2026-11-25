@@ -45,6 +45,10 @@ test("creates a local conversation without a provider session and reuses its nat
     async interrupt() {
       return false;
     },
+    async permissions() {
+      return [];
+    },
+    async replyPermission() {},
     async observe() {},
     async send(id, _directory, promptID, text, onEvent) {
       expect(id).toBe(nativeSessionID);
@@ -123,6 +127,8 @@ test("rejects cross-origin requests before touching conversation storage", async
       reconcile: async () => ({ active: false, reply: null }),
       reconcileAvailable: async () => null,
       interrupt: async () => false,
+      permissions: async () => [],
+      replyPermission: async () => {},
       observe: async () => {},
       send: async () => ({ reply: "reply" }),
     },
@@ -155,6 +161,8 @@ test("rejects a second prompt while the first turn is active", async () => {
       finishActiveTurn();
       return true;
     },
+    permissions: async () => [],
+    replyPermission: async () => {},
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
       sends += 1;
@@ -241,6 +249,8 @@ test("two browser clients read one durable live transcript without waking the pr
     reconcile: async () => ({ active: false, reply: null }),
     reconcileAvailable: async () => null,
     interrupt: async () => false,
+    permissions: async () => [],
+    replyPermission: async () => {},
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
       onEvent?.({ type: "attempting" });
@@ -331,6 +341,116 @@ test("two browser clients read one durable live transcript without waking the pr
   expect((await firstBrowserSend).status).toBe(200);
 });
 
+test("pending native approvals are visible to every browser and only the first exact choice is forwarded", async () => {
+  const root = await mkdtemp(join(tmpdir(), "eden-conversation-"));
+  directories.push(root);
+  const worktree = join(root, "checkout");
+  await mkdir(worktree);
+  let finishTurn!: () => void;
+  let acceptReply!: () => void;
+  let notifyReply!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    finishTurn = resolve;
+  });
+  const replyGate = new Promise<void>((resolve) => {
+    acceptReply = resolve;
+  });
+  const replyStarted = new Promise<void>((resolve) => {
+    notifyReply = resolve;
+  });
+  const pending = [{ id: "permission-1", action: "read", resources: ["src/index.ts"] }];
+  const decisions: string[] = [];
+  const client: OpenCodeConversationClient = {
+    prepare: async () => {},
+    create: async () => "native-session",
+    inspect: async () => ({ active: false }),
+    reconcile: async () => ({ active: false, reply: null }),
+    reconcileAvailable: async () => null,
+    interrupt: async () => false,
+    permissions: async () => pending,
+    replyPermission: async (_sessionID, _directory, requestID, decision) => {
+      expect(requestID).toBe("permission-1");
+      notifyReply();
+      await replyGate;
+      decisions.push(decision);
+      pending.splice(0);
+    },
+    observe: async () => {},
+    send: async (_id, _directory, _promptID, _text, onEvent) => {
+      onEvent?.({ type: "attempting" });
+      onEvent?.({ type: "accepted", userMessageID: "native-user" });
+      onEvent?.({ type: "blocked" });
+      await turn;
+      onEvent?.({ type: "settled", reply: "done" });
+      return { reply: "done" };
+    },
+  };
+  const url = await start({
+    root,
+    worktree,
+    client,
+    databasePath: join(root, "conversations.sqlite"),
+  });
+  const created = await fetch(`${url}/api/conversations`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+  });
+  const { conversation } = (await created.json()) as { conversation: { id: string } };
+  const activeTurn = fetch(`${url}/api/conversations/${conversation.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "hello" }),
+  });
+  try {
+    await waitFor(async () => {
+      const response = await fetch(
+        `${url}/api/conversations?project=project&worktree=checkout&branch=slice`,
+      );
+      const body = (await response.json()) as {
+        conversations: { approvals?: typeof pending }[];
+      };
+      return body.conversations[0]?.approvals?.length === 1;
+    });
+    const secondBrowser = await fetch(`${url}/api/conversations/${conversation.id}`);
+    expect(
+      ((await secondBrowser.json()) as { conversation: { approvals: typeof pending } }).conversation
+        .approvals,
+    ).toEqual(pending);
+
+    const firstReply = fetch(
+      `${url}/api/conversations/${conversation.id}/permissions/permission-1`,
+      {
+        method: "POST",
+        headers: { origin: url, "content-type": "application/json" },
+        body: JSON.stringify({ decision: "once" }),
+      },
+    );
+    await replyStarted;
+    const staleReply = await fetch(
+      `${url}/api/conversations/${conversation.id}/permissions/permission-1`,
+      {
+        method: "POST",
+        headers: { origin: url, "content-type": "application/json" },
+        body: JSON.stringify({ decision: "reject" }),
+      },
+    );
+    expect(staleReply.status).toBe(409);
+    acceptReply();
+    expect((await firstReply).status).toBe(200);
+    expect(decisions).toEqual(["once"]);
+
+    const converged = await fetch(`${url}/api/conversations/${conversation.id}`);
+    expect(
+      ((await converged.json()) as { conversation: { approvals: typeof pending } }).conversation
+        .approvals,
+    ).toEqual([]);
+  } finally {
+    finishTurn();
+  }
+  expect((await activeTurn).status).toBe(200);
+});
+
 test("a definitive provider preflight failure removes the unsent draft from the transcript", async () => {
   const root = await mkdtemp(join(tmpdir(), "eden-conversation-"));
   directories.push(root);
@@ -346,6 +466,8 @@ test("a definitive provider preflight failure removes the unsent draft from the 
     reconcile: async () => ({ active: false, reply: null }),
     reconcileAvailable: async () => null,
     interrupt: async () => false,
+    permissions: async () => [],
+    replyPermission: async () => {},
     observe: async () => {},
     send: async () => {
       sends += 1;

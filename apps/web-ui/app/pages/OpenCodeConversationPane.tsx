@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Button } from "@/components/ui/button";
 import {
   InputGroup,
   InputGroupAddon,
@@ -10,6 +11,7 @@ import {
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
   sendConversationMessage,
+  replyToPermission,
   stopConversation,
   type Conversation,
 } from "@/pages/conversations";
@@ -25,17 +27,25 @@ export function OpenCodeConversationPane({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [answeringPermission, setAnsweringPermission] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const lastMessage = conversation.messages.at(-1);
+  const approvalsKey = conversation.approvals?.map(({ id }) => id).join(",");
   const active = conversation.status === "active" || conversation.status === "blocked" || sending;
 
   useEffect(() => {
     if (!nearBottom.current) return;
     const container = transcript.current;
     if (container) container.scrollTop = container.scrollHeight;
-  }, [conversation.messages.length, lastMessage?.createdAt, lastMessage?.role, lastMessage?.text]);
+  }, [
+    approvalsKey,
+    conversation.messages.length,
+    lastMessage?.createdAt,
+    lastMessage?.role,
+    lastMessage?.text,
+  ]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -66,6 +76,21 @@ export function OpenCodeConversationPane({
       await refresh();
     } finally {
       setStopping(false);
+    }
+  }
+
+  async function answerPermission(requestID: string, decision: "once" | "always" | "reject") {
+    setAnsweringPermission(requestID);
+    setError(null);
+    try {
+      await replyToPermission(conversation.id, requestID, decision);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not answer this permission request.",
+      );
+    } finally {
+      await refresh();
+      setAnsweringPermission(null);
     }
   }
 
@@ -105,7 +130,7 @@ export function OpenCodeConversationPane({
                 </MessageContent>
               </Message>
             ))}
-            {active ? (
+            {active && !(conversation.status === "blocked" && conversation.approvals?.length) ? (
               <Message>
                 <MessageContent>
                   <p className="px-3 py-2 text-sm text-muted-foreground" role="status">
@@ -116,6 +141,54 @@ export function OpenCodeConversationPane({
                 </MessageContent>
               </Message>
             ) : null}
+            {conversation.approvals?.map((approval) => (
+              <Message key={approval.id}>
+                <MessageContent>
+                  <section
+                    aria-labelledby={`permission-${approval.id}`}
+                    className="mx-3 max-w-full rounded-lg border border-border bg-card p-4"
+                  >
+                    <h2 id={`permission-${approval.id}`} className="text-sm font-semibold">
+                      OpenCode permission requested
+                    </h2>
+                    <p className="mt-2 text-sm">
+                      {approval.message ?? `Allow ${approval.action}?`}
+                    </p>
+                    <p className="mt-2 break-all text-xs text-muted-foreground">
+                      {approval.action}: {approval.resources.join(", ")}
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={answeringPermission !== null}
+                        onClick={() => void answerPermission(approval.id, "once")}
+                      >
+                        Allow once
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={answeringPermission !== null}
+                        onClick={() => void answerPermission(approval.id, "always")}
+                      >
+                        Always allow
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        disabled={answeringPermission !== null}
+                        onClick={() => void answerPermission(approval.id, "reject")}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  </section>
+                </MessageContent>
+              </Message>
+            ))}
           </MessageGroup>
         ) : (
           <div className="flex h-full items-center justify-center text-center">
@@ -175,7 +248,7 @@ export function OpenCodeConversationPane({
             {error}
           </p>
         ) : null}
-        {conversation.status === "blocked" ? (
+        {conversation.status === "blocked" && !conversation.approvals?.length ? (
           <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground">
             OpenCode is waiting for a permission or form response. Continue in OpenCode.
           </p>

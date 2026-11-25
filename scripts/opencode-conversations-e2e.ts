@@ -145,6 +145,32 @@ async function main() {
     await secondTab.click();
     await secondPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
     await secondPage.locator("pre code").filter({ hasText: "const answer = 42;" }).waitFor();
+    fake.askPermission(firstTurn);
+    await firstPage.getByRole("heading", { name: "OpenCode permission requested" }).waitFor();
+    await secondPage.getByRole("heading", { name: "OpenCode permission requested" }).waitFor();
+    assert.deepEqual(fake.permissionReplies, [], "a pending permission is never auto-approved");
+    if (process.env.EDEN_OPENCODE_PERMISSION_E2E_SCREENSHOT)
+      await secondPage.screenshot({ path: process.env.EDEN_OPENCODE_PERMISSION_E2E_SCREENSHOT });
+    await secondPage.getByRole("button", { name: "Allow once" }).click();
+    assert.equal(await fake.waitForPermissionReply(), "once");
+    const stalePermission = await firstPage.evaluate(async (id) => {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(id)}/permissions/fake-permission`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ decision: "reject" }),
+        },
+      );
+      return response.status;
+    }, conversationID);
+    assert.equal(stalePermission, 409, "a stale browser cannot overwrite the first native reply");
+    await firstPage
+      .getByRole("heading", { name: "OpenCode permission requested" })
+      .waitFor({ state: "hidden" });
+    await secondPage
+      .getByRole("heading", { name: "OpenCode permission requested" })
+      .waitFor({ state: "hidden" });
 
     await secondPage.getByRole("button", { name: "Close OpenCode conversation 1" }).click();
     await secondTab.waitFor({ state: "hidden" });
@@ -545,12 +571,15 @@ class FakeOpenCode {
     reject: (error: Error) => void;
   }[] = [];
   private readonly sessionMessages: Record<string, unknown>[] = [];
+  private readonly permissions: Record<string, unknown>[] = [];
+  private readonly permissionReplyWaiters: ((decision: string) => void)[] = [];
   private active = false;
   private messageListCount = 0;
   readonly prompts: FakePrompt[] = [];
   readonly errors: string[] = [];
   sessionCreates = 0;
   interruptions = 0;
+  permissionReplies: string[] = [];
   url = "";
 
   get messageLists() {
@@ -647,6 +676,38 @@ class FakeOpenCode {
       id: randomID(),
       created: Date.now(),
       data: { sessionID: nativeSessionID, assistantMessageID: turn.assistantID, ordinal: 0, delta },
+    });
+  }
+
+  askPermission(turn: FakeTurn) {
+    const permission = {
+      id: "fake-permission",
+      sessionID: nativeSessionID,
+      action: "read",
+      resources: ["src/index.ts"],
+      message: "Read the source file?",
+    };
+    this.permissions.push(permission);
+    this.emit({
+      type: "permission.asked",
+      id: randomID(),
+      created: Date.now(),
+      data: permission,
+    });
+    assert.equal(turn.prompt.sessionID, nativeSessionID);
+  }
+
+  async waitForPermissionReply() {
+    if (this.permissionReplies.length) return this.permissionReplies.at(-1)!;
+    return new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Timed out waiting for fake permission reply.")),
+        15_000,
+      );
+      this.permissionReplyWaiters.push((decision) => {
+        clearTimeout(timeout);
+        resolve(decision);
+      });
     });
   }
 
@@ -762,6 +823,32 @@ class FakeOpenCode {
         data: { sessionID: nativeSessionID },
       });
       return json(response, 200, { interrupted: true });
+    }
+
+    const permissionReplyMatch = path.match(
+      /^\/api\/session\/([^/]+)\/permission\/([^/]+)\/reply$/,
+    );
+    if (permissionReplyMatch && request.method === "POST") {
+      assert.equal(decodeURIComponent(permissionReplyMatch[1]!), nativeSessionID);
+      const body = await readJson(request);
+      const index = this.permissions.findIndex(
+        ({ id }) => id === decodeURIComponent(permissionReplyMatch[2]!),
+      );
+      if (index < 0) return json(response, 409, { errors: [{ message: "Permission is stale." }] });
+      assert.ok(
+        body.decision === "once" || body.decision === "always" || body.decision === "reject",
+      );
+      this.permissions.splice(index, 1);
+      this.permissionReplies.push(body.decision);
+      for (const waiter of this.permissionReplyWaiters.splice(0)) waiter(body.decision);
+      response.writeHead(204);
+      return response.end();
+    }
+
+    const permissionListMatch = path.match(/^\/api\/session\/([^/]+)\/permission$/);
+    if (permissionListMatch && request.method === "GET") {
+      assert.equal(decodeURIComponent(permissionListMatch[1]!), nativeSessionID);
+      return json(response, 200, { data: this.permissions });
     }
 
     const messageMatch = path.match(/^\/api\/session\/([^/]+)\/message$/);

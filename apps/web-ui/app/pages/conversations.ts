@@ -12,6 +12,12 @@ export type Conversation = {
   hidden: boolean;
   status: "ready" | "active" | "blocked" | "incomplete";
   messages: ConversationMessage[];
+  approvals?: {
+    id: string;
+    action: string;
+    resources: string[];
+    message?: string;
+  }[];
   updatedAt: number;
 };
 
@@ -78,4 +84,21 @@ export async function stopConversation(id: string) {
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? "Could not stop this reply.");
+}
+
+export async function replyToPermission(
+  conversationID: string,
+  requestID: string,
+  decision: "once" | "always" | "reject",
+) {
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationID)}/permissions/${encodeURIComponent(requestID)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision }),
+    },
+  );
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Could not answer this permission request.");
 }
