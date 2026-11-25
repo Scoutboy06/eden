@@ -123,6 +123,25 @@ function Workspace({
     }
   }
 
+  async function closeConversation(id: string) {
+    try {
+      await conversationsState.setHidden(id, true);
+      setConversationError(null);
+    } catch {
+      setConversationError("Could not close the OpenCode conversation.");
+    }
+  }
+
+  async function reopenConversation(id: string) {
+    try {
+      const conversation = await conversationsState.setHidden(id, false);
+      if (conversation) setSelectedTab(id);
+      setConversationError(null);
+    } catch {
+      setConversationError("Could not reopen the OpenCode conversation.");
+    }
+  }
+
   function restoreMenuFocus() {
     const shouldRestore = !launching.current;
     launching.current = false;
@@ -204,7 +223,16 @@ function Workspace({
                     >
                       ×
                     </button>
-                  ) : null}
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label={`Close ${tab.title}`}
+                      onClick={() => void closeConversation(tab.id)}
+                      className="absolute right-1.5 rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               ))}
             </TabsList>
@@ -221,6 +249,19 @@ function Workspace({
                 <span aria-hidden="true">✳</span>
                 OpenCode conversation
               </DropdownMenuItem>
+              {conversationsState.hiddenConversations.length > 0 ? (
+                <>
+                  <DropdownMenuSeparator />
+                  {conversationsState.hiddenConversations.map((conversation, index) => (
+                    <DropdownMenuItem
+                      key={conversation.id}
+                      onClick={() => void reopenConversation(conversation.id)}
+                    >
+                      Reopen OpenCode conversation {index + 1}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              ) : null}
               <DropdownMenuSeparator />
               {Object.keys(agentHarnesses)
                 .filter(isAgentHarness)

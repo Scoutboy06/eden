@@ -146,6 +146,25 @@ async function main() {
     await secondPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
     await secondPage.locator("pre code").filter({ hasText: "const answer = 42;" }).waitFor();
 
+    await secondPage.getByRole("button", { name: "Close OpenCode conversation 1" }).click();
+    await secondTab.waitFor({ state: "hidden" });
+    await firstPage
+      .getByRole("tab", { name: "OpenCode conversation 1" })
+      .waitFor({ state: "hidden" });
+    await secondPage.getByRole("button", { name: "New session tab" }).click();
+    await secondPage.getByRole("menuitem", { name: "Reopen OpenCode conversation 1" }).click();
+    await secondTab.waitFor({ state: "visible" });
+    await firstPage
+      .getByRole("tab", { name: "OpenCode conversation 1" })
+      .waitFor({ state: "visible" });
+    await secondPage.getByText("Streamed reply").waitFor();
+    assert.equal(
+      fake.prompts.length,
+      1,
+      "closing and reopening does not interrupt or replay a turn",
+    );
+    assert.equal(fake.sessionCreates, 1, "reopening shared visibility does not wake OpenCode");
+
     await firstTranscript.evaluate((element) => {
       element.scrollTop = 0;
       element.dispatchEvent(new Event("scroll", { bubbles: true }));

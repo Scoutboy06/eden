@@ -193,6 +193,7 @@ test("two browser clients read one durable live transcript without waking the pr
   await mkdir(worktree);
   let release!: () => void;
   let wakes = 0;
+  let emitAfterClose: (() => void) | undefined;
   const turn = new Promise<void>((resolve) => {
     release = resolve;
   });
@@ -209,6 +210,8 @@ test("two browser clients read one durable live transcript without waking the pr
       onEvent?.({ type: "attempting" });
       onEvent?.({ type: "accepted", userMessageID: "native-user" });
       onEvent?.({ type: "text", assistantMessageID: "assistant", delta: "partial " });
+      emitAfterClose = () =>
+        onEvent?.({ type: "text", assistantMessageID: "assistant", delta: "" });
       await turn;
       onEvent?.({ type: "settled", reply: "partial reply" });
       return { reply: "partial reply" };
@@ -250,6 +253,42 @@ test("two browser clients read one durable live transcript without waking the pr
     expect(secondBrowser.status).toBe(200);
     expect(body.conversation.messages[1]?.text).toBe("partial ");
     expect(wakes).toBe(1);
+
+    const close = await fetch(`${url}/api/conversations/${conversation.id}/close`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+    });
+    expect(close.status).toBe(200);
+    expect((await close.json()).conversation.hidden).toBe(true);
+    emitAfterClose?.();
+    const hiddenList = (await (
+      await fetch(`${url}/api/conversations?project=project&worktree=checkout&branch=slice`)
+    ).json()) as { conversations: unknown[]; hiddenConversations: { id: string }[] };
+    expect(hiddenList.conversations).toHaveLength(0);
+    expect(hiddenList.hiddenConversations.map(({ id }) => id)).toEqual([conversation.id]);
+
+    const wrongScope = await fetch(`${url}/api/conversations/${conversation.id}/reopen`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ project: "project", worktree: "other", branch: "slice" }),
+    });
+    expect(wrongScope.status).toBe(404);
+
+    const reopen = await fetch(`${url}/api/conversations/${conversation.id}/reopen`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+    });
+    expect(reopen.status).toBe(200);
+    expect((await reopen.json()).conversation.hidden).toBe(false);
+    expect(wakes).toBe(1);
+    const restored = await fetch(`${url}/api/conversations/${conversation.id}`);
+    const restoredBody = (await restored.json()) as {
+      conversation: { status: string; messages: { text: string }[] };
+    };
+    expect(restoredBody.conversation.status).toBe("active");
+    expect(restoredBody.conversation.messages[1]?.text).toBe("partial ");
   } finally {
     release();
   }

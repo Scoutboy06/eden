@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { createConversation, listConversations, type Conversation } from "@/pages/conversations";
+import {
+  createConversation,
+  listConversations,
+  setConversationHidden,
+  type Conversation,
+} from "@/pages/conversations";
 
 export function useWorktreeConversations(
   project: string,
@@ -9,13 +14,16 @@ export function useWorktreeConversations(
   enabled: boolean,
 ) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [hiddenConversations, setHiddenConversations] = useState<Conversation[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       if (!worktree) return;
       try {
-        setConversations(await listConversations(project, worktree, branch, signal));
+        const result = await listConversations(project, worktree, branch, signal);
+        setConversations(result.conversations);
+        setHiddenConversations(result.hiddenConversations);
         setError(null);
       } catch (cause) {
         if (!signal?.aborted)
@@ -43,5 +51,15 @@ export function useWorktreeConversations(
     return conversation;
   }, [project, worktree, branch]);
 
-  return { conversations, error, refresh, create };
+  const setHidden = useCallback(
+    async (id: string, hidden: boolean) => {
+      if (!worktree) return null;
+      const conversation = await setConversationHidden(id, hidden, project, worktree, branch);
+      await refresh();
+      return conversation;
+    },
+    [project, worktree, branch, refresh],
+  );
+
+  return { conversations, hiddenConversations, error, refresh, create, setHidden };
 }

@@ -18,6 +18,7 @@ type Conversation = Scope & {
   directoryIdentity: string;
   nativeSessionID: string | null;
   activePromptID: string | null;
+  hidden: boolean;
   status: "ready" | "active" | "blocked" | "incomplete";
   messages: StoredMessage[];
   updatedAt: number;
@@ -180,7 +181,7 @@ async function handleCollectionRequest(
   if (url.pathname !== "/api/conversations") return false;
   if (request.method === "GET") {
     respond(response, 200, {
-      conversations: list(
+      ...list(
         database,
         url.searchParams.get("project"),
         url.searchParams.get("worktree"),
@@ -207,6 +208,7 @@ async function handleCollectionRequest(
     directoryIdentity: await pathIdentity(directory),
     nativeSessionID: null,
     activePromptID: null,
+    hidden: false,
     status: "ready",
     messages: [],
     updatedAt: Date.now(),
@@ -229,6 +231,21 @@ async function handleConversationRequest(
   if (parts.length === 3 && request.method === "GET") {
     const conversation = get(database, id);
     if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+    return respond(response, 200, { conversation: publicConversation(conversation) });
+  }
+  if (
+    parts.length === 4 &&
+    (parts[3] === "close" || parts[3] === "reopen") &&
+    request.method === "POST"
+  ) {
+    const body = await readBody(request);
+    const scope = parseScope(body);
+    const conversation = get(database, id);
+    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+    if (!sameScope(conversation, scope))
+      return respond(response, 404, { error: "Conversation not found in this worktree." });
+    conversation.hidden = parts[3] === "close";
+    saveVisibility(database, conversation);
     return respond(response, 200, { conversation: publicConversation(conversation) });
   }
   if (parts.length !== 4 || parts[3] !== "send" || request.method !== "POST")
@@ -467,6 +484,7 @@ async function openDatabase(
       directory_identity TEXT NOT NULL DEFAULT '',
       native_session_id TEXT,
       active_prompt_id TEXT,
+      hidden INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
       messages TEXT NOT NULL,
       updated_at INTEGER NOT NULL
@@ -486,6 +504,8 @@ async function openDatabase(
     );
   if (!columns.includes("active_prompt_id"))
     database.exec("ALTER TABLE conversations ADD COLUMN active_prompt_id TEXT");
+  if (!columns.includes("hidden"))
+    database.exec("ALTER TABLE conversations ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
   database.exec(
     "UPDATE conversations SET status = 'incomplete' WHERE status IN ('active', 'blocked')",
   );
@@ -498,13 +518,16 @@ function list(
   worktree: string | null,
   branch: string | null,
 ) {
-  if (!project || !worktree) return [];
-  return database
+  if (!project || !worktree) return { conversations: [], hiddenConversations: [] };
+  const conversations = database
     .query("SELECT * FROM conversations WHERE project = ? AND worktree = ? ORDER BY updated_at")
     .all(project, worktree)
     .map((row) => parseRow(row as Record<string, unknown>))
-    .filter((item) => item.branch === branch)
-    .map(publicConversation);
+    .filter((item) => item.branch === branch);
+  return {
+    conversations: conversations.filter((item) => !item.hidden).map(publicConversation),
+    hiddenConversations: conversations.filter((item) => item.hidden).map(publicConversation),
+  };
 }
 
 function get(database: Database, id: string) {
@@ -519,8 +542,8 @@ function save(database: Database, conversation: Conversation) {
   database
     .query(
       `INSERT INTO conversations
-       (id, project, project_path, project_identity, worktree, branch, directory, directory_identity, native_session_id, active_prompt_id, status, messages, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, project, project_path, project_identity, worktree, branch, directory, directory_identity, native_session_id, active_prompt_id, hidden, status, messages, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET project_path = excluded.project_path,
        project_identity = excluded.project_identity, directory_identity = excluded.directory_identity,
        native_session_id = excluded.native_session_id, active_prompt_id = excluded.active_prompt_id,
@@ -537,10 +560,17 @@ function save(database: Database, conversation: Conversation) {
       conversation.directoryIdentity,
       conversation.nativeSessionID,
       conversation.activePromptID,
+      conversation.hidden ? 1 : 0,
       conversation.status,
       JSON.stringify(conversation.messages),
       conversation.updatedAt,
     );
+}
+
+function saveVisibility(database: Database, conversation: Conversation) {
+  database
+    .query("UPDATE conversations SET hidden = ? WHERE id = ?")
+    .run(conversation.hidden ? 1 : 0, conversation.id);
 }
 
 function parseRow(row: Record<string, unknown>): Conversation {
@@ -555,10 +585,19 @@ function parseRow(row: Record<string, unknown>): Conversation {
     directoryIdentity: String(row.directory_identity ?? ""),
     nativeSessionID: row.native_session_id === null ? null : String(row.native_session_id),
     activePromptID: row.active_prompt_id === null ? null : String(row.active_prompt_id),
+    hidden: Number(row.hidden ?? 0) !== 0,
     status: row.status as Conversation["status"],
     messages: JSON.parse(String(row.messages)) as StoredMessage[],
     updatedAt: Number(row.updated_at),
   };
+}
+
+function sameScope(conversation: Conversation, scope: Scope) {
+  return (
+    conversation.project === scope.project &&
+    conversation.worktree === scope.worktree &&
+    conversation.branch === scope.branch
+  );
 }
 
 function publicConversation({
