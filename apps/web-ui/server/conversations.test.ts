@@ -49,6 +49,13 @@ test("creates a local conversation without a provider session and reuses its nat
       return [];
     },
     async replyPermission() {},
+    async forms() {
+      return [];
+    },
+    async form() {
+      throw new Error("No pending form.");
+    },
+    async replyForm() {},
     async observe() {},
     async send(id, _directory, promptID, text, onEvent) {
       expect(id).toBe(nativeSessionID);
@@ -129,6 +136,11 @@ test("rejects cross-origin requests before touching conversation storage", async
       interrupt: async () => false,
       permissions: async () => [],
       replyPermission: async () => {},
+      forms: async () => [],
+      form: async () => {
+        throw new Error("No pending form.");
+      },
+      replyForm: async () => {},
       observe: async () => {},
       send: async () => ({ reply: "reply" }),
     },
@@ -163,6 +175,11 @@ test("rejects a second prompt while the first turn is active", async () => {
     },
     permissions: async () => [],
     replyPermission: async () => {},
+    forms: async () => [],
+    form: async () => {
+      throw new Error("No pending form.");
+    },
+    replyForm: async () => {},
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
       sends += 1;
@@ -251,6 +268,11 @@ test("two browser clients read one durable live transcript without waking the pr
     interrupt: async () => false,
     permissions: async () => [],
     replyPermission: async () => {},
+    forms: async () => [],
+    form: async () => {
+      throw new Error("No pending form.");
+    },
+    replyForm: async () => {},
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
       onEvent?.({ type: "attempting" });
@@ -375,6 +397,11 @@ test("pending native approvals are visible to every browser and only the first e
       decisions.push(decision);
       pending.splice(0);
     },
+    forms: async () => [],
+    form: async () => {
+      throw new Error("No pending form.");
+    },
+    replyForm: async () => {},
     observe: async () => {},
     send: async (_id, _directory, _promptID, _text, onEvent) => {
       onEvent?.({ type: "attempting" });
@@ -451,6 +478,173 @@ test("pending native approvals are visible to every browser and only the first e
   expect((await activeTurn).status).toBe(200);
 });
 
+test("native forms expose supported fields, reject unsupported and stale answers, and forward only validated user input", async () => {
+  const root = await mkdtemp(join(tmpdir(), "eden-conversation-"));
+  directories.push(root);
+  const worktree = join(root, "checkout");
+  await mkdir(worktree);
+  let finishTurn!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    finishTurn = resolve;
+  });
+  let releaseFormReply!: () => void;
+  let notifyFormReply!: () => void;
+  const formReplyGate = new Promise<void>((resolve) => {
+    releaseFormReply = resolve;
+  });
+  const formReplyStarted = new Promise<void>((resolve) => {
+    notifyFormReply = resolve;
+  });
+  const supported = {
+    id: "form-1",
+    sessionID: "native-session",
+    title: "Deployment details",
+    fields: [
+      {
+        key: "region",
+        type: "string",
+        title: "Region",
+        required: true,
+        options: [
+          { value: "eu", label: "Europe" },
+          { value: "us", label: "United States" },
+        ],
+      },
+      {
+        key: "replicas",
+        type: "integer",
+        title: "Replicas",
+        required: true,
+        minimum: 1,
+        maximum: 5,
+      },
+      { key: "notify", type: "boolean", title: "Notify team" },
+    ],
+  } as const;
+  const unsupported = {
+    id: "form-2",
+    sessionID: "native-session",
+    title: "External approval",
+    fields: [{ key: "approval", type: "external", url: "https://example.com", title: "Approval" }],
+  } as const;
+  const replies: unknown[] = [];
+  let answered = false;
+  const client: OpenCodeConversationClient = {
+    prepare: async () => {},
+    create: async () => "native-session",
+    inspect: async () => ({ active: false }),
+    reconcile: async () => ({ active: false, reply: null }),
+    reconcileAvailable: async () => null,
+    interrupt: async () => false,
+    permissions: async () => [],
+    replyPermission: async () => {},
+    forms: async () => (answered ? [] : ([supported, unsupported] as never)),
+    form: async (_sessionID, _directory, formID) => {
+      const form = formID === "form-1" ? supported : unsupported;
+      return {
+        ...form,
+        state: answered ? { status: "answered", answer: {} } : { status: "pending" },
+      } as never;
+    },
+    replyForm: async (_sessionID, _directory, formID, answer) => {
+      replies.push({ formID, answer });
+      notifyFormReply();
+      await formReplyGate;
+      answered = true;
+    },
+    observe: async () => {},
+    send: async (_id, _directory, _promptID, _text, onEvent) => {
+      onEvent?.({ type: "attempting" });
+      onEvent?.({ type: "accepted", userMessageID: "native-user" });
+      onEvent?.({ type: "blocked" });
+      await turn;
+      onEvent?.({ type: "settled", reply: "done" });
+      return { reply: "done" };
+    },
+  };
+  const url = await start({
+    root,
+    worktree,
+    client,
+    databasePath: join(root, "conversations.sqlite"),
+  });
+  const created = await fetch(`${url}/api/conversations`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+  });
+  const { conversation } = (await created.json()) as { conversation: { id: string } };
+  const activeTurn = fetch(`${url}/api/conversations/${conversation.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "deploy" }),
+  });
+  try {
+    await waitFor(async () => {
+      const response = await fetch(`${url}/api/conversations/${conversation.id}`);
+      const body = (await response.json()) as {
+        conversation: { forms?: { id: string; unsupported: string[] }[] };
+      };
+      return body.conversation.forms?.length === 2;
+    });
+    const visible = await fetch(`${url}/api/conversations/${conversation.id}`);
+    const visibleForms = (await visible.json()).conversation.forms as {
+      id: string;
+      unsupported: string[];
+    }[];
+    expect(visibleForms[0]?.unsupported).toEqual([]);
+    expect(visibleForms[1]?.unsupported).toContain("Approval: external fields are not supported");
+
+    const unsupportedReply = await fetch(
+      `${url}/api/conversations/${conversation.id}/forms/form-2`,
+      {
+        method: "POST",
+        headers: { origin: url, "content-type": "application/json" },
+        body: JSON.stringify({ answer: { approval: "yes" } }),
+      },
+    );
+    expect(unsupportedReply.status).toBe(400);
+
+    const invalidReply = await fetch(`${url}/api/conversations/${conversation.id}/forms/form-1`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ answer: { region: "eu", replicas: 6, notify: false } }),
+    });
+    expect(invalidReply.status).toBe(400);
+    expect(replies).toEqual([]);
+
+    const validReplyPromise = fetch(`${url}/api/conversations/${conversation.id}/forms/form-1`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ answer: { region: "eu", replicas: 3, notify: false } }),
+    });
+    await formReplyStarted;
+    const duplicateReply = await fetch(`${url}/api/conversations/${conversation.id}/forms/form-1`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ answer: { region: "us", replicas: 2 } }),
+    });
+    expect(duplicateReply.status).toBe(409);
+    releaseFormReply();
+    const validReply = await validReplyPromise;
+    expect(validReply.status).toBe(200);
+    expect(replies).toEqual([
+      { formID: "form-1", answer: { region: "eu", replicas: 3, notify: false } },
+    ]);
+    const staleReply = await fetch(`${url}/api/conversations/${conversation.id}/forms/form-1`, {
+      method: "POST",
+      headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ answer: { region: "us", replicas: 2 } }),
+    });
+    expect(staleReply.status).toBe(409);
+    expect(replies).toHaveLength(1);
+  } finally {
+    releaseFormReply();
+    finishTurn();
+  }
+  expect((await activeTurn).status).toBe(200);
+});
+
 test("a definitive provider preflight failure removes the unsent draft from the transcript", async () => {
   const root = await mkdtemp(join(tmpdir(), "eden-conversation-"));
   directories.push(root);
@@ -468,6 +662,11 @@ test("a definitive provider preflight failure removes the unsent draft from the 
     interrupt: async () => false,
     permissions: async () => [],
     replyPermission: async () => {},
+    forms: async () => [],
+    form: async () => {
+      throw new Error("No pending form.");
+    },
+    replyForm: async () => {},
     observe: async () => {},
     send: async () => {
       sends += 1;

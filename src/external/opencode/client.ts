@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { OpenCode } from "@opencode/client";
+import { OpenCode, type FormDetail, type FormInfo } from "@opencode/client";
 import { Service, type Endpoint } from "@opencode/client/service";
 
 const compatibleVersion = (version: string) => version.startsWith("2.4.");
@@ -50,6 +50,14 @@ export type OpenCodeConversationClient = {
     directory: string,
     requestID: string,
     decision: "once" | "always" | "reject",
+  ): Promise<void>;
+  forms(sessionID: string, directory: string): Promise<FormInfo[]>;
+  form(sessionID: string, directory: string, formID: string): Promise<FormDetail>;
+  replyForm(
+    sessionID: string,
+    directory: string,
+    formID: string,
+    answer: Record<string, string | number | boolean>,
   ): Promise<void>;
   observe(
     sessionID: string,
@@ -118,6 +126,25 @@ export function createOpenCodeConversationClient(
       if (!endpoint) throw new Error("OpenCode is not currently reachable.");
       const client = await makeClient(endpoint, directory);
       await client.permission.reply({ sessionID, requestID, decision });
+    },
+    async forms(sessionID, directory) {
+      const endpoint = await discover();
+      if (!endpoint) throw new Error("OpenCode is not currently reachable.");
+      const client = await makeClient(endpoint, directory);
+      return client.session.form.list({ sessionID });
+    },
+    async form(sessionID, directory, formID) {
+      const endpoint = await discover();
+      if (!endpoint) throw new Error("OpenCode is not currently reachable.");
+      const client = await makeClient(endpoint, directory);
+      const form = await client.session.form.get({ sessionID, formID });
+      return form;
+    },
+    async replyForm(sessionID, directory, formID, answer) {
+      const endpoint = await discover();
+      if (!endpoint) throw new Error("OpenCode is not currently reachable.");
+      const client = await makeClient(endpoint, directory);
+      await client.session.form.reply({ sessionID, formID, answer });
     },
     async observe(sessionID, directory, promptID, onEvent) {
       const endpoint = await discover();

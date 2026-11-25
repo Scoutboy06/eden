@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   InputGroup,
   InputGroupAddon,
@@ -12,8 +13,10 @@ import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
   sendConversationMessage,
   replyToPermission,
+  replyToForm,
   stopConversation,
   type Conversation,
+  type ConversationForm,
 } from "@/pages/conversations";
 import { Streamdown } from "streamdown";
 
@@ -28,6 +31,7 @@ export function OpenCodeConversationPane({
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [answeringPermission, setAnsweringPermission] = useState<string | null>(null);
+  const [answeringForm, setAnsweringForm] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -94,6 +98,19 @@ export function OpenCodeConversationPane({
     }
   }
 
+  async function answerForm(formID: string, answer: Record<string, string | number | boolean>) {
+    setAnsweringForm(formID);
+    setError(null);
+    try {
+      await replyToForm(conversation.id, formID, answer);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not answer this OpenCode form.");
+    } finally {
+      await refresh();
+      setAnsweringForm(null);
+    }
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -130,7 +147,11 @@ export function OpenCodeConversationPane({
                 </MessageContent>
               </Message>
             ))}
-            {active && !(conversation.status === "blocked" && conversation.approvals?.length) ? (
+            {active &&
+            !(
+              conversation.status === "blocked" &&
+              (conversation.approvals?.length || conversation.forms?.length)
+            ) ? (
               <Message>
                 <MessageContent>
                   <p className="px-3 py-2 text-sm text-muted-foreground" role="status">
@@ -186,6 +207,17 @@ export function OpenCodeConversationPane({
                       </Button>
                     </div>
                   </section>
+                </MessageContent>
+              </Message>
+            ))}
+            {conversation.forms?.map((form) => (
+              <Message key={form.id}>
+                <MessageContent>
+                  <NativeFormCard
+                    form={form}
+                    disabled={answeringForm !== null || answeringPermission !== null}
+                    onSubmit={(answer) => void answerForm(form.id, answer)}
+                  />
                 </MessageContent>
               </Message>
             ))}
@@ -248,7 +280,9 @@ export function OpenCodeConversationPane({
             {error}
           </p>
         ) : null}
-        {conversation.status === "blocked" && !conversation.approvals?.length ? (
+        {conversation.status === "blocked" &&
+        !conversation.approvals?.length &&
+        !conversation.forms?.length ? (
           <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground">
             OpenCode is waiting for a permission or form response. Continue in OpenCode.
           </p>
@@ -260,5 +294,102 @@ export function OpenCodeConversationPane({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function NativeFormCard({
+  form,
+  disabled,
+  onSubmit,
+}: {
+  form: ConversationForm;
+  disabled: boolean;
+  onSubmit: (answer: Record<string, string | number | boolean>) => void;
+}) {
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const answer: Record<string, string | number | boolean> = {};
+    for (const field of form.fields) {
+      const value = data.get(field.key);
+      if (value === null || value === "") continue;
+      answer[field.key] =
+        field.type === "boolean"
+          ? value === "true"
+          : field.type === "number" || field.type === "integer"
+            ? Number(value)
+            : String(value);
+    }
+    onSubmit(answer);
+  }
+
+  return (
+    <section className="mx-3 max-w-full rounded-lg border border-border bg-card p-4">
+      <h2 className="text-sm font-semibold">{form.title || "OpenCode needs your input"}</h2>
+      {form.unsupported.length ? (
+        <div role="status" className="mt-3 text-sm text-muted-foreground">
+          <p>This native form has fields Eden cannot safely answer yet. Continue in OpenCode.</p>
+          <ul className="mt-1 list-disc pl-5">
+            {form.unsupported.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <form className="mt-3 space-y-4" onSubmit={submit}>
+          {form.fields.map((field) => (
+            <label key={field.key} className="block space-y-1.5 text-sm">
+              <span className="font-medium">
+                {field.title ?? field.key}
+                {field.required ? " *" : ""}
+              </span>
+              {field.description ? (
+                <span className="block text-xs text-muted-foreground">{field.description}</span>
+              ) : null}
+              {field.type === "boolean" || field.options ? (
+                <select
+                  name={field.key}
+                  required={field.required}
+                  disabled={disabled}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  defaultValue=""
+                >
+                  <option value="">Choose…</option>
+                  {field.type === "boolean" ? (
+                    <>
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </>
+                  ) : (
+                    field.options?.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))
+                  )}
+                </select>
+              ) : (
+                <Input
+                  name={field.key}
+                  type={field.type === "string" ? "text" : "number"}
+                  placeholder={field.placeholder}
+                  required={field.required}
+                  disabled={disabled}
+                  min={field.minimum}
+                  max={field.maximum}
+                  minLength={field.minLength}
+                  maxLength={field.maxLength ?? 16_000}
+                  step={field.type === "integer" ? 1 : "any"}
+                  autoComplete="off"
+                />
+              )}
+            </label>
+          ))}
+          <Button type="submit" size="sm" disabled={disabled}>
+            {disabled ? "Submitting…" : "Submit answers"}
+          </Button>
+        </form>
+      )}
+    </section>
   );
 }

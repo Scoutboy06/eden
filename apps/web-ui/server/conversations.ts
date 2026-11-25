@@ -11,6 +11,25 @@ import { isAllowedTerminalHost, resolveWorktree } from "./terminals";
 type Scope = { project: string; worktree: string; branch: string | null };
 type StoredMessage = { role: "user" | "assistant"; text: string; createdAt: number };
 type Approval = { id: string; action: string; resources: string[]; message?: string };
+type ConversationFormField = {
+  key: string;
+  type: "string" | "number" | "integer" | "boolean";
+  title?: string;
+  description?: string;
+  required?: boolean;
+  placeholder?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  options?: { value: string; label: string; description?: string }[];
+};
+type ConversationForm = {
+  id: string;
+  title: string;
+  fields: ConversationFormField[];
+  unsupported: string[];
+};
 type Conversation = Scope & {
   id: string;
   projectPath: string;
@@ -190,10 +209,10 @@ async function handleCollectionRequest(
     );
     respond(response, 200, {
       conversations: await Promise.all(
-        conversations.conversations.map((item) => withApprovals(item, client)),
+        conversations.conversations.map((item) => withPending(item, client)),
       ),
       hiddenConversations: await Promise.all(
-        conversations.hiddenConversations.map((item) => withApprovals(item, client)),
+        conversations.hiddenConversations.map((item) => withPending(item, client)),
       ),
     });
     return true;
@@ -239,12 +258,24 @@ async function handleConversationRequest(
   if (parts.length === 3 && request.method === "GET") {
     const conversation = get(database, id);
     if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-    return respond(response, 200, { conversation: await withApprovals(conversation, client) });
+    return respond(response, 200, { conversation: await withPending(conversation, client) });
   }
   if (parts.length === 5 && parts[3] === "permissions" && request.method === "POST") {
     return handlePermissionReply({
       conversationID: id,
       requestID: decodeURIComponent(parts[4]!),
+      request,
+      response,
+      database,
+      client,
+      dependencies,
+      actions,
+    });
+  }
+  if (parts.length === 5 && parts[3] === "forms" && request.method === "POST") {
+    return handleFormReply({
+      conversationID: id,
+      formID: decodeURIComponent(parts[4]!),
       request,
       response,
       database,
@@ -352,7 +383,7 @@ async function handlePermissionReply({
   const body = await readBody(request);
   if (body.decision !== "once" && body.decision !== "always" && body.decision !== "reject")
     return respond(response, 400, { error: "Choose a native OpenCode permission response." });
-  const actionID = `permission:${conversationID}:${requestID}`;
+  const actionID = `reply:${conversationID}`;
   if (!acquireAction(actions, actionID))
     return respond(response, 409, { error: "This permission request has already been answered." });
   try {
@@ -369,7 +400,7 @@ async function handlePermissionReply({
       return respond(response, 409, { error: "This permission request is no longer pending." });
     await client.replyPermission(conversation.nativeSessionID, directory, requestID, body.decision);
     return respond(response, 200, {
-      conversation: await withApprovals(conversation, client),
+      conversation: await withPending(conversation, client),
     });
   } catch {
     return respond(response, 409, { error: "This permission request is no longer pending." });
@@ -378,18 +409,213 @@ async function handlePermissionReply({
   }
 }
 
-async function withApprovals(conversation: Conversation, client: OpenCodeConversationClient) {
+async function withPending(conversation: Conversation, client: OpenCodeConversationClient) {
   let approvals: Approval[] = [];
+  let forms: ConversationForm[] = [];
   if (conversation.nativeSessionID && conversation.activePromptID) {
     try {
       approvals = await client.permissions(conversation.nativeSessionID, conversation.directory);
     } catch {}
+    try {
+      forms = (await client.forms(conversation.nativeSessionID, conversation.directory)).map(
+        presentForm,
+      );
+    } catch {}
   }
   return {
     ...publicConversation(conversation),
-    status: approvals.length ? "blocked" : conversation.status,
+    status: approvals.length || forms.length ? "blocked" : conversation.status,
     approvals,
+    forms,
   };
+}
+
+async function handleFormReply({
+  conversationID,
+  formID,
+  request,
+  response,
+  database,
+  client,
+  dependencies,
+  actions,
+}: {
+  conversationID: string;
+  formID: string;
+  request: IncomingMessage;
+  response: ServerResponse;
+  database: Database;
+  client: OpenCodeConversationClient;
+  dependencies: ConversationDependencies;
+  actions: Set<string>;
+}) {
+  const conversation = get(database, conversationID);
+  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+  const body = await readBody(request);
+  const actionID = `reply:${conversationID}`;
+  if (!acquireAction(actions, actionID))
+    return respond(response, 409, { error: "This form is already being answered." });
+  try {
+    if (
+      !conversation.nativeSessionID ||
+      !conversation.activePromptID ||
+      !["blocked", "active", "incomplete"].includes(conversation.status)
+    )
+      return respond(response, 409, { error: "This form is no longer pending." });
+    const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+    const form = await client.form(conversation.nativeSessionID, directory, formID);
+    if (
+      form.sessionID !== conversation.nativeSessionID ||
+      form.id !== formID ||
+      form.state.status !== "pending"
+    )
+      return respond(response, 409, { error: "This form is no longer pending." });
+    const presented = presentForm(form);
+    if (presented.unsupported.length)
+      return respond(response, 400, { error: "This form contains unsupported fields." });
+    const answer = validateFormAnswer(presented, body.answer);
+    await client.replyForm(conversation.nativeSessionID, directory, formID, answer);
+    return respond(response, 200, { conversation: await withPending(conversation, client) });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "";
+    if (message.startsWith("Invalid form answer:"))
+      return respond(response, 400, { error: message });
+    return respond(response, 409, { error: "This form is no longer pending or was rejected." });
+  } finally {
+    releaseAction(actions, actionID);
+  }
+}
+
+function presentForm(
+  form: Awaited<ReturnType<OpenCodeConversationClient["forms"]>>[number],
+): ConversationForm {
+  const unsupported: string[] = [];
+  const keys = form.fields.map((field) => field.key);
+  const duplicateKeys = new Set(keys.filter((key, index) => keys.indexOf(key) !== index));
+  const fields = form.fields.map((field): ConversationFormField => {
+    const unsupportedReason =
+      !field.key || duplicateKeys.has(field.key)
+        ? "field keys must be unique and non-empty"
+        : ("hidden" in field && field.hidden) || ("when" in field && field.when?.length)
+          ? "conditional or hidden fields are not supported"
+          : field.type === "external"
+            ? "external fields are not supported"
+            : field.type === "multiselect"
+              ? "multiple-choice fields are not supported"
+              : field.type === "string" && (field.format || field.pattern || field.custom)
+                ? "formatted, patterned, or custom text fields are not supported"
+                : field.type === "string" &&
+                    ((field.minLength !== undefined &&
+                      (!Number.isSafeInteger(field.minLength) || field.minLength < 0)) ||
+                      (field.maxLength !== undefined &&
+                        (!Number.isSafeInteger(field.maxLength) ||
+                          field.maxLength < 0 ||
+                          field.maxLength > 16_000)) ||
+                      (field.minLength !== undefined &&
+                        (field.minLength > 16_000 ||
+                          (field.maxLength !== undefined && field.minLength > field.maxLength))))
+                  ? "text length limits are invalid"
+                  : field.type === "string" &&
+                      field.options &&
+                      (field.options.length === 0 ||
+                        field.options.length > 100 ||
+                        new Set(field.options.map((option) => option.value)).size !==
+                          field.options.length)
+                    ? "this choice list is not supported"
+                    : (field.type === "integer" || field.type === "number") &&
+                        ((field.minimum !== undefined && !finiteBound(field.minimum)) ||
+                          (field.maximum !== undefined && !finiteBound(field.maximum)) ||
+                          (finiteBound(field.minimum) &&
+                            finiteBound(field.maximum) &&
+                            field.minimum > field.maximum))
+                      ? "numeric bounds are invalid or non-finite"
+                      : null;
+    if (unsupportedReason) unsupported.push(`${field.title ?? field.key}: ${unsupportedReason}`);
+    if (
+      field.type === "string" ||
+      field.type === "number" ||
+      field.type === "integer" ||
+      field.type === "boolean"
+    )
+      return {
+        key: field.key,
+        type: field.type,
+        ...(field.title ? { title: field.title } : {}),
+        ...(field.description ? { description: field.description } : {}),
+        ...(field.required ? { required: true } : {}),
+        ...(field.type === "string" && field.placeholder ? { placeholder: field.placeholder } : {}),
+        ...(field.type === "string" && field.minLength !== undefined
+          ? { minLength: field.minLength }
+          : {}),
+        ...(field.type === "string" && field.maxLength !== undefined
+          ? { maxLength: field.maxLength }
+          : {}),
+        ...((field.type === "number" || field.type === "integer") && finiteBound(field.minimum)
+          ? { minimum: field.minimum }
+          : {}),
+        ...((field.type === "number" || field.type === "integer") && finiteBound(field.maximum)
+          ? { maximum: field.maximum }
+          : {}),
+        ...(field.type === "string" && field.options
+          ? {
+              options: field.options.map(({ value, label, description }) => ({
+                value,
+                label,
+                ...(description ? { description } : {}),
+              })),
+            }
+          : {}),
+      };
+    unsupported.push(`${field.key}: unsupported field type`);
+    return { key: field.key, type: "string" };
+  });
+  return { id: form.id, title: form.title, fields, unsupported };
+}
+
+function finiteBound(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function validateFormAnswer(form: ConversationForm, value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid form answer: submit answers as an object.");
+  const answer = value as Record<string, unknown>;
+  const fields = new Map(form.fields.map((field) => [field.key, field]));
+  if (Object.keys(answer).some((key) => !fields.has(key)))
+    throw new Error("Invalid form answer: an unknown field was included.");
+  for (const field of form.fields) {
+    const entry = answer[field.key];
+    if (entry === undefined || entry === "") {
+      if (field.required)
+        throw new Error(`Invalid form answer: ${field.title ?? field.key} is required.`);
+      delete answer[field.key];
+      continue;
+    }
+    if (field.type === "boolean") {
+      if (typeof entry !== "boolean")
+        throw new Error(`Invalid form answer: ${field.title ?? field.key} must be true or false.`);
+    } else if (field.type === "number" || field.type === "integer") {
+      if (
+        typeof entry !== "number" ||
+        !Number.isFinite(entry) ||
+        (field.type === "integer" && !Number.isInteger(entry)) ||
+        (field.minimum !== undefined && entry < field.minimum) ||
+        (field.maximum !== undefined && entry > field.maximum)
+      )
+        throw new Error(
+          `Invalid form answer: ${field.title ?? field.key} is outside its allowed range.`,
+        );
+    } else if (
+      typeof entry !== "string" ||
+      (field.minLength !== undefined && entry.length < field.minLength) ||
+      (field.maxLength !== undefined && entry.length > field.maxLength) ||
+      entry.length > 16_000 ||
+      (field.options && !field.options.some((option) => option.value === entry))
+    ) {
+      throw new Error(`Invalid form answer: ${field.title ?? field.key} is not a valid choice.`);
+    }
+  }
+  return answer as Record<string, string | number | boolean>;
 }
 
 async function sendMessage(

@@ -18,7 +18,27 @@ export type Conversation = {
     resources: string[];
     message?: string;
   }[];
+  forms?: ConversationForm[];
   updatedAt: number;
+};
+
+export type ConversationForm = {
+  id: string;
+  title: string;
+  fields: {
+    key: string;
+    type: "string" | "number" | "integer" | "boolean";
+    title?: string;
+    description?: string;
+    required?: boolean;
+    placeholder?: string;
+    minimum?: number;
+    maximum?: number;
+    minLength?: number;
+    maxLength?: number;
+    options?: { value: string; label: string; description?: string }[];
+  }[];
+  unsupported: string[];
 };
 
 export async function listConversations(
@@ -101,4 +121,21 @@ export async function replyToPermission(
   );
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? "Could not answer this permission request.");
+}
+
+export async function replyToForm(
+  conversationID: string,
+  formID: string,
+  answer: Record<string, string | number | boolean>,
+) {
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationID)}/forms/${encodeURIComponent(formID)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answer }),
+    },
+  );
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Could not answer this OpenCode form.");
 }
