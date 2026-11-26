@@ -19,15 +19,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import type { TaskDraft } from "@/pages/task-draft";
 
-type TaskChange = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => void;
+export type TaskChange = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => void;
 type TaskStateChange = <K extends "status" | "priority">(key: K, value: TaskDraft[K]) => void;
 export type TaskMetadataKey = "status" | "priority" | "assignee" | "labels";
-type TaskMetadataChange = <K extends TaskMetadataKey>(
+export type TaskMetadataChange = <K extends TaskMetadataKey>(
   key: K,
   value: TaskDraft[K],
 ) => Promise<boolean>;
 export type TaskOptions = { statuses: string[]; assignees: string[]; labels: string[] };
-type TaskFormProps = {
+export type TaskFormProps = {
   task: BeadsTaskDetail | null;
   draft: TaskDraft | null;
   editing: boolean;

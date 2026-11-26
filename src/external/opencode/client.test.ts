@@ -9,6 +9,7 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
   let messages: object[] = [];
   let selectedModel: unknown;
   let switchedBeforePrompt = false;
+  const observed: string[] = [];
   let endpoint!: Endpoint;
   const server = createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -62,11 +63,47 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
         }),
       );
       setTimeout(() => {
+        messages = [
+          ...messages,
+          {
+            id: "assistant-1",
+            type: "assistant",
+            time: { created: 11 },
+            agent: "build",
+            model: { providerID: "mock", modelID: "mock" },
+            content: [
+              {
+                type: "tool",
+                id: "tool-1",
+                name: "read",
+                state: { status: "running", input: {} },
+              },
+            ],
+          },
+        ];
         emit({
           type: "session.text.started",
           id: "started",
           created: 11,
           data: { sessionID: "session", assistantMessageID: "assistant-1", ordinal: 0 },
+        });
+        emit({
+          type: "session.tool.input.started",
+          id: "tool-started",
+          created: 11,
+          data: {
+            sessionID: "session",
+            assistantMessageID: "assistant-1",
+            id: "tool-1",
+            name: "read",
+            input: {},
+          },
+        });
+        emit({
+          type: "session.tool.success",
+          id: "tool-completed",
+          created: 12,
+          data: { sessionID: "session", assistantMessageID: "assistant-1", id: "tool-1" },
         });
         emit({
           type: "session.text.delta",
@@ -82,14 +119,22 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
       }, 25);
       setTimeout(() => {
         messages = [
-          ...messages,
+          messages[0]!,
           {
             id: "assistant-1",
             type: "assistant",
             time: { created: 13, completed: 14 },
             agent: "build",
             model: { providerID: "mock", modelID: "mock" },
-            content: [{ type: "text", text: "Hello there." }],
+            content: [
+              {
+                type: "tool",
+                id: "tool-1",
+                name: "read",
+                state: { status: "completed", input: {}, output: "file" },
+              },
+              { type: "text", text: "Hello there." },
+            ],
             finish: "stop",
           },
         ];
@@ -140,6 +185,7 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
       "hello",
       (event) => {
         if (event.type === "accepted") accepted();
+        if (event.type === "tool") observed.push(event.status);
       },
       { id: "mock", providerID: "mock" },
     )
@@ -152,6 +198,8 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
     expect(sendResolved).toBe(false);
     const result = await sending;
     expect(result.reply).toBe("Hello there.");
+    expect(observed).toContain("running");
+    expect(observed).toContain("completed");
     expect(selectedModel).toEqual({ id: "mock", providerID: "mock" });
     expect(switchedBeforePrompt).toBe(true);
   } finally {

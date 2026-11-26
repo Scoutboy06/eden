@@ -6,15 +6,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { runGit } from "../../../src/external/simple-git/git";
 import { GitModule } from "../../../src/modules/git/git.module";
 import type { WorktreeDiff, WorktreeDiffFile } from "../shared/worktree-diff";
+import { requestUrl } from "./request-url";
 import { resolveWorktree } from "./terminals";
 
 const fileLimit = 100;
 const contentLimit = 256 * 1024;
 
-type Projects = Record<string, { name: string; path: string }>;
-
 export type WorktreeDiffDependencies = {
-  readProjects: () => Promise<Projects>;
+  readProjects: () => Promise<Record<string, { name: string; path: string }>>;
   worktrees?: typeof GitModule.worktrees;
 };
 
@@ -35,7 +34,7 @@ export function createWorktreeDiffMiddleware(dependencies: WorktreeDiffDependenc
     response: ServerResponse,
     next: () => void,
   ) => {
-    const url = new URL(request.originalUrl ?? request.url ?? "/", "http://eden.local");
+    const url = requestUrl(request);
     if (url.pathname !== "/api/worktree-diff") return next();
 
     response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -137,38 +136,53 @@ async function readDiffFile(
 ): Promise<WorktreeDiffFile> {
   const previousPath = entry.previousPath ?? entry.path;
   const oldBlob = tree.get(previousPath);
-  const existsInHead = oldBlob !== undefined;
-  const existsInWorktree = entry.status !== "D";
-  const change =
-    entry.status === "R" || entry.previousPath
-      ? "renamed"
-      : existsInHead
-        ? existsInWorktree
-          ? "modified"
-          : "deleted"
-        : "added";
   const file: WorktreeDiffFile = {
     path: entry.path,
     ...(entry.previousPath ? { previousPath: entry.previousPath } : {}),
-    change,
+    change: changeKind(entry, oldBlob !== undefined),
     oldContents: null,
     newContents: null,
   };
 
   if (entry.status === "U") return { ...file, fallback: "conflict" };
-  if (oldBlob && oldBlob.size > contentLimit) return { ...file, fallback: "too-large" };
-  const oldContents = oldBlob ? await readBlob(worktree, oldBlob) : null;
-  const newContents = existsInWorktree ? await readWorktreeFile(worktree, entry.path) : null;
-  if (oldContents === "binary" || newContents === "binary") return { ...file, fallback: "binary" };
-  if (oldContents === "unavailable" || newContents === "unavailable")
-    return { ...file, fallback: "unavailable" };
-  if (oldContents === "too-large" || newContents === "too-large")
-    return { ...file, fallback: "too-large" };
+  const contents = await readFileContents(worktree, entry, oldBlob);
+  if (typeof contents === "string") return { ...file, fallback: contents };
   return {
     ...file,
-    oldContents,
-    newContents,
+    oldContents: contents.oldContents,
+    newContents: contents.newContents,
   };
+}
+
+function changeKind(entry: StatusEntry, existsInHead: boolean): WorktreeDiffFile["change"] {
+  if (entry.status === "R" || entry.previousPath) return "renamed";
+  if (!existsInHead) return "added";
+  return entry.status === "D" ? "deleted" : "modified";
+}
+
+async function readFileContents(
+  worktree: string,
+  entry: StatusEntry,
+  oldBlob: TreeBlob | undefined,
+): Promise<
+  | { oldContents: string | null; newContents: string | null }
+  | Exclude<WorktreeDiffFile["fallback"], undefined>
+> {
+  if (oldBlob && oldBlob.size > contentLimit) return "too-large";
+  const oldContents = oldBlob ? await readBlob(worktree, oldBlob) : null;
+  const newContents = entry.status === "D" ? null : await readWorktreeFile(worktree, entry.path);
+  const fallback = contentFallback(oldContents, newContents);
+  return fallback ?? { oldContents, newContents };
+}
+
+function contentFallback(
+  oldContents: string | "binary" | "too-large" | "unavailable" | null,
+  newContents: string | "binary" | "too-large" | "unavailable" | null,
+): Exclude<WorktreeDiffFile["fallback"], undefined> | undefined {
+  if (oldContents === "binary" || newContents === "binary") return "binary";
+  if (oldContents === "unavailable" || newContents === "unavailable") return "unavailable";
+  if (oldContents === "too-large" || newContents === "too-large") return "too-large";
+  return undefined;
 }
 
 async function readBlob(
@@ -267,27 +281,34 @@ function parseStatus(output: string): StatusEntry[] {
   const entries: StatusEntry[] = [];
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
-    if (record.length < 4) continue;
-    const status = record.slice(0, 2);
-    const path = record.slice(3);
-    if (!safeGitPath(path)) continue;
-    if (status.includes("R") || status.includes("C")) {
+    const parsed = parseStatusRecord(record);
+    if (!parsed) continue;
+    if (isRenameStatus(parsed.status)) {
       const previousPath = records[++index];
-      if (!previousPath || !safeGitPath(previousPath)) continue;
-      entries.push({ path, previousPath, status: "R" });
+      if (previousPath && safeGitPath(previousPath))
+        entries.push({ ...parsed, previousPath, status: "R" });
       continue;
     }
-    const changeStatus =
-      status === "??"
-        ? "A"
-        : status.includes("U")
-          ? "U"
-          : status.includes("D") && status[1] !== "M" && status[1] !== "A"
-            ? "D"
-            : status;
-    entries.push({ path, status: changeStatus });
+    entries.push({ ...parsed, status: normalizedStatus(parsed.status) });
   }
   return entries;
+}
+
+function parseStatusRecord(record: string): Pick<StatusEntry, "path" | "status"> | undefined {
+  if (record.length < 4) return undefined;
+  const path = record.slice(3);
+  return safeGitPath(path) ? { path, status: record.slice(0, 2) } : undefined;
+}
+
+function isRenameStatus(status: string): boolean {
+  return status.includes("R") || status.includes("C");
+}
+
+function normalizedStatus(status: string): string {
+  if (status === "??") return "A";
+  if (status.includes("U")) return "U";
+  if (status.includes("D") && status[1] !== "M" && status[1] !== "A") return "D";
+  return status;
 }
 
 function deduplicateEntries(entries: StatusEntry[]): StatusEntry[] {

@@ -1,33 +1,6 @@
-export type ConversationMessage = {
-  role: "user" | "assistant";
-  text: string;
-  createdAt: number;
-  tools?: {
-    id: string;
-    name: string;
-    status: "running" | "completed" | "failed";
-  }[];
-};
+import type { Conversation } from "../../conversation-contract";
 
-export type Conversation = {
-  id: string;
-  project: string;
-  worktree: string;
-  branch: string | null;
-  hidden: boolean;
-  status: "ready" | "active" | "blocked" | "incomplete";
-  selectedModelKey: string | null;
-  selectedModelLabel: string | null;
-  messages: ConversationMessage[];
-  approvals?: {
-    id: string;
-    action: string;
-    resources: string[];
-    message?: string;
-  }[];
-  forms?: ConversationForm[];
-  updatedAt: number;
-};
+export type { Conversation, ConversationForm } from "../../conversation-contract";
 
 export type ConversationModel = {
   key: string;
@@ -35,25 +8,6 @@ export type ConversationModel = {
   providerID: string;
   name: string;
   group?: { key: string; label: string };
-};
-
-export type ConversationForm = {
-  id: string;
-  title: string;
-  fields: {
-    key: string;
-    type: "string" | "number" | "integer" | "boolean";
-    title?: string;
-    description?: string;
-    required?: boolean;
-    placeholder?: string;
-    minimum?: number;
-    maximum?: number;
-    minLength?: number;
-    maxLength?: number;
-    options?: { value: string; label: string; description?: string }[];
-  }[];
-  unsupported: string[];
 };
 
 export async function listConversations(
@@ -72,14 +26,12 @@ export async function listConversations(
 }
 
 export async function createConversation(project: string, worktree: string, branch: string | null) {
-  const response = await fetch("/api/conversations", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ project, worktree, branch }),
+  const result = await postConversation<{ conversation: Conversation }>("/api/conversations", {
+    project,
+    worktree,
+    branch,
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Could not create conversation.");
-  return result.conversation as Conversation;
+  return result.conversation;
 }
 
 export async function listConversationModels(id: string) {
@@ -90,14 +42,12 @@ export async function listConversationModels(id: string) {
 }
 
 export async function sendConversationMessage(id: string, text: string, modelKey?: string | null) {
-  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text, ...(modelKey !== undefined ? { modelKey } : {}) }),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Could not send message.");
-  return result.conversation as Conversation;
+  const result = await postConversation<{ conversation: Conversation }>(
+    `/api/conversations/${encodeURIComponent(id)}/send`,
+    { text, ...(modelKey !== undefined ? { modelKey } : {}) },
+    "Could not send message.",
+  );
+  return result.conversation;
 }
 
 export async function setConversationHidden(
@@ -107,17 +57,12 @@ export async function setConversationHidden(
   worktree: string,
   branch: string | null,
 ) {
-  const response = await fetch(
+  const result = await postConversation<{ conversation: Conversation }>(
     `/api/conversations/${encodeURIComponent(id)}/${hidden ? "close" : "reopen"}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project, worktree, branch }),
-    },
+    { project, worktree, branch },
+    "Could not update conversation visibility.",
   );
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Could not update conversation visibility.");
-  return result.conversation as Conversation;
+  return result.conversation;
 }
 
 export async function stopConversation(id: string) {
@@ -133,16 +78,11 @@ export async function replyToPermission(
   requestID: string,
   decision: "once" | "always" | "reject",
 ) {
-  const response = await fetch(
+  await postConversation(
     `/api/conversations/${encodeURIComponent(conversationID)}/permissions/${encodeURIComponent(requestID)}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ decision }),
-    },
+    { decision },
+    "Could not answer this permission request.",
   );
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Could not answer this permission request.");
 }
 
 export async function replyToForm(
@@ -150,14 +90,27 @@ export async function replyToForm(
   formID: string,
   answer: Record<string, string | number | boolean>,
 ) {
-  const response = await fetch(
+  await postConversation(
     `/api/conversations/${encodeURIComponent(conversationID)}/forms/${encodeURIComponent(formID)}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ answer }),
-    },
+    { answer },
+    "Could not answer this OpenCode form.",
   );
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Could not answer this OpenCode form.");
+}
+
+async function postConversation<Result extends Record<string, unknown> = Record<string, unknown>>(
+  path: string,
+  body: Record<string, unknown>,
+  fallback = "Could not process conversation request.",
+): Promise<Result> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const result = (await response.json()) as Result;
+  if (!response.ok)
+    throw new Error(
+      "error" in result && typeof result.error === "string" ? result.error : fallback,
+    );
+  return result;
 }

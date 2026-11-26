@@ -214,37 +214,10 @@ export function createOpenCodeConversationClient(
         }
 
         for await (const event of { [Symbol.asyncIterator]: () => iterator }) {
-          if (!belongsToSession(event, sessionID)) continue;
-          if (event.type === "session.text.started") {
-            const messages = await listMessages(client, sessionID);
-            if (assistantFollowsPrompt(messages, promptID, event.data.assistantMessageID))
-              assistantIDs.add(event.data.assistantMessageID);
-          }
           if (
-            event.type === "session.text.delta" &&
-            assistantIDs.has(event.data.assistantMessageID)
+            await processObservationEvent(client, event, sessionID, promptID, onEvent, assistantIDs)
           )
-            onEvent({
-              type: "text",
-              assistantMessageID: event.data.assistantMessageID,
-              delta: event.data.delta,
-            });
-          const tool = toolEvent(event);
-          if (tool && assistantIDs.has(tool.assistantMessageID))
-            onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
-          if (isBlockedEvent(event)) onEvent({ type: "blocked" });
-          if (isSettledEvent(event)) {
-            const messages = await listMessages(client, sessionID);
-            for (const tool of toolCallsAfterPrompt(messages, promptID))
-              onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
-            const result = await reconcile(client, sessionID, promptID);
-            if (!result.active && result.reply !== null) {
-              onEvent({ type: "settled", reply: result.reply });
-              return;
-            }
-            if (!result.active)
-              throw new Error("OpenCode settled without an authoritative reply for this prompt.");
-          }
+            return;
         }
         throw new Error("OpenCode event stream ended before the turn settled.");
       } finally {
@@ -267,10 +240,7 @@ export function createOpenCodeConversationClient(
       let acceptedAt: number | undefined;
       const queued: Event[] = [];
       const pendingText = new Map<string, string>();
-      const pendingTools = new Map<
-        string,
-        Array<{ id: string; name: string; status: "running" | "completed" | "failed" }>
-      >();
+      const pendingTools = new Map<string, ToolCall[]>();
       const assistantIDs = new Set<string>();
       let resolveTurn!: (reply: string) => void;
       let rejectTurn!: (error: Error) => void;
@@ -278,72 +248,20 @@ export function createOpenCodeConversationClient(
         resolveTurn = resolve;
         rejectTurn = reject;
       });
-      // Stream EOF may reject this before session.prompt returns; mark it handled now,
-      // while preserving the rejection for the send path's later await.
       void completed.catch(() => {});
       async function processEvent(event: Event) {
-        if (event.type === "server.connected") return;
-        if (!belongsToSession(event, sessionID)) return;
-        if (acceptedAt !== undefined && event.created < acceptedAt) return;
-        if (event.type === "session.text.started") {
-          const messages = await listMessages(client, sessionID);
-          if (assistantFollowsPrompt(messages, acceptedUserID!, event.data.assistantMessageID)) {
-            assistantIDs.add(event.data.assistantMessageID);
-            const buffered = pendingText.get(event.data.assistantMessageID);
-            if (buffered) {
-              observe?.({
-                type: "text",
-                assistantMessageID: event.data.assistantMessageID,
-                delta: buffered,
-              });
-              pendingText.delete(event.data.assistantMessageID);
-            }
-            for (const tool of pendingTools.get(event.data.assistantMessageID) ?? [])
-              observe?.({
-                type: "tool",
-                assistantMessageID: event.data.assistantMessageID,
-                ...tool,
-              });
-            pendingTools.delete(event.data.assistantMessageID);
-          }
-        }
-        if (event.type === "session.text.delta") {
-          if (assistantIDs.has(event.data.assistantMessageID)) {
-            observe?.({
-              type: "text",
-              assistantMessageID: event.data.assistantMessageID,
-              delta: event.data.delta,
-            });
-          } else {
-            pendingText.set(
-              event.data.assistantMessageID,
-              (pendingText.get(event.data.assistantMessageID) ?? "") + event.data.delta,
-            );
-          }
-        }
-        const tool = toolEvent(event);
-        if (tool) {
-          if (assistantIDs.has(tool.assistantMessageID)) {
-            observe?.({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
-          } else {
-            const calls = pendingTools.get(tool.assistantMessageID) ?? [];
-            calls.push(tool.call);
-            pendingTools.set(tool.assistantMessageID, calls);
-          }
-        }
-        if (isBlockedEvent(event)) observe?.({ type: "blocked" });
-        if (isSettledEvent(event)) {
-          const messages = await listMessages(client, sessionID);
-          for (const tool of toolCallsAfterPrompt(messages, acceptedUserID!))
-            observe?.({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
-          const reply = replyAfterPrompt(messages, acceptedUserID!);
-          if (reply === null) {
-            rejectTurn(new Error("OpenCode settled without an assistant reply for this prompt."));
-            return;
-          }
-          observe?.({ type: "settled", reply });
-          resolveTurn(reply);
-        }
+        await processPromptEvent(event, {
+          client,
+          sessionID,
+          acceptedUserID: acceptedUserID!,
+          acceptedAt,
+          pendingText,
+          pendingTools,
+          assistantIDs,
+          observe,
+          rejectTurn,
+          resolveTurn,
+        });
       }
 
       try {
@@ -389,6 +307,190 @@ type Event = Awaited<
     ? T
     : never
 >;
+
+type ToolCall = { id: string; name: string; status: "running" | "completed" | "failed" };
+
+type PromptEventState = {
+  client: ReturnType<typeof OpenCode.make>;
+  sessionID: string;
+  acceptedUserID: string;
+  acceptedAt: number | undefined;
+  pendingText: Map<string, string>;
+  pendingTools: Map<string, ToolCall[]>;
+  assistantIDs: Set<string>;
+  observe: ((event: PromptEvent) => void) | undefined;
+  rejectTurn: (error: Error) => void;
+  resolveTurn: (reply: string) => void;
+};
+
+async function processObservationEvent(
+  client: ReturnType<typeof OpenCode.make>,
+  event: Event,
+  sessionID: string,
+  promptID: string,
+  onEvent: (event: ObservationEvent) => void,
+  assistantIDs: Set<string>,
+) {
+  if (!belongsToSession(event, sessionID)) return false;
+
+  switch (event.type) {
+    case "session.text.started": {
+      const messages = await listMessages(client, sessionID);
+      if (assistantFollowsPrompt(messages, promptID, event.data.assistantMessageID))
+        assistantIDs.add(event.data.assistantMessageID);
+      return false;
+    }
+    case "session.text.delta":
+      if (assistantIDs.has(event.data.assistantMessageID))
+        onEvent({
+          type: "text",
+          assistantMessageID: event.data.assistantMessageID,
+          delta: event.data.delta,
+        });
+      return false;
+    case "session.tool.input.started":
+    case "session.tool.called":
+    case "session.tool.success":
+    case "session.tool.failed": {
+      const tool = toolEvent(event);
+      if (tool && assistantIDs.has(tool.assistantMessageID))
+        onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
+      return false;
+    }
+    case "permission.asked":
+    case "form.created":
+      onEvent({ type: "blocked" });
+      return false;
+    case "session.execution.succeeded":
+    case "session.execution.failed":
+    case "session.execution.interrupted": {
+      const messages = await listMessages(client, sessionID);
+      for (const tool of toolCallsAfterPrompt(messages, promptID))
+        onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
+      const result = await reconcile(client, sessionID, promptID);
+      if (result.active) return false;
+      if (result.reply === null)
+        throw new Error("OpenCode settled without an authoritative reply for this prompt.");
+      onEvent({ type: "settled", reply: result.reply });
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+async function processPromptEvent(event: Event, state: PromptEventState) {
+  if (
+    event.type === "server.connected" ||
+    !belongsToSession(event, state.sessionID) ||
+    (state.acceptedAt !== undefined && event.created < state.acceptedAt)
+  )
+    return;
+
+  switch (event.type) {
+    case "session.text.started":
+      await handlePromptTextStarted(event, state);
+      return;
+    case "session.text.delta":
+      handlePromptTextDelta(event, state);
+      return;
+    case "session.tool.input.started":
+    case "session.tool.called":
+    case "session.tool.success":
+    case "session.tool.failed":
+      handlePromptToolEvent(event, state);
+      return;
+    case "permission.asked":
+    case "form.created":
+      state.observe?.({ type: "blocked" });
+      return;
+    case "session.execution.succeeded":
+    case "session.execution.failed":
+    case "session.execution.interrupted":
+      await settlePrompt(state);
+  }
+}
+
+async function handlePromptTextStarted(
+  event: Extract<Event, { type: "session.text.started" }>,
+  state: PromptEventState,
+) {
+  const messages = await listMessages(state.client, state.sessionID);
+  if (!assistantFollowsPrompt(messages, state.acceptedUserID, event.data.assistantMessageID))
+    return;
+  state.assistantIDs.add(event.data.assistantMessageID);
+  const buffered = state.pendingText.get(event.data.assistantMessageID);
+  if (buffered) {
+    state.observe?.({
+      type: "text",
+      assistantMessageID: event.data.assistantMessageID,
+      delta: buffered,
+    });
+    state.pendingText.delete(event.data.assistantMessageID);
+  }
+  for (const tool of state.pendingTools.get(event.data.assistantMessageID) ?? [])
+    state.observe?.({
+      type: "tool",
+      assistantMessageID: event.data.assistantMessageID,
+      ...tool,
+    });
+  state.pendingTools.delete(event.data.assistantMessageID);
+}
+
+function handlePromptTextDelta(
+  event: Extract<Event, { type: "session.text.delta" }>,
+  state: PromptEventState,
+) {
+  if (state.assistantIDs.has(event.data.assistantMessageID)) {
+    state.observe?.({
+      type: "text",
+      assistantMessageID: event.data.assistantMessageID,
+      delta: event.data.delta,
+    });
+    return;
+  }
+  state.pendingText.set(
+    event.data.assistantMessageID,
+    (state.pendingText.get(event.data.assistantMessageID) ?? "") + event.data.delta,
+  );
+}
+
+function handlePromptToolEvent(
+  event: Extract<
+    Event,
+    {
+      type:
+        | "session.tool.input.started"
+        | "session.tool.called"
+        | "session.tool.success"
+        | "session.tool.failed";
+    }
+  >,
+  state: PromptEventState,
+) {
+  const tool = toolEvent(event);
+  if (!tool) return;
+  if (state.assistantIDs.has(tool.assistantMessageID)) {
+    state.observe?.({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
+    return;
+  }
+  const calls = state.pendingTools.get(tool.assistantMessageID) ?? [];
+  calls.push(tool.call);
+  state.pendingTools.set(tool.assistantMessageID, calls);
+}
+
+async function settlePrompt(state: PromptEventState) {
+  const messages = await listMessages(state.client, state.sessionID);
+  for (const tool of toolCallsAfterPrompt(messages, state.acceptedUserID))
+    state.observe?.({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
+  const reply = replyAfterPrompt(messages, state.acceptedUserID);
+  if (reply === null) {
+    state.rejectTurn(new Error("OpenCode settled without an assistant reply for this prompt."));
+    return;
+  }
+  state.observe?.({ type: "settled", reply });
+  state.resolveTurn(reply);
+}
 
 async function discoverOrWake(
   discover: () => Promise<Endpoint | undefined>,
@@ -602,19 +704,6 @@ function belongsToSession(event: Event, sessionID: string) {
   if (event.type === "server.connected") return false;
   if (event.type === "form.created") return event.data.form.sessionID === sessionID;
   return "sessionID" in event.data && event.data.sessionID === sessionID;
-}
-
-function isBlockedEvent(event: Event) {
-  return (
-    event.type === "permission.asked" ||
-    (event.type === "form.created" && Boolean(event.data.form.sessionID))
-  );
-}
-
-function isSettledEvent(
-  event: Event,
-): event is Extract<Event, { type: (typeof settleEvents)[number] }> {
-  return settleEvents.includes(event.type as (typeof settleEvents)[number]);
 }
 
 function asError(error: unknown) {

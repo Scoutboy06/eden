@@ -3,11 +3,11 @@ import { cn } from "cn";
 
 import { Button } from "@/components/ui/button";
 
-type HeaderIconButtonProps = Omit<ComponentProps<typeof Button>, "variant" | "size"> & {
-  label: string;
-};
-
-export function HeaderIconButton({ label, className, ...props }: HeaderIconButtonProps) {
+export function HeaderIconButton({
+  label,
+  className,
+  ...props
+}: Omit<ComponentProps<typeof Button>, "variant" | "size"> & { label: string }) {
   return (
     <Button
       variant="ghost"

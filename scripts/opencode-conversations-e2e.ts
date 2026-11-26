@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { createProjectRegistry } from "../src/modules/projects/project-registry";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -78,6 +78,7 @@ async function main() {
       console.log(JSON.stringify({ result: "passed", fixture: "navigation variants" }));
       return;
     }
+    await openDoingPage(firstPage, vite.url, registered.key, basename(projectPath));
     await firstPage.waitForFunction(() =>
       (
         window as Window & { __edenConversationSockets?: WebSocket[] }
@@ -85,101 +86,7 @@ async function main() {
     );
     await firstPage.waitForTimeout(2600);
     assert.deepEqual(conversationCollectionGets, [], "idle Doing views do not poll conversations");
-    if (process.env.EDEN_CONVERSATION_E2E_SKIP_DIFF !== "1") {
-      await firstPage.setViewportSize({ width: 390, height: 844 });
-      await firstPage.getByRole("button", { name: "Hide worktrees sidebar" }).click();
-      const diffProfiler = await firstContext.newCDPSession(firstPage);
-      await diffProfiler.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-      await diffProfiler.send("Profiler.enable");
-      await diffProfiler.send("Profiler.start");
-      const fileReads: string[] = [];
-      firstPage.on("request", (request) => {
-        const url = new URL(request.url());
-        if (url.pathname === "/api/worktree-diff" && url.searchParams.has("file"))
-          fileReads.push(url.searchParams.get("file")!);
-      });
-      try {
-        const diffResponsePromise = firstPage.waitForResponse((response) => {
-          const url = new URL(response.url());
-          return url.pathname === "/api/worktree-diff" && !url.searchParams.has("file");
-        });
-        await firstPage.getByRole("tab", { name: "Diff" }).click();
-        const diffResponse = await diffResponsePromise;
-        if (!diffResponse.ok())
-          throw new Error(
-            `Worktree diff returned ${diffResponse.status()}: ${await diffResponse.text()}`,
-          );
-        await firstPage.getByText("excludes commit history").waitFor();
-        const changedPaths = [
-          "modified.ts",
-          "staged.txt",
-          "new-staged.txt",
-          "deleted.txt",
-          "renamed.txt",
-          "untracked.txt",
-          "binary.dat",
-          "large.txt",
-          "outside-link",
-          "odd\nname.txt",
-        ];
-        for (const path of changedPaths) {
-          const panel = firstPage.getByTitle(path, { exact: true });
-          await panel.waitFor();
-          assert.equal(
-            await panel.evaluate((element) =>
-              element.closest("button")?.getAttribute("aria-expanded"),
-            ),
-            "false",
-            `${JSON.stringify(path)} starts collapsed`,
-          );
-        }
-        assert.deepEqual(fileReads, [], "collapsed diff panels do not fetch per-file content");
-
-        for (const path of changedPaths) {
-          const fileResponsePromise = firstPage.waitForResponse((response) => {
-            const url = new URL(response.url());
-            return url.pathname === "/api/worktree-diff" && url.searchParams.get("file") === path;
-          });
-          await firstPage.getByTitle(path, { exact: true }).click();
-          const fileResponse = await fileResponsePromise;
-          assert.ok(fileResponse.ok(), `expanded diff panel reads ${JSON.stringify(path)}`);
-        }
-        assert.deepEqual(fileReads, changedPaths, "each expanded panel fetches only its own file");
-        await firstPage.getByText(/state = 'working'/).waitFor();
-        await firstPage.getByText(/state = 'before'/).waitFor();
-        await firstPage.getByText("staged only").waitFor();
-        await firstPage.getByText("staged addition").waitFor();
-        await firstPage.getByText("untracked addition").waitFor();
-        await firstPage.getByText("Binary file; text preview is not available.").waitFor();
-        await firstPage.getByText("File exceeds the preview size limit.").waitFor();
-        await firstPage.getByText("outside-link").waitFor();
-        await firstPage.getByTitle("rename-old.txt", { exact: true }).waitFor();
-        await firstPage.getByText("unusual filename", { exact: true }).waitFor();
-        if (process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT)
-          await firstPage.screenshot({ path: process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT });
-        const documentWidth = await firstPage.evaluate(
-          () => [document.documentElement.scrollWidth, window.innerWidth] as const,
-        );
-        assert.ok(
-          documentWidth[0] <= documentWidth[1] + 1,
-          "the diff viewer stays within a phone viewport",
-        );
-      } finally {
-        const { profile } = await diffProfiler.send("Profiler.stop");
-        await diffProfiler.send("Profiler.disable");
-        await diffProfiler.send("Emulation.setCPUThrottlingRate", { rate: 1 });
-        await diffProfiler.detach();
-        console.log(
-          JSON.stringify({
-            worktreeDiffCpuProfileSamples: profile.samples?.length ?? 0,
-            worktreeDiffCpuProfileNodes: profile.nodes.length,
-            worktreeDiffFileReads: fileReads.length,
-            cpuThrottleRate: 4,
-            viewport: "390x844",
-          }),
-        );
-      }
-    }
+    await verifyWorktreeDiff(firstPage, firstContext);
     await firstPage.getByRole("tab", { name: "Reviews" }).click();
     const createdResponse = firstPage.waitForResponse(
       (response) =>
@@ -191,75 +98,8 @@ async function main() {
     const conversationID = String(created.conversation.id);
     const firstComposer = firstPage.getByRole("textbox", { name: "Message OpenCode" });
     await firstComposer.waitFor({ state: "visible" });
-    if (process.env.EDEN_CONVERSATION_E2E_SKIP_MODEL !== "1") {
-      const modelPicker = firstPage.getByRole("combobox", { name: "Choose OpenCode model" });
-      assert.deepEqual(modelDiscoveryGets, [], "model discovery stays lazy until the picker opens");
-      const modelListResponse = firstPage.waitForResponse(
-        (response) =>
-          response.url().includes(`/api/conversations/${conversationID}/models`) &&
-          response.request().method() === "GET",
-      );
-      await modelPicker.click();
-      assert.equal((await modelListResponse).status(), 200);
-      const modelOptions = firstPage.getByRole("option");
-      assert.equal(await modelOptions.first().innerText(), "Default model");
-      await firstPage.getByRole("group", { name: "Anthropic" }).waitFor();
-      await firstPage.getByRole("group", { name: "OpenCode" }).waitFor();
-      if (process.env.EDEN_OPENCODE_MODEL_E2E_SCREENSHOT)
-        await firstPage.screenshot({ path: process.env.EDEN_OPENCODE_MODEL_E2E_SCREENSHOT });
-      await firstPage.getByRole("option", { name: "Claude Fixture" }).click();
-      await firstPage.getByRole("option", { name: "Claude Fixture" }).waitFor({ state: "hidden" });
-      await modelPicker.getByText("Claude Fixture").waitFor();
-      await modelPicker.focus();
-      await modelPicker.press("ArrowDown");
-      await firstPage.keyboard.press("ArrowDown");
-      await firstPage.keyboard.press("Enter");
-      await modelPicker.getByText("Fake Free").waitFor();
-      await modelPicker.press("ArrowDown");
-      await firstPage.keyboard.press("ArrowUp");
-      await firstPage.keyboard.press("Enter");
-      await modelPicker.getByText("Claude Fixture").waitFor();
-    }
-
-    await firstComposer.click();
-    await firstComposer.evaluate((element) => element.blur());
-    await firstPage.evaluate(() =>
-      Promise.all(document.getAnimations().map((animation) => animation.finished)),
-    );
-    await firstPage.setViewportSize({ width: 1400, height: 950 });
-    if (process.env.EDEN_OPENCODE_COMPOSER_DESKTOP_SCREENSHOT)
-      await firstPage.screenshot({
-        path: process.env.EDEN_OPENCODE_COMPOSER_DESKTOP_SCREENSHOT,
-      });
-    await firstPage.setViewportSize({ width: 390, height: 844 });
-    const mobileComposerBounds = await firstPage.evaluate(() => ({
-      documentWidth: document.documentElement.scrollWidth,
-      composerRight: document.querySelector('[data-slot="input-group"]')!.getBoundingClientRect()
-        .right,
-      viewportWidth: window.innerWidth,
-    }));
-    assert.ok(
-      mobileComposerBounds.documentWidth <= mobileComposerBounds.viewportWidth + 1,
-      "the composer fits a phone viewport without horizontal overflow",
-    );
-    assert.ok(
-      mobileComposerBounds.composerRight <= mobileComposerBounds.viewportWidth + 1,
-      "the composer stays inside the phone viewport",
-    );
-    if (process.env.EDEN_OPENCODE_COMPOSER_MOBILE_SCREENSHOT)
-      await firstPage.screenshot({
-        path: process.env.EDEN_OPENCODE_COMPOSER_MOBILE_SCREENSHOT,
-      });
-    const initialComposerHeight = await firstComposer.evaluate((element) => element.clientHeight);
-    await firstComposer.fill(
-      Array.from({ length: 12 }, (_, index) => `draft line ${index}`).join("\n"),
-    );
-    const expandedComposerHeight = await firstComposer.evaluate((element) => element.clientHeight);
-    assert.ok(
-      expandedComposerHeight > initialComposerHeight && expandedComposerHeight <= 160,
-      "the mobile composer grows with the draft up to its bounded height",
-    );
-    await firstComposer.fill("");
+    await verifyModelPicker(firstPage, conversationID, modelDiscoveryGets);
+    await verifyMobileComposer(firstPage, firstComposer);
 
     await firstComposer.fill("**first fake prompt**");
     await firstComposer.press("Enter");
@@ -808,6 +648,170 @@ async function stopVite(instance: ViteInstance) {
   }
 }
 
+async function verifyWorktreeDiff(page: Page, context: BrowserContext) {
+  if (process.env.EDEN_CONVERSATION_E2E_SKIP_DIFF === "1") return;
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Hide worktrees sidebar" }).click();
+  const profiler = await context.newCDPSession(page);
+  await profiler.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+  await profiler.send("Profiler.enable");
+  await profiler.send("Profiler.start");
+  const fileReads: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/worktree-diff" && url.searchParams.has("file"))
+      fileReads.push(url.searchParams.get("file")!);
+  });
+  try {
+    const diffResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/worktree-diff" && !url.searchParams.has("file");
+    });
+    await page.getByRole("tab", { name: "Diff" }).click();
+    const diffResponse = await diffResponsePromise;
+    if (!diffResponse.ok())
+      throw new Error(
+        `Worktree diff returned ${diffResponse.status()}: ${await diffResponse.text()}`,
+      );
+    await page.getByText("excludes commit history").waitFor();
+    const changedPaths = [
+      "modified.ts",
+      "staged.txt",
+      "new-staged.txt",
+      "deleted.txt",
+      "renamed.txt",
+      "untracked.txt",
+      "binary.dat",
+      "large.txt",
+      "outside-link",
+      "odd\nname.txt",
+    ];
+    for (const path of changedPaths) {
+      const panel = page.getByTitle(path, { exact: true });
+      await panel.waitFor();
+      assert.equal(
+        await panel.evaluate((element) => element.closest("button")?.getAttribute("aria-expanded")),
+        "false",
+        `${JSON.stringify(path)} starts collapsed`,
+      );
+    }
+    assert.deepEqual(fileReads, [], "collapsed diff panels do not fetch per-file content");
+
+    for (const path of changedPaths) {
+      const fileResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === "/api/worktree-diff" && url.searchParams.get("file") === path;
+      });
+      await page.getByTitle(path, { exact: true }).click();
+      const fileResponse = await fileResponsePromise;
+      assert.ok(fileResponse.ok(), `expanded diff panel reads ${JSON.stringify(path)}`);
+    }
+    assert.deepEqual(fileReads, changedPaths, "each expanded panel fetches only its own file");
+    await page.getByText(/state = 'working'/).waitFor();
+    await page.getByText(/state = 'before'/).waitFor();
+    await page.getByText("staged only").waitFor();
+    await page.getByText("staged addition").waitFor();
+    await page.getByText("untracked addition").waitFor();
+    await page.getByText("Binary file; text preview is not available.").waitFor();
+    await page.getByText("File exceeds the preview size limit.").waitFor();
+    await page.getByText("outside-link").waitFor();
+    await page.getByTitle("rename-old.txt", { exact: true }).waitFor();
+    await page.getByText("unusual filename", { exact: true }).waitFor();
+    if (process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT)
+      await page.screenshot({ path: process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT });
+    const documentWidth = await page.evaluate(
+      () => [document.documentElement.scrollWidth, window.innerWidth] as const,
+    );
+    assert.ok(
+      documentWidth[0] <= documentWidth[1] + 1,
+      "the diff viewer stays within a phone viewport",
+    );
+  } finally {
+    const { profile } = await profiler.send("Profiler.stop");
+    await profiler.send("Profiler.disable");
+    await profiler.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await profiler.detach();
+    console.log(
+      JSON.stringify({
+        worktreeDiffCpuProfileSamples: profile.samples?.length ?? 0,
+        worktreeDiffCpuProfileNodes: profile.nodes.length,
+        worktreeDiffFileReads: fileReads.length,
+        cpuThrottleRate: 4,
+        viewport: "390x844",
+      }),
+    );
+  }
+}
+
+async function verifyModelPicker(page: Page, conversationID: string, modelDiscoveryGets: string[]) {
+  if (process.env.EDEN_CONVERSATION_E2E_SKIP_MODEL === "1") return;
+
+  const modelPicker = page.getByRole("combobox", { name: "Choose OpenCode model" });
+  assert.deepEqual(modelDiscoveryGets, [], "model discovery stays lazy until the picker opens");
+  const modelListResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/conversations/${conversationID}/models`) &&
+      response.request().method() === "GET",
+  );
+  await modelPicker.click();
+  assert.equal((await modelListResponse).status(), 200);
+  const modelOptions = page.getByRole("option");
+  assert.equal(await modelOptions.first().innerText(), "Default model");
+  await page.getByRole("group", { name: "Anthropic" }).waitFor();
+  await page.getByRole("group", { name: "OpenCode" }).waitFor();
+  if (process.env.EDEN_OPENCODE_MODEL_E2E_SCREENSHOT)
+    await page.screenshot({ path: process.env.EDEN_OPENCODE_MODEL_E2E_SCREENSHOT });
+  await page.getByRole("option", { name: "Claude Fixture" }).click();
+  await page.getByRole("option", { name: "Claude Fixture" }).waitFor({ state: "hidden" });
+  await modelPicker.getByText("Claude Fixture").waitFor();
+  await modelPicker.focus();
+  await modelPicker.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await modelPicker.getByText("Fake Free").waitFor();
+  await modelPicker.press("ArrowDown");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  await modelPicker.getByText("Claude Fixture").waitFor();
+}
+
+async function verifyMobileComposer(page: Page, composer: Locator) {
+  await composer.click();
+  await composer.evaluate((element) => element.blur());
+  await page.evaluate(() =>
+    Promise.all(document.getAnimations().map((animation) => animation.finished)),
+  );
+  await page.setViewportSize({ width: 1400, height: 950 });
+  if (process.env.EDEN_OPENCODE_COMPOSER_DESKTOP_SCREENSHOT)
+    await page.screenshot({ path: process.env.EDEN_OPENCODE_COMPOSER_DESKTOP_SCREENSHOT });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileComposerBounds = await page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    composerRight: document.querySelector('[data-slot="input-group"]')!.getBoundingClientRect()
+      .right,
+    viewportWidth: window.innerWidth,
+  }));
+  assert.ok(
+    mobileComposerBounds.documentWidth <= mobileComposerBounds.viewportWidth + 1,
+    "the composer fits a phone viewport without horizontal overflow",
+  );
+  assert.ok(
+    mobileComposerBounds.composerRight <= mobileComposerBounds.viewportWidth + 1,
+    "the composer stays inside the phone viewport",
+  );
+  if (process.env.EDEN_OPENCODE_COMPOSER_MOBILE_SCREENSHOT)
+    await page.screenshot({ path: process.env.EDEN_OPENCODE_COMPOSER_MOBILE_SCREENSHOT });
+  const initialComposerHeight = await composer.evaluate((element) => element.clientHeight);
+  await composer.fill(Array.from({ length: 12 }, (_, index) => `draft line ${index}`).join("\n"));
+  const expandedComposerHeight = await composer.evaluate((element) => element.clientHeight);
+  assert.ok(
+    expandedComposerHeight > initialComposerHeight && expandedComposerHeight <= 160,
+    "the mobile composer grows with the draft up to its bounded height",
+  );
+  await composer.fill("");
+}
+
 async function verifyNavigationVariants(page: Page) {
   const navigation = page.getByRole("navigation", { name: "Main" });
   const routeLabels = ["Board", "Doing", "PRs", "Health"];
@@ -830,12 +834,7 @@ async function verifyNavigationVariants(page: Page) {
 
   await assertSingleRouteSet();
   assert.equal(await railWidth(), 48, "Classic retains its 48px icon rail");
-  await page.getByRole("button", { name: "Settings" }).click();
-  const appearance = page.getByRole("dialog").getByRole("combobox", { name: "Navigation" });
-  await appearance.click();
-  await page.getByRole("option", { name: "Sidebar 09" }).click();
-  await page.locator('[data-slot="dialog-close"]').click();
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await selectNavigationStyle(page, "Sidebar 09");
   await assertSingleRouteSet();
   assert.equal(await railWidth(), 48, "Sidebar 09 uses a compact 48px icon rail");
   assert.equal(
@@ -859,16 +858,17 @@ async function verifyNavigationVariants(page: Page) {
     "sidebar-09",
     "Sidebar 09 selection persists across reloads",
   );
+  await selectNavigationStyle(page, "Classic (recommended)");
+  assert.equal(await railWidth(), 48, "Classic can be restored from Appearance");
+}
+
+async function selectNavigationStyle(page: Page, style: string) {
   await page.getByRole("button", { name: "Settings" }).click();
-  const persistedAppearance = page
-    .getByRole("dialog")
-    .getByRole("combobox", { name: "Navigation" });
-  await persistedAppearance.click();
-  await page.getByRole("option", { name: "Classic (recommended)" }).click();
+  const navigation = page.getByRole("dialog").getByRole("combobox", { name: "Navigation" });
+  await navigation.click();
+  await page.getByRole("option", { name: style }).click();
   await page.locator('[data-slot="dialog-close"]').click();
   await page.getByRole("dialog").waitFor({ state: "hidden" });
-  await assertSingleRouteSet();
-  assert.equal(await railWidth(), 48, "Classic can be restored from Appearance");
 }
 
 async function openDoingPage(
@@ -1167,15 +1167,28 @@ class FakeOpenCode {
   private async handle(request: IncomingMessage, response: ServerResponse) {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
-    if (path === "/api/info" && request.method === "GET")
-      return json(response, 200, {
+    if (this.handleServerRoute(path, request, response)) return;
+    if (await this.handleSessionRoute(path, request, response)) return;
+    if (await this.handlePromptRoute(path, request, response)) return;
+    if (this.handleInterruptRoute(path, request, response)) return;
+    if (await this.handlePermissionRoute(path, request, response)) return;
+    if (this.handleMessageRoute(path, url, request, response)) return;
+    if (this.handleSessionLookup(path, request, response)) return;
+    return json(response, 404, { errors: [{ message: "Fake OpenCode route not found." }] });
+  }
+
+  private handleServerRoute(path: string, request: IncomingMessage, response: ServerResponse) {
+    if (path === "/api/info" && request.method === "GET") {
+      json(response, 200, {
         version: "2.4.1",
         pid: process.pid,
         urls: [this.url],
         paths: { tmp: "/tmp" },
       });
-    if (path === "/api/model/default" && request.method === "GET")
-      return json(response, 200, {
+      return true;
+    }
+    if (path === "/api/model/default" && request.method === "GET") {
+      json(response, 200, {
         data: {
           id: "fake-free",
           modelID: "fake-free",
@@ -1184,8 +1197,10 @@ class FakeOpenCode {
           name: "Fake Free",
         },
       });
-    if (path === "/api/model" && request.method === "GET")
-      return json(response, 200, {
+      return true;
+    }
+    if (path === "/api/model" && request.method === "GET") {
+      json(response, 200, {
         data: [
           {
             id: "claude-fixture",
@@ -1205,30 +1220,42 @@ class FakeOpenCode {
           },
         ],
       });
-    if (path === "/api/provider" && request.method === "GET")
-      return json(response, 200, {
+      return true;
+    }
+    if (path === "/api/provider" && request.method === "GET") {
+      json(response, 200, {
         data: [
           { id: "anthropic", name: "Anthropic" },
           { id: "opencode", name: "OpenCode" },
         ],
       });
-    if (path === "/api/event" && request.method === "GET") {
-      response.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      });
-      this.eventStreams.add(response);
-      response.on("close", () => this.eventStreams.delete(response));
-      response.write(
-        `data: ${JSON.stringify({ type: "server.connected", id: randomID(), data: {} })}\n\n`,
-      );
-      return;
+      return true;
     }
+    if (path !== "/api/event" || request.method !== "GET") return false;
+
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    this.eventStreams.add(response);
+    response.on("close", () => this.eventStreams.delete(response));
+    response.write(
+      `data: ${JSON.stringify({ type: "server.connected", id: randomID(), data: {} })}\n\n`,
+    );
+    return true;
+  }
+
+  private async handleSessionRoute(
+    path: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) {
     if (path === "/api/session" && request.method === "POST") {
       await readJson(request);
       this.sessionCreates += 1;
-      return json(response, 200, { data: { id: nativeSessionID } });
+      json(response, 200, { data: { id: nativeSessionID } });
+      return true;
     }
     const modelMatch = path.match(/^\/api\/session\/([^/]+)\/model$/);
     if (modelMatch && request.method === "POST") {
@@ -1240,71 +1267,96 @@ class FakeOpenCode {
           ? { id: "fake-free", providerID: "opencode" }
           : { id: "claude-fixture", providerID: "anthropic" },
       );
-      return response.writeHead(204).end();
+      response.writeHead(204).end();
+      return true;
     }
-    if (path === "/api/session/active" && request.method === "GET")
-      return json(response, 200, { data: this.active ? { [nativeSessionID]: {} } : {} });
+    if (path === "/api/session/active" && request.method === "GET") {
+      json(response, 200, { data: this.active ? { [nativeSessionID]: {} } : {} });
+      return true;
+    }
+    return false;
+  }
 
+  private async handlePromptRoute(
+    path: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) {
     const promptMatch = path.match(/^\/api\/session\/([^/]+)\/prompt$/);
-    if (promptMatch && request.method === "POST") {
-      const sessionID = decodeURIComponent(promptMatch[1]!);
-      const body = await readJson(request);
-      if (sessionID !== nativeSessionID)
-        return json(response, 409, { errors: [{ message: "Unexpected native session." }] });
-      const prompt: FakePrompt = {
-        sessionID,
-        id: String(body.id ?? `user-${this.prompts.length + 1}`),
-        text: String(body.text ?? ""),
-      };
-      assert.match(prompt.id, /^msg_[0-9a-f]{32}$/);
-      this.prompts.push(prompt);
-      this.sessionMessages.push({
+    if (!promptMatch || request.method !== "POST") return false;
+
+    const sessionID = decodeURIComponent(promptMatch[1]!);
+    const body = await readJson(request);
+    if (sessionID !== nativeSessionID) {
+      json(response, 409, { errors: [{ message: "Unexpected native session." }] });
+      return true;
+    }
+    const prompt: FakePrompt = {
+      sessionID,
+      id: String(body.id ?? `user-${this.prompts.length + 1}`),
+      text: String(body.text ?? ""),
+    };
+    assert.match(prompt.id, /^msg_[0-9a-f]{32}$/);
+    this.prompts.push(prompt);
+    this.sessionMessages.push({
+      id: prompt.id,
+      sessionID,
+      type: "user",
+      time: { created: Date.now() },
+      payload: { text: prompt.text },
+      delivery: { status: "delivered" },
+    });
+    for (const waiter of this.promptWaiters.splice(0)) {
+      const item = this.prompts[waiter.count - 1];
+      if (item) waiter.resolve(item);
+      else this.promptWaiters.push(waiter);
+    }
+    json(response, 200, {
+      data: {
         id: prompt.id,
         sessionID,
         type: "user",
         time: { created: Date.now() },
         payload: { text: prompt.text },
         delivery: { status: "delivered" },
-      });
-      for (const waiter of this.promptWaiters.splice(0)) {
-        const item = this.prompts[waiter.count - 1];
-        if (item) waiter.resolve(item);
-        else this.promptWaiters.push(waiter);
-      }
-      return json(response, 200, {
-        data: {
-          id: prompt.id,
-          sessionID,
-          type: "user",
-          time: { created: Date.now() },
-          payload: { text: prompt.text },
-          delivery: { status: "delivered" },
-        },
-      });
-    }
+      },
+    });
+    return true;
+  }
 
+  private handleInterruptRoute(path: string, request: IncomingMessage, response: ServerResponse) {
     const interruptMatch = path.match(/^\/api\/session\/([^/]+)\/interrupt$/);
-    if (interruptMatch && request.method === "POST") {
-      assert.equal(decodeURIComponent(interruptMatch[1]!), nativeSessionID);
-      this.interruptions += 1;
-      if (!this.active) return json(response, 200, { interrupted: false });
-      this.active = false;
-      const assistant = [...this.sessionMessages]
-        .reverse()
-        .find((message) => message.type === "assistant");
-      if (assistant) {
-        assistant.finish = "interrupted";
-        assistant.time = { created: Date.now(), completed: Date.now() };
-      }
-      this.emit({
-        type: "session.execution.interrupted",
-        id: randomID(),
-        created: Date.now(),
-        data: { sessionID: nativeSessionID },
-      });
-      return json(response, 200, { interrupted: true });
-    }
+    if (!interruptMatch || request.method !== "POST") return false;
 
+    assert.equal(decodeURIComponent(interruptMatch[1]!), nativeSessionID);
+    this.interruptions += 1;
+    if (!this.active) {
+      json(response, 200, { interrupted: false });
+      return true;
+    }
+    this.active = false;
+    const assistant = [...this.sessionMessages]
+      .reverse()
+      .find((message) => message.type === "assistant");
+    if (assistant) {
+      assistant.finish = "interrupted";
+      assistant.time = { created: Date.now(), completed: Date.now() };
+    }
+    this.emit({
+      type: "session.execution.interrupted",
+      id: randomID(),
+      created: Date.now(),
+      data: { sessionID: nativeSessionID },
+    });
+    json(response, 200, { interrupted: true });
+    return true;
+  }
+
+  private async handlePermissionRoute(
+    path: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) {
     const permissionReplyMatch = path.match(
       /^\/api\/session\/([^/]+)\/permission\/([^/]+)\/reply$/,
     );
@@ -1314,7 +1366,10 @@ class FakeOpenCode {
       const index = this.permissions.findIndex(
         ({ id }) => id === decodeURIComponent(permissionReplyMatch[2]!),
       );
-      if (index < 0) return json(response, 409, { errors: [{ message: "Permission is stale." }] });
+      if (index < 0) {
+        json(response, 409, { errors: [{ message: "Permission is stale." }] });
+        return true;
+      }
       assert.ok(
         body.decision === "once" || body.decision === "always" || body.decision === "reject",
       );
@@ -1322,35 +1377,47 @@ class FakeOpenCode {
       this.permissionReplies.push(body.decision);
       for (const waiter of this.permissionReplyWaiters.splice(0)) waiter(body.decision);
       response.writeHead(204);
-      return response.end();
+      response.end();
+      return true;
     }
-
     const permissionListMatch = path.match(/^\/api\/session\/([^/]+)\/permission$/);
     if (permissionListMatch && request.method === "GET") {
       assert.equal(decodeURIComponent(permissionListMatch[1]!), nativeSessionID);
-      return json(response, 200, { data: this.permissions });
+      json(response, 200, { data: this.permissions });
+      return true;
     }
+    return false;
+  }
 
+  private handleMessageRoute(
+    path: string,
+    url: URL,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) {
     const messageMatch = path.match(/^\/api\/session\/([^/]+)\/message$/);
-    if (messageMatch && request.method === "GET") {
-      const cursor = url.searchParams.get("cursor");
-      assert.equal(url.searchParams.has("order"), !cursor);
-      this.messageListCount += 1;
-      for (const waiter of this.messageListWaiters.splice(0)) {
-        if (this.messageListCount >= waiter.count) waiter.resolve();
-        else this.messageListWaiters.push(waiter);
-      }
-      return json(response, 200, {
-        data: cursor ? [] : this.sessionMessages,
-        cursor: cursor ? {} : { next: "fake-next-page" },
-      });
+    if (!messageMatch || request.method !== "GET") return false;
+
+    const cursor = url.searchParams.get("cursor");
+    assert.equal(url.searchParams.has("order"), !cursor);
+    this.messageListCount += 1;
+    for (const waiter of this.messageListWaiters.splice(0)) {
+      if (this.messageListCount >= waiter.count) waiter.resolve();
+      else this.messageListWaiters.push(waiter);
     }
+    json(response, 200, {
+      data: cursor ? [] : this.sessionMessages,
+      cursor: cursor ? {} : { next: "fake-next-page" },
+    });
+    return true;
+  }
 
+  private handleSessionLookup(path: string, request: IncomingMessage, response: ServerResponse) {
     const sessionMatch = path.match(/^\/api\/session\/([^/]+)$/);
-    if (sessionMatch && request.method === "GET")
-      return json(response, 200, { data: { id: decodeURIComponent(sessionMatch[1]!) } });
+    if (!sessionMatch || request.method !== "GET") return false;
 
-    return json(response, 404, { errors: [{ message: "Fake OpenCode route not found." }] });
+    json(response, 200, { data: { id: decodeURIComponent(sessionMatch[1]!) } });
+    return true;
   }
 
   private updateAssistant(turn: FakeTurn, text: string, finished = false) {

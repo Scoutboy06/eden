@@ -8,6 +8,8 @@ import type { OpenCodeConversationClient } from "../../../src/external/opencode/
 import { GitModule } from "../../../src/modules/git/git.module";
 import { createOpenCodeConversationClient } from "../../../src/external/opencode/client";
 import { isAllowedTerminalHost, resolveWorktree } from "./terminals";
+import { presentForm, validateFormAnswer } from "./conversation-forms";
+import type { ConversationForm, ConversationMessage } from "../conversation-contract";
 
 type Scope = { project: string; worktree: string; branch: string | null };
 type StoredToolCall = {
@@ -15,32 +17,8 @@ type StoredToolCall = {
   name: string;
   status: "running" | "completed" | "failed";
 };
-type StoredMessage = {
-  role: "user" | "assistant";
-  text: string;
-  createdAt: number;
-  tools?: StoredToolCall[];
-};
+type StoredMessage = ConversationMessage;
 type Approval = { id: string; action: string; resources: string[]; message?: string };
-type ConversationFormField = {
-  key: string;
-  type: "string" | "number" | "integer" | "boolean";
-  title?: string;
-  description?: string;
-  required?: boolean;
-  placeholder?: string;
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  maxLength?: number;
-  options?: { value: string; label: string; description?: string }[];
-};
-type ConversationForm = {
-  id: string;
-  title: string;
-  fields: ConversationFormField[];
-  unsupported: string[];
-};
 type Conversation = Scope & {
   id: string;
   projectPath: string;
@@ -66,6 +44,14 @@ export type ConversationDependencies = {
   client?: OpenCodeConversationClient;
   databasePath?: string;
   worktrees?: typeof GitModule.worktrees;
+};
+type ConversationReplyDependencies = {
+  request: IncomingMessage;
+  response: ServerResponse;
+  database: Database;
+  client: OpenCodeConversationClient;
+  dependencies: ConversationDependencies;
+  actions: Set<string>;
 };
 
 export function createConversationMiddleware(dependencies: ConversationDependencies) {
@@ -341,87 +327,164 @@ async function handleConversationRequest(
   actions: Set<string>,
 ) {
   const id = parts[2] ?? "";
-  if (parts.length === 3 && request.method === "GET") {
-    const conversation = get(database, id);
-    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-    return respond(response, 200, { conversation: await withPending(conversation, client) });
-  }
-  if (parts.length === 4 && parts[3] === "models" && request.method === "GET") {
-    const conversation = get(database, id);
-    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-    if (!client.models) return respond(response, 503, { error: "Model selection is unavailable." });
-    try {
-      const { directory } = await resolveCurrentWorktree(conversation, dependencies);
-      return respond(response, 200, { models: await client.models(directory) });
-    } catch {
-      return respond(response, 503, { error: "Could not load available OpenCode models." });
-    }
-  }
-  if (parts.length === 5 && parts[3] === "permissions" && request.method === "POST") {
-    return handlePermissionReply({
-      conversationID: id,
-      requestID: decodeURIComponent(parts[4]!),
+  if (parts.length === 3 && request.method === "GET")
+    return handleGetConversation(response, id, database, client);
+  if (parts.length === 4 && parts[3] === "models" && request.method === "GET")
+    return handleModelsRequest(response, id, database, client, dependencies);
+  if (parts.length === 5 && request.method === "POST")
+    return handleReplyRequest(
       request,
       response,
+      parts,
+      id,
       database,
       client,
       dependencies,
       actions,
-    });
+    );
+  return handleConversationAction(
+    request,
+    response,
+    parts,
+    id,
+    database,
+    client,
+    dependencies,
+    actions,
+  );
+}
+
+async function handleGetConversation(
+  response: ServerResponse,
+  id: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+) {
+  const conversation = get(database, id);
+  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+  return respond(response, 200, { conversation: await withPending(conversation, client) });
+}
+
+async function handleModelsRequest(
+  response: ServerResponse,
+  id: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+  dependencies: ConversationDependencies,
+) {
+  const conversation = get(database, id);
+  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+  if (!client.models) return respond(response, 503, { error: "Model selection is unavailable." });
+  try {
+    const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+    return respond(response, 200, { models: await client.models(directory) });
+  } catch {
+    return respond(response, 503, { error: "Could not load available OpenCode models." });
   }
-  if (parts.length === 5 && parts[3] === "forms" && request.method === "POST") {
-    return handleFormReply({
-      conversationID: id,
-      formID: decodeURIComponent(parts[4]!),
-      request,
-      response,
-      database,
-      client,
-      dependencies,
-      actions,
-    });
-  }
-  if (
-    parts.length === 4 &&
-    (parts[3] === "close" || parts[3] === "reopen") &&
-    request.method === "POST"
-  ) {
-    const body = await readBody(request);
-    const scope = parseScope(body);
-    const conversation = get(database, id);
-    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-    if (!sameScope(conversation, scope))
-      return respond(response, 404, { error: "Conversation not found in this worktree." });
-    conversation.hidden = parts[3] === "close";
-    saveVisibility(database, conversation);
-    return respond(response, 200, { conversation: publicConversation(conversation) });
-  }
-  if (parts.length === 4 && parts[3] === "stop" && request.method === "POST") {
-    const conversation = get(database, id);
-    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-    if (
-      (conversation.status !== "active" && conversation.status !== "blocked") ||
-      !conversation.nativeSessionID
-    )
-      return respond(response, 409, { error: "There is no active reply to stop." });
-    try {
-      const { directory } = await resolveCurrentWorktree(conversation, dependencies);
-      if (!(await client.interrupt(conversation.nativeSessionID, directory)))
-        return respond(response, 409, { error: "OpenCode no longer has an active reply." });
-      return respond(response, 202, {
-        stopping: true,
-        conversation: publicConversation(conversation),
-      });
-    } catch {
-      return respond(response, 503, { error: "OpenCode could not stop this reply." });
-    }
-  }
-  if (parts.length !== 4 || parts[3] !== "send" || request.method !== "POST")
+}
+
+function handleReplyRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  parts: string[],
+  id: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+  dependencies: ConversationDependencies,
+  actions: Set<string>,
+) {
+  const replyID = decodeURIComponent(parts[4]!);
+  const input = {
+    conversationID: id,
+    replyID,
+    request,
+    response,
+    database,
+    client,
+    dependencies,
+    actions,
+  };
+  if (parts[3] === "permissions") return handlePermissionReply({ ...input, requestID: replyID });
+  if (parts[3] === "forms") return handleFormReply({ ...input, formID: replyID });
+  return respond(response, 405, { error: "Method not allowed." });
+}
+
+function handleConversationAction(
+  request: IncomingMessage,
+  response: ServerResponse,
+  parts: string[],
+  id: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+  dependencies: ConversationDependencies,
+  actions: Set<string>,
+) {
+  if (parts.length !== 4 || request.method !== "POST")
     return respond(response, 405, { error: "Method not allowed." });
-  if (!acquireAction(actions, id))
-    return respond(response, 409, {
-      error: "A conversation action is already in progress.",
+  if (parts[3] === "close" || parts[3] === "reopen")
+    return handleVisibilityRequest(request, response, parts[3] === "close", id, database);
+  if (parts[3] === "stop") return handleStopRequest(response, id, database, client, dependencies);
+  if (parts[3] === "send")
+    return handleSendRequest(request, response, id, database, client, dependencies, actions);
+  return respond(response, 405, { error: "Method not allowed." });
+}
+
+async function handleVisibilityRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  hidden: boolean,
+  id: string,
+  database: Database,
+) {
+  const body = await readBody(request);
+  const scope = parseScope(body);
+  const conversation = get(database, id);
+  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+  if (!sameScope(conversation, scope))
+    return respond(response, 404, { error: "Conversation not found in this worktree." });
+  conversation.hidden = hidden;
+  saveVisibility(database, conversation);
+  return respond(response, 200, { conversation: publicConversation(conversation) });
+}
+
+async function handleStopRequest(
+  response: ServerResponse,
+  id: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+  dependencies: ConversationDependencies,
+) {
+  const conversation = get(database, id);
+  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+  if (
+    (conversation.status !== "active" && conversation.status !== "blocked") ||
+    !conversation.nativeSessionID
+  )
+    return respond(response, 409, { error: "There is no active reply to stop." });
+  try {
+    const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+    if (!(await client.interrupt(conversation.nativeSessionID, directory)))
+      return respond(response, 409, { error: "OpenCode no longer has an active reply." });
+    return respond(response, 202, {
+      stopping: true,
+      conversation: publicConversation(conversation),
     });
+  } catch {
+    return respond(response, 503, { error: "OpenCode could not stop this reply." });
+  }
+}
+
+async function handleSendRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  id: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+  dependencies: ConversationDependencies,
+  actions: Set<string>,
+) {
+  if (!acquireAction(actions, id))
+    return respond(response, 409, { error: "A conversation action is already in progress." });
   try {
     const body = await readBody(request);
     if (typeof body.text !== "string" || !body.text.trim() || body.text.length > 16_000)
@@ -442,29 +505,15 @@ async function handleConversationRequest(
         error: "A reply is already in progress.",
         conversation: publicConversation(conversation),
       });
-    const modelKey = Object.hasOwn(body, "modelKey")
-      ? body.modelKey
-      : conversation.selectedModelKey;
-    let model: { id: string; providerID: string } | undefined;
-    if (modelKey === null) {
-      conversation.selectedModelKey = null;
-      conversation.selectedModelLabel = null;
-      save(database, conversation);
-    } else {
-      if (typeof modelKey !== "string" || !client.models)
-        return respond(response, 400, { error: "Choose an available OpenCode model." });
-      const { directory } = await resolveCurrentWorktree(conversation, dependencies);
-      const choices = await client.models(directory);
-      const choice = choices.find(({ key }) => key === modelKey);
-      if (!choice)
-        return respond(response, 400, { error: "That OpenCode model is no longer available." });
-      model = { id: choice.id, providerID: choice.providerID };
-      conversation.selectedModelKey = modelKey;
-      conversation.selectedModelLabel = choice.group
-        ? choice.name
-        : `${choice.name} · ${choice.providerID}`;
-      save(database, conversation);
-    }
+    const model = await selectConversationModel(
+      body,
+      conversation,
+      database,
+      client,
+      dependencies,
+      response,
+    );
+    if (model === false) return;
     return await sendMessage(
       database,
       conversation,
@@ -480,6 +529,40 @@ async function handleConversationRequest(
   }
 }
 
+async function selectConversationModel(
+  body: Record<string, unknown>,
+  conversation: Conversation,
+  database: Database,
+  client: OpenCodeConversationClient,
+  dependencies: ConversationDependencies,
+  response: ServerResponse,
+) {
+  const modelKey = Object.hasOwn(body, "modelKey") ? body.modelKey : conversation.selectedModelKey;
+  if (modelKey === null) {
+    conversation.selectedModelKey = null;
+    conversation.selectedModelLabel = null;
+    save(database, conversation);
+    return undefined;
+  }
+  if (typeof modelKey !== "string" || !client.models) {
+    respond(response, 400, { error: "Choose an available OpenCode model." });
+    return false;
+  }
+  const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+  const choices = await client.models(directory);
+  const choice = choices.find(({ key }) => key === modelKey);
+  if (!choice) {
+    respond(response, 400, { error: "That OpenCode model is no longer available." });
+    return false;
+  }
+  conversation.selectedModelKey = modelKey;
+  conversation.selectedModelLabel = choice.group
+    ? choice.name
+    : `${choice.name} · ${choice.providerID}`;
+  save(database, conversation);
+  return { id: choice.id, providerID: choice.providerID };
+}
+
 async function handlePermissionReply({
   conversationID,
   requestID,
@@ -492,37 +575,39 @@ async function handlePermissionReply({
 }: {
   conversationID: string;
   requestID: string;
-  request: IncomingMessage;
-  response: ServerResponse;
-  database: Database;
-  client: OpenCodeConversationClient;
-  dependencies: ConversationDependencies;
-  actions: Set<string>;
-}) {
-  const conversation = get(database, conversationID);
-  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-  const body = await readBody(request);
-  if (body.decision !== "once" && body.decision !== "always" && body.decision !== "reject")
+} & ConversationReplyDependencies) {
+  const context = await readReplyContext(request, response, database, conversationID);
+  if (!context) return;
+  if (
+    context.body.decision !== "once" &&
+    context.body.decision !== "always" &&
+    context.body.decision !== "reject"
+  )
     return respond(response, 400, { error: "Choose a native OpenCode permission response." });
   const actionID = `reply:${conversationID}`;
   if (!acquireAction(actions, actionID))
     return respond(response, 409, { error: "This permission request has already been answered." });
   try {
     if (
-      !conversation.nativeSessionID ||
-      (conversation.status !== "blocked" &&
-        conversation.status !== "active" &&
-        conversation.status !== "incomplete")
+      !context.conversation.nativeSessionID ||
+      (context.conversation.status !== "blocked" &&
+        context.conversation.status !== "active" &&
+        context.conversation.status !== "incomplete")
     )
       return respond(response, 409, { error: "This permission request is no longer pending." });
-    const { directory } = await resolveCurrentWorktree(conversation, dependencies);
-    const pending = await client.permissions(conversation.nativeSessionID, directory);
+    const { directory } = await resolveCurrentWorktree(context.conversation, dependencies);
+    const pending = await client.permissions(context.conversation.nativeSessionID, directory);
     if (!pending.some(({ id }) => id === requestID))
       return respond(response, 409, { error: "This permission request is no longer pending." });
-    await client.replyPermission(conversation.nativeSessionID, directory, requestID, body.decision);
-    databasePublishers.get(database)?.(conversation);
+    await client.replyPermission(
+      context.conversation.nativeSessionID,
+      directory,
+      requestID,
+      context.body.decision,
+    );
+    databasePublishers.get(database)?.(context.conversation);
     return respond(response, 200, {
-      conversation: await withPending(conversation, client),
+      conversation: await withPending(context.conversation, client),
     });
   } catch {
     return respond(response, 409, { error: "This permission request is no longer pending." });
@@ -588,6 +673,20 @@ async function sendSnapshot(
   }
 }
 
+async function readReplyContext(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: Database,
+  conversationID: string,
+) {
+  const conversation = get(database, conversationID);
+  if (!conversation) {
+    respond(response, 404, { error: "Conversation not found." });
+    return null;
+  }
+  return { conversation, body: await readBody(request) };
+}
+
 async function handleFormReply({
   conversationID,
   formID,
@@ -600,30 +699,23 @@ async function handleFormReply({
 }: {
   conversationID: string;
   formID: string;
-  request: IncomingMessage;
-  response: ServerResponse;
-  database: Database;
-  client: OpenCodeConversationClient;
-  dependencies: ConversationDependencies;
-  actions: Set<string>;
-}) {
-  const conversation = get(database, conversationID);
-  if (!conversation) return respond(response, 404, { error: "Conversation not found." });
-  const body = await readBody(request);
+} & ConversationReplyDependencies) {
+  const context = await readReplyContext(request, response, database, conversationID);
+  if (!context) return;
   const actionID = `reply:${conversationID}`;
   if (!acquireAction(actions, actionID))
     return respond(response, 409, { error: "This form is already being answered." });
   try {
     if (
-      !conversation.nativeSessionID ||
-      !conversation.activePromptID ||
-      !["blocked", "active", "incomplete"].includes(conversation.status)
+      !context.conversation.nativeSessionID ||
+      !context.conversation.activePromptID ||
+      !["blocked", "active", "incomplete"].includes(context.conversation.status)
     )
       return respond(response, 409, { error: "This form is no longer pending." });
-    const { directory } = await resolveCurrentWorktree(conversation, dependencies);
-    const form = await client.form(conversation.nativeSessionID, directory, formID);
+    const { directory } = await resolveCurrentWorktree(context.conversation, dependencies);
+    const form = await client.form(context.conversation.nativeSessionID, directory, formID);
     if (
-      form.sessionID !== conversation.nativeSessionID ||
+      form.sessionID !== context.conversation.nativeSessionID ||
       form.id !== formID ||
       form.state.status !== "pending"
     )
@@ -631,10 +723,12 @@ async function handleFormReply({
     const presented = presentForm(form);
     if (presented.unsupported.length)
       return respond(response, 400, { error: "This form contains unsupported fields." });
-    const answer = validateFormAnswer(presented, body.answer);
-    await client.replyForm(conversation.nativeSessionID, directory, formID, answer);
-    databasePublishers.get(database)?.(conversation);
-    return respond(response, 200, { conversation: await withPending(conversation, client) });
+    const answer = validateFormAnswer(presented, context.body.answer);
+    await client.replyForm(context.conversation.nativeSessionID, directory, formID, answer);
+    databasePublishers.get(database)?.(context.conversation);
+    return respond(response, 200, {
+      conversation: await withPending(context.conversation, client),
+    });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "";
     if (message.startsWith("Invalid form answer:"))
@@ -643,138 +737,6 @@ async function handleFormReply({
   } finally {
     releaseAction(actions, actionID);
   }
-}
-
-function presentForm(
-  form: Awaited<ReturnType<OpenCodeConversationClient["forms"]>>[number],
-): ConversationForm {
-  const unsupported: string[] = [];
-  const keys = form.fields.map((field) => field.key);
-  const duplicateKeys = new Set(keys.filter((key, index) => keys.indexOf(key) !== index));
-  const fields = form.fields.map((field): ConversationFormField => {
-    const unsupportedReason =
-      !field.key || duplicateKeys.has(field.key)
-        ? "field keys must be unique and non-empty"
-        : ("hidden" in field && field.hidden) || ("when" in field && field.when?.length)
-          ? "conditional or hidden fields are not supported"
-          : field.type === "external"
-            ? "external fields are not supported"
-            : field.type === "multiselect"
-              ? "multiple-choice fields are not supported"
-              : field.type === "string" && (field.format || field.pattern || field.custom)
-                ? "formatted, patterned, or custom text fields are not supported"
-                : field.type === "string" &&
-                    ((field.minLength !== undefined &&
-                      (!Number.isSafeInteger(field.minLength) || field.minLength < 0)) ||
-                      (field.maxLength !== undefined &&
-                        (!Number.isSafeInteger(field.maxLength) ||
-                          field.maxLength < 0 ||
-                          field.maxLength > 16_000)) ||
-                      (field.minLength !== undefined &&
-                        (field.minLength > 16_000 ||
-                          (field.maxLength !== undefined && field.minLength > field.maxLength))))
-                  ? "text length limits are invalid"
-                  : field.type === "string" &&
-                      field.options &&
-                      (field.options.length === 0 ||
-                        field.options.length > 100 ||
-                        new Set(field.options.map((option) => option.value)).size !==
-                          field.options.length)
-                    ? "this choice list is not supported"
-                    : (field.type === "integer" || field.type === "number") &&
-                        ((field.minimum !== undefined && !finiteBound(field.minimum)) ||
-                          (field.maximum !== undefined && !finiteBound(field.maximum)) ||
-                          (finiteBound(field.minimum) &&
-                            finiteBound(field.maximum) &&
-                            field.minimum > field.maximum))
-                      ? "numeric bounds are invalid or non-finite"
-                      : null;
-    if (unsupportedReason) unsupported.push(`${field.title ?? field.key}: ${unsupportedReason}`);
-    if (
-      field.type === "string" ||
-      field.type === "number" ||
-      field.type === "integer" ||
-      field.type === "boolean"
-    )
-      return {
-        key: field.key,
-        type: field.type,
-        ...(field.title ? { title: field.title } : {}),
-        ...(field.description ? { description: field.description } : {}),
-        ...(field.required ? { required: true } : {}),
-        ...(field.type === "string" && field.placeholder ? { placeholder: field.placeholder } : {}),
-        ...(field.type === "string" && field.minLength !== undefined
-          ? { minLength: field.minLength }
-          : {}),
-        ...(field.type === "string" && field.maxLength !== undefined
-          ? { maxLength: field.maxLength }
-          : {}),
-        ...((field.type === "number" || field.type === "integer") && finiteBound(field.minimum)
-          ? { minimum: field.minimum }
-          : {}),
-        ...((field.type === "number" || field.type === "integer") && finiteBound(field.maximum)
-          ? { maximum: field.maximum }
-          : {}),
-        ...(field.type === "string" && field.options
-          ? {
-              options: field.options.map(({ value, label, description }) => ({
-                value,
-                label,
-                ...(description ? { description } : {}),
-              })),
-            }
-          : {}),
-      };
-    unsupported.push(`${field.key}: unsupported field type`);
-    return { key: field.key, type: "string" };
-  });
-  return { id: form.id, title: form.title, fields, unsupported };
-}
-
-function finiteBound(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function validateFormAnswer(form: ConversationForm, value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid form answer: submit answers as an object.");
-  const answer = value as Record<string, unknown>;
-  const fields = new Map(form.fields.map((field) => [field.key, field]));
-  if (Object.keys(answer).some((key) => !fields.has(key)))
-    throw new Error("Invalid form answer: an unknown field was included.");
-  for (const field of form.fields) {
-    const entry = answer[field.key];
-    if (entry === undefined || entry === "") {
-      if (field.required)
-        throw new Error(`Invalid form answer: ${field.title ?? field.key} is required.`);
-      delete answer[field.key];
-      continue;
-    }
-    if (field.type === "boolean") {
-      if (typeof entry !== "boolean")
-        throw new Error(`Invalid form answer: ${field.title ?? field.key} must be true or false.`);
-    } else if (field.type === "number" || field.type === "integer") {
-      if (
-        typeof entry !== "number" ||
-        !Number.isFinite(entry) ||
-        (field.type === "integer" && !Number.isInteger(entry)) ||
-        (field.minimum !== undefined && entry < field.minimum) ||
-        (field.maximum !== undefined && entry > field.maximum)
-      )
-        throw new Error(
-          `Invalid form answer: ${field.title ?? field.key} is outside its allowed range.`,
-        );
-    } else if (
-      typeof entry !== "string" ||
-      (field.minLength !== undefined && entry.length < field.minLength) ||
-      (field.maxLength !== undefined && entry.length > field.maxLength) ||
-      entry.length > 16_000 ||
-      (field.options && !field.options.some((option) => option.value === entry))
-    ) {
-      throw new Error(`Invalid form answer: ${field.title ?? field.key} is not a valid choice.`);
-    }
-  }
-  return answer as Record<string, string | number | boolean>;
 }
 
 async function sendMessage(
@@ -787,106 +749,156 @@ async function sendMessage(
   actions: Set<string>,
   model?: { id: string; providerID: string },
 ) {
-  let promptAttempted = false;
-  let appendedMessages: StoredMessage[] = [];
+  const attempt = { promptAttempted: false, appendedMessages: [] as StoredMessage[] };
   try {
     const { directory } = await resolveCurrentWorktree(conversation, dependencies);
     await client.prepare(directory);
-    if (conversation.nativeSessionID && conversation.activePromptID) {
-      const reconciled = await client.reconcile(
-        conversation.nativeSessionID,
-        directory,
-        conversation.activePromptID,
-      );
-      if (reconciled.active) {
-        conversation.status = "active";
-        if (reconciled.reply !== null) updateAssistantReply(conversation, reconciled.reply);
-        save(database, conversation);
-        scheduleObservation(database, conversation, client, actions);
-        return respond(response, 409, {
-          error: "The previous OpenCode turn is still in progress.",
-          conversation: publicConversation(conversation),
-        });
-      }
-      if (reconciled.reply === null)
-        return respond(response, 409, {
-          error: "The previous OpenCode turn could not be reconciled; it will not be replayed.",
-          conversation: publicConversation(conversation),
-        });
-      updateAssistantReply(conversation, reconciled.reply);
-      conversation.activePromptID = null;
-      conversation.status = "ready";
-      save(database, conversation);
-    }
-
-    if (!conversation.nativeSessionID) {
-      conversation.nativeSessionID = await client.create(directory);
-      save(database, conversation);
-    } else {
-      const state = await client.inspect(conversation.nativeSessionID, directory);
-      if (state.active)
-        return respond(response, 409, {
-          error: "The linked OpenCode session is busy.",
-          conversation: publicConversation(conversation),
-        });
-    }
-
-    const promptID = `msg_${randomUUID().replaceAll("-", "")}`;
-    const userMessage: StoredMessage = { role: "user", text, createdAt: Date.now() };
-    const assistantMessage: StoredMessage = { role: "assistant", text: "", createdAt: Date.now() };
-    appendedMessages = [userMessage, assistantMessage];
-    conversation.messages.push(...appendedMessages);
-    conversation.activePromptID = promptID;
-    conversation.status = "active";
-    save(database, conversation);
-
-    const result = await client.send(
-      conversation.nativeSessionID,
+    if (await reconcilePreviousTurn(database, conversation, directory, client, response, actions))
+      return;
+    if (await ensureNativeSession(conversation, directory, database, client, response)) return;
+    return await submitPrompt(
+      database,
+      conversation,
       directory,
-      promptID,
       text,
-      (event) => {
-        if (event.type === "attempting") promptAttempted = true;
-        if (event.type === "accepted") {
-          conversation.activePromptID = event.userMessageID;
-          conversation.updatedAt = Date.now();
-          save(database, conversation);
-        }
-        if (event.type === "text") assistantMessage.text += event.delta;
-        if (event.type === "tool") updateToolCall(assistantMessage, event);
-        if (event.type === "blocked") conversation.status = "blocked";
-        if (event.type === "settled") assistantMessage.text = event.reply;
-        conversation.updatedAt = Date.now();
-        save(database, conversation);
-      },
+      client,
+      response,
+      attempt,
       model,
     );
-    assistantMessage.text = result.reply;
-    conversation.status = "ready";
-    conversation.activePromptID = null;
-    conversation.updatedAt = Date.now();
-    save(database, conversation);
-    return respond(response, 200, { conversation: publicConversation(conversation) });
   } catch {
-    if (conversation.activePromptID) {
-      if (promptAttempted) {
-        conversation.status = "incomplete";
-      } else {
-        conversation.messages = conversation.messages.filter(
-          (message) => !appendedMessages.includes(message),
-        );
-        conversation.activePromptID = null;
-        conversation.status = "ready";
-      }
-      conversation.updatedAt = Date.now();
-      save(database, conversation);
-    }
-    return respond(response, 503, {
-      error:
-        "OpenCode could not complete this turn; it is marked incomplete and will not be replayed.",
+    return failPrompt(database, conversation, attempt, response);
+  }
+}
+
+async function reconcilePreviousTurn(
+  database: Database,
+  conversation: Conversation,
+  directory: string,
+  client: OpenCodeConversationClient,
+  response: ServerResponse,
+  actions: Set<string>,
+) {
+  if (!conversation.nativeSessionID || !conversation.activePromptID) return false;
+  const reconciled = await client.reconcile(
+    conversation.nativeSessionID,
+    directory,
+    conversation.activePromptID,
+  );
+  if (reconciled.active) {
+    conversation.status = "active";
+    if (reconciled.reply !== null) updateAssistantReply(conversation, reconciled.reply);
+    save(database, conversation);
+    scheduleObservation(database, conversation, client, actions);
+    respond(response, 409, {
+      error: "The previous OpenCode turn is still in progress.",
       conversation: publicConversation(conversation),
     });
+    return true;
   }
+  if (reconciled.reply === null) {
+    respond(response, 409, {
+      error: "The previous OpenCode turn could not be reconciled; it will not be replayed.",
+      conversation: publicConversation(conversation),
+    });
+    return true;
+  }
+  updateAssistantReply(conversation, reconciled.reply);
+  conversation.activePromptID = null;
+  conversation.status = "ready";
+  save(database, conversation);
+  return false;
+}
+
+async function ensureNativeSession(
+  conversation: Conversation,
+  directory: string,
+  database: Database,
+  client: OpenCodeConversationClient,
+  response: ServerResponse,
+) {
+  if (!conversation.nativeSessionID) {
+    conversation.nativeSessionID = await client.create(directory);
+    save(database, conversation);
+    return false;
+  }
+  const state = await client.inspect(conversation.nativeSessionID, directory);
+  if (!state.active) return false;
+  respond(response, 409, {
+    error: "The linked OpenCode session is busy.",
+    conversation: publicConversation(conversation),
+  });
+  return true;
+}
+
+async function submitPrompt(
+  database: Database,
+  conversation: Conversation,
+  directory: string,
+  text: string,
+  client: OpenCodeConversationClient,
+  response: ServerResponse,
+  attempt: { promptAttempted: boolean; appendedMessages: StoredMessage[] },
+  model?: { id: string; providerID: string },
+) {
+  const promptID = `msg_${randomUUID().replaceAll("-", "")}`;
+  const userMessage: StoredMessage = { role: "user", text, createdAt: Date.now() };
+  const assistantMessage: StoredMessage = { role: "assistant", text: "", createdAt: Date.now() };
+  attempt.appendedMessages = [userMessage, assistantMessage];
+  conversation.messages.push(...attempt.appendedMessages);
+  conversation.activePromptID = promptID;
+  conversation.status = "active";
+  save(database, conversation);
+
+  const result = await client.send(
+    conversation.nativeSessionID!,
+    directory,
+    promptID,
+    text,
+    (event) => {
+      if (event.type === "attempting") attempt.promptAttempted = true;
+      if (event.type === "accepted") conversation.activePromptID = event.userMessageID;
+      if (event.type === "text") assistantMessage.text += event.delta;
+      if (event.type === "tool") updateToolCall(assistantMessage, event);
+      if (event.type === "blocked") conversation.status = "blocked";
+      if (event.type === "settled") assistantMessage.text = event.reply;
+      conversation.updatedAt = Date.now();
+      save(database, conversation);
+    },
+    model,
+  );
+  assistantMessage.text = result.reply;
+  conversation.status = "ready";
+  conversation.activePromptID = null;
+  conversation.updatedAt = Date.now();
+  save(database, conversation);
+  return respond(response, 200, { conversation: publicConversation(conversation) });
+}
+
+function failPrompt(
+  database: Database,
+  conversation: Conversation,
+  attempt: { promptAttempted: boolean; appendedMessages: StoredMessage[] },
+  response: ServerResponse,
+) {
+  if (conversation.activePromptID) {
+    if (attempt.promptAttempted) {
+      conversation.status = "incomplete";
+    } else {
+      conversation.messages = conversation.messages.filter(
+        (message) => !attempt.appendedMessages.includes(message),
+      );
+      conversation.activePromptID = null;
+      conversation.status = "ready";
+    }
+    conversation.updatedAt = Date.now();
+    save(database, conversation);
+  }
+  return respond(response, 503, {
+    error:
+      "OpenCode could not complete this turn; it is marked incomplete and will not be replayed.",
+    conversation: publicConversation(conversation),
+  });
 }
 
 function updateToolCall(

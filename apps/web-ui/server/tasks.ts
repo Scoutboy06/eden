@@ -7,6 +7,7 @@ import { listProjectDirectories } from "./project-directories";
 import { handleTaskDetail, taskDetails } from "./task-detail";
 import { projectWorktrees } from "./worktrees";
 import { createWorktreeDiffMiddleware } from "./worktree-diff";
+import { requestUrl } from "./request-url";
 
 type Projects = Record<string, { name: string; path: string }>;
 
@@ -45,7 +46,7 @@ function createTaskMiddleware(
     response: ServerResponse,
     next: () => void,
   ) => {
-    const url = new URL(request.originalUrl ?? request.url ?? "/", "http://eden.local");
+    const url = requestUrl(request);
     const detailId = url.pathname.match(/^\/api\/tasks\/([^/]+)$/)?.[1];
     if (url.pathname === "/api/projects/directories")
       return respondDirectories(request, response, url);
@@ -131,7 +132,7 @@ function createWorktreeMiddleware(
     response: ServerResponse,
     next: () => void,
   ) => {
-    const url = new URL(request.originalUrl ?? request.url ?? "/", "http://eden.local");
+    const url = requestUrl(request);
     if (url.pathname !== "/api/worktrees") return next();
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("Cache-Control", "no-store");

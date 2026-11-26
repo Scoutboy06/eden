@@ -89,37 +89,53 @@ function openTerminal(
     if (!terminal.options.disableStdin && claimLaunchFocus(sessionId)) terminal.focus();
   }
 
+  function attach() {
+    setError(null);
+    sendTerminal({ type: "attach", sessionId, requestId });
+  }
+
+  function disconnect() {
+    terminal.options.disableStdin = true;
+    setMode("connecting");
+  }
+
+  function handleError(message: Record<string, unknown>) {
+    if (message.requestId === requestId) setError(String(message.error));
+  }
+
+  function handleSessionMessage(message: Record<string, unknown>) {
+    switch (message.type) {
+      case "attached":
+        terminal.reset();
+        terminal.resize(Number(message.cols), Number(message.rows));
+        if (typeof message.screen === "string" && message.screen) {
+          terminal.write(message.screen, () => finishAttach(message.controller));
+        } else finishAttach(message.controller);
+        break;
+      case "resize":
+        terminal.resize(Number(message.cols), Number(message.rows));
+        break;
+      case "state":
+        setController(message.controller);
+        if (message.controller === terminalClientId()) terminal.focus();
+        break;
+      case "output":
+        if (typeof message.data === "string") {
+          terminal.write(Uint8Array.from(atob(message.data), (char) => char.charCodeAt(0)));
+        }
+        break;
+    }
+  }
+
   const unsubscribe = subscribeTerminals((message) => {
     if (message.type === "connected") {
-      setError(null);
-      sendTerminal({ type: "attach", sessionId, requestId });
+      attach();
     } else if (message.type === "disconnected") {
-      terminal.options.disableStdin = true;
-      setMode("connecting");
-    } else if (message.type === "error" && message.requestId === requestId) {
-      setError(String(message.error));
+      disconnect();
+    } else if (message.type === "error") {
+      handleError(message);
     } else if (message.sessionId === sessionId) {
-      switch (message.type) {
-        case "attached":
-          terminal.reset();
-          terminal.resize(Number(message.cols), Number(message.rows));
-          if (typeof message.screen === "string" && message.screen) {
-            terminal.write(message.screen, () => finishAttach(message.controller));
-          } else finishAttach(message.controller);
-          break;
-        case "resize":
-          terminal.resize(Number(message.cols), Number(message.rows));
-          break;
-        case "state":
-          setController(message.controller);
-          if (message.controller === terminalClientId()) terminal.focus();
-          break;
-        case "output":
-          if (typeof message.data === "string") {
-            terminal.write(Uint8Array.from(atob(message.data), (char) => char.charCodeAt(0)));
-          }
-          break;
-      }
+      handleSessionMessage(message);
     }
   });
   const input = terminal.onData((value) => {
