@@ -1,5 +1,11 @@
-param($Script, $Line)
+param($Script, $Lines)
 
 . $Script
-$result = TabExpansion2 -inputScript $Line -cursorColumn $Line.Length
-ConvertTo-Json -InputObject @($result.CompletionMatches | ForEach-Object CompletionText) -Compress
+$results = @(
+    ConvertFrom-Json -InputObject $Lines | ForEach-Object {
+        $Line = $_
+        $result = TabExpansion2 -inputScript $Line -cursorColumn $Line.Length
+        ,@($result.CompletionMatches | ForEach-Object CompletionText)
+    }
+)
+ConvertTo-Json -InputObject $results -Depth 4 -Compress
