@@ -32,7 +32,8 @@ function isView(value: string | null): value is View {
 }
 
 export function BoardPage() {
-  const { project, groups, loading, error, stale, savedAt, refresh } = useBeadsTasks();
+  const { project, groups, loading, error, stale, savedAt, refresh, projectGroups } =
+    useBeadsTasks();
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("view");
   const view: View = isView(requested) ? requested : "board";
@@ -85,7 +86,13 @@ export function BoardPage() {
   }
 
   return (
-    <TaskDetails key={project} project={project} groups={groups} onSaved={refresh}>
+    <TaskDetails
+      key={project}
+      project={project}
+      groups={groups}
+      onProjectGroups={projectGroups}
+      onSaved={refresh}
+    >
       <Tabs
         value={view}
         onValueChange={(next) =>

@@ -67,22 +67,44 @@ export async function taskRequest(
   const taskId = encodeURIComponent(id);
   const projectId = encodeURIComponent(project);
   const url = `/api/tasks/${taskId}?project=${projectId}`;
-  const response = await fetch(url, options);
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (cause) {
+    throw new TaskRequestError(message(cause), true);
+  }
   const contentType = response.headers.get("content-type");
   const isJsonResponse = contentType?.includes("application/json") ?? false;
 
   if (!isJsonResponse) {
-    throw new Error("Task API unavailable. Use Eden’s Vite dev or preview server.");
+    throw new TaskRequestError(
+      "Task API unavailable. Use Eden’s Vite dev or preview server.",
+      true,
+    );
   }
 
-  const result = await response.json();
+  let result: { task: BeadsTaskDetail; statuses?: string[]; error?: string };
+  try {
+    result = (await response.json()) as typeof result;
+  } catch {
+    throw new TaskRequestError("The server response could not be confirmed.", true);
+  }
   if (!response.ok) {
     const errorMessage = result.error ?? "Could not load or save task.";
-    throw new Error(errorMessage);
+    throw new TaskRequestError(errorMessage, response.status >= 500);
   }
 
   if (result.task) cacheTaskDetail(project, result.task);
   return result;
+}
+
+export class TaskRequestError extends Error {
+  constructor(
+    message: string,
+    readonly ambiguous: boolean,
+  ) {
+    super(message);
+  }
 }
 
 function message(cause: unknown) {

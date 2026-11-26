@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject, type FormEvent } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject, type FormEvent } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 
@@ -32,28 +32,44 @@ import {
   type TaskOptions,
 } from "@/components/issue/task-detail-fields";
 import { taskRequest, useTaskResource } from "@/components/issue/task-resource";
+import { saveTaskEdits } from "@/components/issue/task-save";
+import { useTaskDetailState } from "@/components/issue/use-task-detail-state";
 
 export { LabelsInput } from "@/components/issue/task-detail-fields";
 
-type PendingSelection = { id: string | null; trigger?: HTMLElement };
 export function TaskDetails({
   project,
   groups,
+  onProjectGroups,
   onSaved,
   children,
 }: {
   project: string;
   groups: IssueGroup[];
+  onProjectGroups: (update: (groups: IssueGroup[]) => IssueGroup[]) => void;
   onSaved: () => void;
   children: ReactNode;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [draft, setDraft] = useState<TaskDraft | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [assigneeDirty, setAssigneeDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [pending, setPending] = useState<PendingSelection | null>(null);
-  const [revision, setRevision] = useState(0);
+  const {
+    selected,
+    setSelected,
+    draft,
+    setDraft,
+    editing,
+    setEditing,
+    assigneeDirty,
+    setAssigneeDirty,
+    saving,
+    setSaving,
+    reconciling,
+    setReconciling,
+    reconciliationRequired,
+    setReconciliationRequired,
+    pending,
+    setPending,
+    revision,
+    setRevision,
+  } = useTaskDetailState();
   const { task, statuses, error, stale, setTask, setError } = useTaskResource(
     project,
     selected,
@@ -111,31 +127,25 @@ export function TaskDetails({
   }
 
   async function save(patch: BeadsTaskPatch = changes, focusEditor = true) {
-    if (!task || saving) return false;
-    const request: RequestInit = {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    };
-
-    setSaving(true);
-    setError(null);
-    try {
-      const result = await taskRequest(project, task.id, request);
-      setTask(result.task);
-      if (focusEditor) {
-        setDraft(taskDraft(result.task));
-        setEditing(false);
-      }
-      onSaved();
-      if (focusEditor) requestAnimationFrame(() => editRef.current?.focus());
-      return true;
-    } catch (cause) {
-      setError(message(cause));
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    return saveTaskEdits({
+      task,
+      patch,
+      focusEditor,
+      project,
+      groups,
+      saving,
+      reconciliationRequired,
+      setSaving,
+      setReconciling,
+      setReconciliationRequired,
+      setTask,
+      setDraft,
+      setEditing,
+      setError,
+      onProjectGroups,
+      onSaved,
+      editRef,
+    });
   }
 
   async function quickChange<K extends TaskMetadataKey>(key: K, value: TaskDraft[K]) {
@@ -157,14 +167,9 @@ export function TaskDetails({
     if (!open) requestSelection(null);
   }
 
-  function cancelEditing() {
-    if (!task) return;
-    const originalDraft = taskDraft(task);
-
-    setDraft(originalDraft);
-    setEditing(false);
+  function retryLoad() {
     setError(null);
-    requestAnimationFrame(() => editRef.current?.focus());
+    setRevision((value) => value + 1);
   }
 
   return (
@@ -199,13 +204,17 @@ export function TaskDetails({
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-5">
             <TaskSnapshotStatus stale={stale} />
-            <TaskLoadState
-              loaded={task !== null}
-              error={error}
-              onRetry={() => {
-                setError(null);
-                setRevision((value) => value + 1);
-              }}
+            <TaskLoadState loaded={task !== null} error={error} onRetry={retryLoad} />
+            <TaskReconcileAction
+              visible={error?.includes("uncertain") === true && !reconciling}
+              disabled={reconciling}
+              project={project}
+              taskId={selected}
+              setTask={setTask}
+              setError={setError}
+              setReconciling={setReconciling}
+              setReconciliationRequired={setReconciliationRequired}
+              onSaved={onSaved}
             />
             <TaskForm
               task={task}
@@ -222,9 +231,9 @@ export function TaskDetails({
           </div>
           <TaskEditActions
             editing={editing}
-            saving={saving}
+            saving={saving || reconciling || reconciliationRequired}
             dirty={dirty}
-            onCancel={cancelEditing}
+            onCancel={() => cancelTaskEditing(task, setDraft, setEditing, setError, editRef)}
           />
         </SheetContent>
       </Sheet>
@@ -248,6 +257,67 @@ function TaskSnapshotStatus({ stale }: { stale: boolean }) {
       Saved task snapshot · may be out of date
     </p>
   );
+}
+
+function TaskReconcileAction({
+  visible,
+  disabled,
+  project,
+  taskId,
+  setTask,
+  setError,
+  setReconciling,
+  setReconciliationRequired,
+  onSaved,
+}: {
+  visible: boolean;
+  disabled: boolean;
+  project: string;
+  taskId: string | null;
+  setTask: (task: BeadsTaskDetail | null) => void;
+  setError: (error: string | null) => void;
+  setReconciling: (value: boolean) => void;
+  setReconciliationRequired: (value: boolean) => void;
+  onSaved: () => void;
+}) {
+  if (!visible || !taskId) return null;
+  const id = taskId;
+
+  async function refresh() {
+    setReconciling(true);
+    setError(null);
+    try {
+      const result = await taskRequest(project, id);
+      setTask(result.task);
+      setReconciliationRequired(false);
+      onSaved();
+      setError("Task refreshed. Review your draft before retrying.");
+    } catch (cause) {
+      setError(`Task is still unreconciled. ${message(cause)}`);
+    } finally {
+      setReconciling(false);
+    }
+  }
+
+  return (
+    <Button variant="outline" className="mb-4" onClick={refresh} disabled={disabled}>
+      Refresh before retrying
+    </Button>
+  );
+}
+
+function cancelTaskEditing(
+  task: BeadsTaskDetail | null,
+  setDraft: (draft: TaskDraft) => void,
+  setEditing: (editing: boolean) => void,
+  setError: (error: string | null) => void,
+  editRef: RefObject<HTMLButtonElement | null>,
+) {
+  if (!task) return;
+  setDraft(taskDraft(task));
+  setEditing(false);
+  setError(null);
+  requestAnimationFrame(() => editRef.current?.focus());
 }
 
 function TaskIdentity({ id, task }: { id: string | null; task: BeadsTaskDetail | null }) {
@@ -338,9 +408,9 @@ function DiscardChangesDialog({
   onCancel,
   onDiscard,
 }: {
-  selection: PendingSelection | null;
+  selection: { id: string | null; trigger?: HTMLElement } | null;
   onCancel: () => void;
-  onDiscard: (selection: PendingSelection) => void;
+  onDiscard: (selection: { id: string | null; trigger?: HTMLElement }) => void;
 }) {
   return (
     <Dialog

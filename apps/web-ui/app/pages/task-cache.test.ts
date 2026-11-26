@@ -10,6 +10,7 @@ import {
   forgetTaskGroups,
   hydrateTaskDetail,
   hydrateTaskGroups,
+  projectTaskPatch,
   resetTaskSnapshotsForTest,
   taskGroupsSnapshot,
 } from "./task-cache";
@@ -65,4 +66,42 @@ test("persists recently read task details by project and keeps the cache bounded
   resetTaskSnapshotsForTest();
   expect(await hydrateTaskDetail("eden", "eden-0")).toBeUndefined();
   expect(await hydrateTaskDetail("eden", "eden-50")).toBeDefined();
+});
+
+test("projects connected task edits into Board groups without mutating cached snapshots", () => {
+  const groups = [
+    {
+      id: "open",
+      title: "Open",
+      color: "bg-blue-500",
+      source: { label: "Open", detail: "Open tasks" },
+      items: [
+        {
+          id: task.id,
+          key: task.id,
+          title: task.title,
+          type: task.issue_type,
+          priority: "P2" as const,
+          labels: [],
+        },
+      ],
+    },
+  ];
+
+  const updated = projectTaskPatch(groups, task.id, {
+    title: "Optimistic title",
+    status: "in_progress",
+    priority: 1,
+    labels: ["urgent"],
+  });
+
+  expect(groups[0]?.items[0]?.title).toBe(task.title);
+  expect(updated).toHaveLength(1);
+  expect(updated[0]?.id).toBe("in_progress");
+  expect(updated[0]?.items[0]).toMatchObject({
+    title: "Optimistic title",
+    priority: "P1",
+    labels: ["urgent"],
+    done: false,
+  });
 });

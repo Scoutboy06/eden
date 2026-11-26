@@ -112,5 +112,12 @@ export function useBeadsTasks() {
           stale: taskGroupsSnapshot(project) !== undefined,
           savedAt: taskGroupsSnapshot(project)?.savedAt ?? null,
         };
-  return { ...current, refresh: () => setRevision((value) => value + 1) };
+  return {
+    ...current,
+    projectGroups: (update: (groups: IssueGroup[]) => IssueGroup[]) =>
+      setResult((value) =>
+        value.project === project ? { ...value, groups: update(value.groups) } : value,
+      ),
+    refresh: () => setRevision((value) => value + 1),
+  };
 }

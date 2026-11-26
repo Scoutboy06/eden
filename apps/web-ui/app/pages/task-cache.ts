@@ -1,4 +1,4 @@
-import type { BeadsTaskDetail } from "../../../../src/external/beads/task-detail";
+import type { BeadsTaskDetail, BeadsTaskPatch } from "../../../../src/external/beads/task-detail";
 import type { IssueGroup } from "../components/issue/issue";
 
 type Snapshot<T> = { value: T; savedAt: number };
@@ -61,6 +61,55 @@ export function cacheTaskDetail(project: string, task: BeadsTaskDetail) {
     value: task,
     savedAt: snapshot.savedAt,
   });
+}
+
+export function projectTaskPatch(
+  groups: IssueGroup[],
+  taskId: string,
+  patch: BeadsTaskPatch,
+): IssueGroup[] {
+  let changed = false;
+  const next = groups.map((group) => {
+    const items = group.items.map((item) => {
+      if (item.id !== taskId) return item;
+      changed = true;
+      return {
+        ...item,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.status !== undefined ? { done: patch.status === "closed" } : {}),
+        ...(patch.priority !== undefined ? { priority: `P${patch.priority}` as const } : {}),
+        ...(patch.assignee !== undefined
+          ? { assignee: patch.assignee ? { name: patch.assignee } : undefined }
+          : {}),
+        ...(patch.labels !== undefined ? { labels: [...patch.labels] } : {}),
+      };
+    });
+    return { ...group, items };
+  });
+  if (!changed || patch.status === undefined) return next;
+
+  const originalGroups = new Map(groups.map((group) => [group.id, group]));
+  const projected = new Map<string, IssueGroup>();
+  for (const group of next) {
+    for (const item of group.items) {
+      const status = item.id === taskId ? patch.status : group.id;
+      const template =
+        originalGroups.get(status) ??
+        ({
+          ...group,
+          id: status,
+          title: status,
+          source: {
+            label: `bd list · ${status}`,
+            detail: `Beads tasks grouped locally by status: ${status}`,
+          },
+        } satisfies IssueGroup);
+      const target = projected.get(status) ?? { ...template, items: [] };
+      target.items.push(item);
+      projected.set(status, target);
+    }
+  }
+  return [...projected.values()];
 }
 
 export async function hydrateTaskDetail(project: string, taskId: string) {
