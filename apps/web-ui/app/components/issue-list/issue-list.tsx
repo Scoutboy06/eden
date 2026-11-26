@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { useState } from "react";
 import type * as React from "react";
 import { TaskTitle, useTaskClick } from "@/components/issue/task-opening";
+import { useVirtualList } from "@/components/virtual-list/use-virtual-list";
 
 import {
   type Issue,
@@ -36,6 +37,10 @@ export function IssueList({
 function IssueListGroup({ group }: { group: IssueGroup }) {
   const [open, setOpen] = useState(true);
   const contentId = `issue-list-${group.id}`;
+  const { scrollElement, virtualizer } = useVirtualList({
+    items: group.items,
+    estimateSize: 42,
+  });
 
   return (
     <section aria-label={group.title}>
@@ -57,27 +62,66 @@ function IssueListGroup({ group }: { group: IssueGroup }) {
         </span>
       </button>
       {open && (
-        <ul
-          id={contentId}
-          className="mt-1 divide-y divide-border overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10"
+        <div
+          ref={scrollElement}
+          className="mt-1 max-h-[min(70vh,40rem)] overflow-y-auto overscroll-y-contain rounded-xl bg-card ring-1 ring-foreground/10"
         >
-          {group.items.length === 0 ? (
-            <li className="px-3 py-2.5 text-sm text-muted-foreground">No issues</li>
-          ) : (
-            group.items.map((issue) => <IssueListRow key={issue.id} issue={issue} />)
-          )}
-        </ul>
+          <ul
+            id={contentId}
+            aria-label={`${group.title} issues`}
+            className="divide-y divide-border"
+            style={{
+              height: group.items.length === 0 ? undefined : virtualizer.getTotalSize(),
+              position: "relative",
+            }}
+          >
+            {group.items.length === 0 ? (
+              <li className="px-3 py-2.5 text-sm text-muted-foreground">No issues</li>
+            ) : (
+              virtualizer.getVirtualItems().map((virtualItem) => {
+                const issue = group.items[virtualItem.index]!;
+                return (
+                  <IssueListRow
+                    key={issue.id}
+                    issue={issue}
+                    index={virtualItem.index}
+                    start={virtualItem.start}
+                    size={group.items.length}
+                    measureRef={virtualizer.measureElement}
+                  />
+                );
+              })
+            )}
+          </ul>
+        </div>
       )}
     </section>
   );
 }
 
-function IssueListRow({ issue }: { issue: Issue }) {
+function IssueListRow({
+  issue,
+  index,
+  start,
+  size,
+  measureRef,
+}: {
+  issue: Issue;
+  index: number;
+  start: number;
+  size: number;
+  measureRef: (element: Element | null) => void;
+}) {
   const openTask = useTaskClick(issue.id);
   return (
     <li
+      ref={measureRef}
+      data-index={index}
+      aria-posinset={index + 1}
+      aria-setsize={size}
       onClick={openTask}
-      className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]"
+      className="absolute top-0 flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:outline-1 hover:outline-dashed hover:outline-muted-foreground hover:outline-offset-[-2px]"
+      style={{ transform: `translateY(${start}px)` }}
     >
       <IssueTypeIcon type={issue.type} />
       <span className="w-16">

@@ -20,10 +20,11 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "cn";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type * as React from "react";
 
 import type { Issue, IssueGroup } from "@/components/issue/issue";
+import { useVirtualList } from "@/components/virtual-list/use-virtual-list";
 
 import { KanbanCard } from "./kanban-card";
 
@@ -132,18 +133,7 @@ export function KanbanBoard({
     return (
       <div className={cn("flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2", className)} {...props}>
         {committedColumns.map((column) => (
-          <section
-            key={column.id}
-            aria-label={column.title}
-            className="flex min-h-0 w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
-          >
-            <ColumnHeader column={column} />
-            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1">
-              {column.items.map((item) => (
-                <KanbanCard key={item.id} item={item} />
-              ))}
-            </div>
-          </section>
+          <ReadOnlyKanbanColumn key={column.id} column={column} />
         ))}
       </div>
     );
@@ -172,9 +162,62 @@ export function KanbanBoard({
   );
 }
 
+function ReadOnlyKanbanColumn({ column }: { column: IssueGroup }) {
+  const { scrollElement, virtualizer } = useVirtualList({
+    items: column.items,
+    estimateSize: 112,
+  });
+
+  return (
+    <section
+      aria-label={column.title}
+      className="flex min-h-0 w-72 shrink-0 flex-col gap-2 rounded-xl p-2"
+    >
+      <ColumnHeader column={column} />
+      <div
+        ref={scrollElement}
+        role="list"
+        aria-label={`${column.title} tasks`}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain rounded-lg p-1"
+      >
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const item = column.items[virtualItem.index]!;
+            return (
+              <div
+                key={item.id}
+                data-index={virtualItem.index}
+                role="listitem"
+                aria-posinset={virtualItem.index + 1}
+                aria-setsize={column.items.length}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 w-full pb-2"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                <KanbanCard item={item} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function KanbanColumn({ column }: { column: IssueGroup }) {
   // The column itself is a drop target so empty columns can receive cards.
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
+  const { scrollElement, virtualizer } = useVirtualList({
+    items: column.items,
+    estimateSize: 112,
+  });
+  const setColumnRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollElement.current = node;
+      setNodeRef(node);
+    },
+    [scrollElement, setNodeRef],
+  );
 
   return (
     <section
@@ -184,15 +227,37 @@ function KanbanColumn({ column }: { column: IssueGroup }) {
       <ColumnHeader column={column} />
       <SortableContext items={column.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div
-          ref={setNodeRef}
+          ref={setColumnRef}
+          role="list"
+          aria-label={`${column.title} tasks`}
           className={cn(
-            "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1 transition-colors",
+            "min-h-0 flex-1 overflow-y-auto overscroll-y-contain rounded-lg p-1 transition-colors",
             isOver && column.items.length === 0 && "bg-accent/50",
           )}
         >
-          {column.items.map((item) => (
-            <SortableKanbanCard key={item.id} item={item} />
-          ))}
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const item = column.items[virtualItem.index]!;
+              return (
+                <div
+                  key={item.id}
+                  data-index={virtualItem.index}
+                  role="listitem"
+                  aria-posinset={virtualItem.index + 1}
+                  aria-setsize={column.items.length}
+                  ref={virtualizer.measureElement}
+                  className="absolute top-0 w-full pb-2"
+                  style={{ transform: `translateY(${virtualItem.start}px)` }}
+                >
+                  <SortableKanbanCard
+                    item={item}
+                    index={virtualItem.index}
+                    size={column.items.length}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       </SortableContext>
     </section>
@@ -222,7 +287,7 @@ function ColumnHeader({ column }: { column: IssueGroup }) {
   );
 }
 
-function SortableKanbanCard({ item }: { item: Issue }) {
+function SortableKanbanCard({ item, index, size }: { item: Issue; index: number; size: number }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
   });
@@ -234,6 +299,8 @@ function SortableKanbanCard({ item }: { item: Issue }) {
       style={{ transform: CSS.Translate.toString(transform), transition }}
       // The original stays in place as a faded placeholder while the overlay follows the pointer.
       className={cn("touch-none", isDragging && "opacity-40")}
+      aria-posinset={index + 1}
+      aria-setsize={size}
       {...attributes}
       {...listeners}
     />
