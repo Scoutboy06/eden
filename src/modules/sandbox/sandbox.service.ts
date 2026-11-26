@@ -418,6 +418,33 @@ export class SandboxService {
   async rebuild(input: RebuildSandboxInput): Promise<RebuildSandboxResult> {
     const { name } = input;
     validateSandboxInput(name);
+    const { snapshot, hasSnapshotSettings } = await this.prepareRebuild(input);
+    await this.remove(name, { force: input.force });
+
+    const { warnings, postHookFailure } = await this.recreate(input, snapshot);
+
+    const restoring = hasSnapshotSettings && input.restore;
+    if (restoring) await this.restoreRebuilt(name, snapshot, warnings, postHookFailure);
+    const restored = restoring && snapshot !== undefined;
+
+    if (postHookFailure) {
+      throw rebuildFailure(
+        name,
+        "recreated but its create post hook failed",
+        postHookFailure,
+        restored ? undefined : snapshot,
+        restored ? snapshot : undefined,
+        { warnings },
+      );
+    }
+
+    return { snapshot, restored, warnings };
+  }
+
+  private async prepareRebuild(
+    input: RebuildSandboxInput,
+  ): Promise<{ snapshot: SandboxSnapshot | undefined; hasSnapshotSettings: boolean }> {
+    const { name } = input;
     const profile = this.profile;
     if (profile === undefined) {
       throw new SandboxError(
@@ -427,7 +454,7 @@ export class SandboxService {
     }
 
     const managedDevice = await createTailnetDeviceStore().read(name);
-    if (!this.execution.dryRun && (this.profile?.tailscale || managedDevice))
+    if (!this.execution.dryRun && (profile.tailscale || managedDevice))
       await exchangeStoredCredential();
     this.assertRemovable(await this.requireSandbox(name), input.force);
 
@@ -445,27 +472,8 @@ export class SandboxService {
     const taken = snapshotSettings
       ? await snapshotSandbox(this.snapshotContext(), name, snapshotSettings)
       : undefined;
-    const snapshot = taken?.snapshot;
-    await this.remove(name, { force: input.force });
 
-    const { warnings, postHookFailure } = await this.recreate(input, snapshot);
-
-    const restoring = snapshotSettings !== undefined && input.restore;
-    if (restoring) await this.restoreRebuilt(name, snapshot, warnings, postHookFailure);
-    const restored = restoring && snapshot !== undefined;
-
-    if (postHookFailure) {
-      throw rebuildFailure(
-        name,
-        "recreated but its create post hook failed",
-        postHookFailure,
-        restored ? undefined : snapshot,
-        restored ? snapshot : undefined,
-        { warnings },
-      );
-    }
-
-    return { snapshot, restored, warnings };
+    return { snapshot: taken?.snapshot, hasSnapshotSettings: snapshotSettings !== undefined };
   }
 
   async refreshKits(input: RefreshKitsInput): Promise<RefreshKitsResult> {

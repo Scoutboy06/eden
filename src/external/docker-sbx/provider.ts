@@ -22,7 +22,7 @@ import { SandboxdLinks, type SandboxdLinkProbe } from "./sandboxd-links";
 export { attachDockerSandbox } from "./attach";
 export type { AttachDependencies } from "./attach";
 
-type DockerOperation = "create" | "start" | "stop" | "remove" | "exec" | "kit" | "network";
+export type DockerOperation = "create" | "start" | "stop" | "remove" | "exec" | "kit" | "network";
 
 export type DockerCommandResult = { exitCode: number; stdout: string; stderr: string };
 export type DockerCommandRunner = (

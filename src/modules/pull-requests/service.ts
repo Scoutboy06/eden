@@ -262,20 +262,13 @@ export class PullRequestService {
         "SCM_INVALID_OPTIONS",
         "A nonblank --body is required for this review event.",
       );
-    if (input.expectedHead !== undefined && !/^[0-9a-f]{40}$/i.test(input.expectedHead))
+    if (input.expectedHead !== undefined && !isCommitSha(input.expectedHead))
       throw new ScmError(
         "SCM_INVALID_OPTIONS",
         "--expected-head must be a full 40-character commit SHA.",
       );
 
-    const ref = await this.exactReference(input);
-    validateReference(ref);
-
-    if (ref.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr review currently supports GitHub only.",
-      );
+    const ref = await this.exactGitHubReference(input, "review");
 
     const provider = await this.createProvider(repositoryForRef(ref));
     if (!("submitReview" in provider) || typeof provider.submitReview !== "function")
@@ -343,20 +336,13 @@ export class PullRequestService {
   async merge(input: PullRequestInput & { ref: string } & PullRequestMergeInput) {
     if (!["merge", "squash", "rebase"].includes(input.method))
       throw new ScmError("SCM_INVALID_OPTIONS", "--method must be merge, squash or rebase.");
-    if (input.expectedHead !== undefined && !/^[0-9a-f]{40}$/i.test(input.expectedHead))
+    if (input.expectedHead !== undefined && !isCommitSha(input.expectedHead))
       throw new ScmError(
         "SCM_INVALID_OPTIONS",
         "--expected-head must be a full 40-character commit SHA.",
       );
 
-    const ref = await this.exactReference(input);
-    validateReference(ref);
-
-    if (ref.provider !== "github")
-      throw new ScmError(
-        "SCM_UNSUPPORTED_OPERATION",
-        "eden pr merge currently supports GitHub only.",
-      );
+    const ref = await this.exactGitHubReference(input, "merge");
 
     const provider = await this.createProvider(repositoryForRef(ref));
     if (!("mergePullRequest" in provider) || typeof provider.mergePullRequest !== "function")
@@ -495,6 +481,21 @@ export class PullRequestService {
     return lookup.ref;
   }
 
+  private async exactGitHubReference(
+    input: PullRequestInput & { ref: string },
+    operation: "review" | "merge",
+  ) {
+    const ref = await this.exactReference(input);
+    validateReference(ref);
+    if (ref.provider !== "github")
+      throw new ScmError(
+        "SCM_UNSUPPORTED_OPERATION",
+        `eden pr ${operation} currently supports GitHub only.`,
+      );
+
+    return ref;
+  }
+
   async show(input: PullRequestInput & { raw?: boolean; comments?: boolean; checks?: boolean }) {
     const { provider, ref } = await this.resolve(input);
     const [pr, comments, checks] = await Promise.all([
@@ -590,6 +591,10 @@ export class PullRequestService {
 
     return resolvePullRequestTarget(lookup, provider);
   }
+}
+
+function isCommitSha(value: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(value);
 }
 
 function pullRequestWriter(provider: PullRequestProvider): PullRequestWriter {

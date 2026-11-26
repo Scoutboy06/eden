@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { collectProcess } from "./collect-process";
 
 const interruptPreload = fileURLToPath(new URL("./interrupt-preload.ts", import.meta.url));
 const application = fileURLToPath(new URL("../../../../../apps/cli/src/main.ts", import.meta.url));
@@ -25,7 +26,7 @@ export async function withRunningCli<T>(
     windows ? { ...options, env: { ...options.env, EDEN_TEST_INTERRUPT_FILE: trigger } } : options,
     windows ? ["--preload", interruptPreload] : [],
   );
-  const result = collect(child);
+  const result = collectProcess(child);
 
   try {
     return await action({
@@ -66,7 +67,7 @@ async function execute(
   argv: string[],
   options?: { cwd: string; env?: Record<string, string | undefined> },
 ) {
-  return collect(spawn(entry, argv, options));
+  return collectProcess(spawn(entry, argv, options));
 }
 
 function spawn(entry: string, argv: string[], options?: CliOptions, runtimeArgs: string[] = []) {
@@ -76,13 +77,4 @@ function spawn(entry: string, argv: string[], options?: CliOptions, runtimeArgs:
     cwd: options?.cwd,
     env: { ...process.env, FORCE_COLOR: "1", ...options?.env },
   });
-}
-
-async function collect(child: ReturnType<typeof spawn>) {
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { exitCode, stdout, stderr };
 }

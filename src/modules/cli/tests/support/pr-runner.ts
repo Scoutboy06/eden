@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { collectProcess } from "./collect-process";
 
 const fixture = fileURLToPath(new URL("../fixtures/pr.ts", import.meta.url));
 
@@ -12,11 +13,5 @@ export async function runPrWithEnv(env: Record<string, string>, ...args: string[
     stderr: "pipe",
     env: { ...process.env, GH_TOKEN: "fake-test-token", ...env },
   });
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-
-  return { exitCode, stdout, stderr };
+  return collectProcess(child);
 }

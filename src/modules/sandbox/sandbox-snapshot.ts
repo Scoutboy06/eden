@@ -11,7 +11,7 @@ export type SnapshotResult = {
   pruned: SandboxSnapshot[];
 };
 
-type SnapshotContext = {
+export type SnapshotContext = {
   execution: Execution;
   provider: SandboxProvider;
   store: SandboxSnapshotStore;

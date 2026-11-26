@@ -187,17 +187,9 @@ export class AzureDevOpsApiProvider
 
   reopenPullRequest(ref: PullRequestRef): Promise<PullRequest> {
     return providerRequest(async () => {
-      const id = this.id(ref);
       if (ref.provider !== "azure-devops") invalidResponse();
-      const current = await this.git.getPullRequestById(id);
-      const { repository, project } = context(current);
-      assertKnownIdentity(current, ref, repository, project);
-      const normalized = normalizeAzurePullRequest(current, this.organizationUrl, ref, {
-        repository,
-        project,
-      });
-      if (normalized.state === "merged")
-        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be reopened.");
+      const { id, repository, project, normalized } = await this.verifiedPullRequest(ref);
+      assertNotMerged(normalized, "reopened");
       if (normalized.state === "open") return normalized;
       const updated = await this.git.updatePullRequest(
         { status: PullRequestStatus.Active },
@@ -225,17 +217,9 @@ export class AzureDevOpsApiProvider
 
   closePullRequest(ref: PullRequestRef, options: { comment?: string } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
-      const id = this.id(ref);
       if (ref.provider !== "azure-devops") invalidResponse();
-      const current = await this.git.getPullRequestById(id);
-      const { repository, project } = context(current);
-      assertKnownIdentity(current, ref, repository, project);
-      const normalized = normalizeAzurePullRequest(current, this.organizationUrl, ref, {
-        repository,
-        project,
-      });
-      if (normalized.state === "merged")
-        throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be closed.");
+      const { id, repository, project, normalized } = await this.verifiedPullRequest(ref);
+      assertNotMerged(normalized, "closed");
       if (normalized.state === "closed") return normalized;
       const updated = await providerRequest(() =>
         this.git.updatePullRequest(
@@ -281,17 +265,9 @@ export class AzureDevOpsApiProvider
 
   getPullRequest(ref: PullRequestRef, options: { raw?: boolean } = {}): Promise<PullRequest> {
     return providerRequest(async () => {
-      const id = this.id(ref);
-      if (ref.provider !== "azure-devops") invalidResponse();
-      const pr = await this.git.getPullRequestById(id);
-      const { repository, project } = context(pr);
-      return normalizeAzurePullRequest(
-        pr,
-        this.organizationUrl,
-        ref,
-        { repository, project },
-        options.raw,
-      );
+      const { pr, normalized } = await this.verifiedPullRequest(ref, false);
+
+      return options.raw ? { ...normalized, raw: pr } : normalized;
     });
   }
 
@@ -334,6 +310,19 @@ export class AzureDevOpsApiProvider
     return ref.id;
   }
 
+  private async verifiedPullRequest(ref: PullRequestRef, verifyIdentity = true, id = this.id(ref)) {
+    if (ref.provider !== "azure-devops") invalidResponse();
+    const pr = await this.git.getPullRequestById(id);
+    const { repository, project } = context(pr);
+    if (verifyIdentity) assertKnownIdentity(pr, ref, repository, project);
+    const normalized = normalizeAzurePullRequest(pr, this.organizationUrl, ref, {
+      repository,
+      project,
+    });
+
+    return { id, pr, repository, project, normalized };
+  }
+
   getComments(ref: PullRequestRef): Promise<PullRequestComment[]> {
     return providerRequest(async () => {
       const id = this.id(ref);
@@ -368,9 +357,7 @@ export class AzureDevOpsApiProvider
       const id = this.id(ref);
       if (ref.provider !== "azure-devops") invalidResponse();
       const thread = azureReviewThreadId(threadId);
-      const pr = await this.git.getPullRequestById(id);
-      const { repository, project } = context(pr);
-      assertKnownIdentity(pr, ref, repository, project);
+      const { repository, project } = await this.verifiedPullRequest(ref, true, id);
 
       return setAzureThreadResolution(this.git, [repository, id, thread, project], isResolved);
     });
@@ -378,11 +365,7 @@ export class AzureDevOpsApiProvider
 
   addComment(ref: PullRequestRef, input: PullRequestCommentInput): Promise<PullRequestComment> {
     return providerRequest(async () => {
-      const id = this.id(ref);
-      if (ref.provider !== "azure-devops") invalidResponse();
-      const pr = await this.git.getPullRequestById(id);
-      const { repository, project } = context(pr);
-      assertKnownIdentity(pr, ref, repository, project);
+      const { id, repository, project } = await this.verifiedPullRequest(ref);
       if (input.replyTo !== undefined) {
         const { threadId, parentCommentId } = azureReplyTarget(input.replyTo);
         const thread = await this.git.getPullRequestThread(repository, id, threadId, project);
@@ -734,4 +717,9 @@ function possiblyApplied(error: unknown, message: string): ScmError {
     "SCM_PARTIAL_FAILURE",
     `${message} ${error instanceof ScmError ? `${error.code}: ${error.message}` : "The provider returned an invalid response."}`,
   );
+}
+
+function assertNotMerged(pullRequest: PullRequest, action: "closed" | "reopened"): void {
+  if (pullRequest.state === "merged")
+    throw new ScmError("SCM_INVALID_STATE", `A merged pull request cannot be ${action}.`);
 }

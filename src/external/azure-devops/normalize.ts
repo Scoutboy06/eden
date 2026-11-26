@@ -17,9 +17,9 @@ import type {
   PullRequestReview,
 } from "../../modules/pull-requests/provider";
 
-type AzurePolicyEvaluation = Awaited<ReturnType<IPolicyApi["getPolicyEvaluations"]>>[number];
-type AzureStatus = Awaited<ReturnType<IGitApi["getPullRequestStatuses"]>>[number];
-type AzureCommentThread = Awaited<ReturnType<IGitApi["getThreads"]>>[number];
+export type AzurePolicyEvaluation = Awaited<ReturnType<IPolicyApi["getPolicyEvaluations"]>>[number];
+export type AzureStatus = Awaited<ReturnType<IGitApi["getPullRequestStatuses"]>>[number];
+export type AzureCommentThread = Awaited<ReturnType<IGitApi["getThreads"]>>[number];
 
 const statusStates: Record<number, PullRequestCheck["state"]> = {
   [GitStatusState.Succeeded]: "passed",

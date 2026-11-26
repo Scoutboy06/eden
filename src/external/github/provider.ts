@@ -203,9 +203,7 @@ export class GitHubApiProvider
     return providerRequest(async () => {
       if (ref.provider !== "github")
         throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
-      const { data } = await this.client.pulls.get(parameters(ref));
-      const current = normalizePullRequest(data);
-      assertPullRequestIdentity(current, ref);
+      const { pullRequest: current } = await this.verifiedPullRequest(ref);
       if (current.state !== "open")
         throw new ScmError(
           "SCM_INVALID_STATE",
@@ -270,10 +268,7 @@ export class GitHubApiProvider
         throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
       if (options.comment !== undefined && !options.comment.trim())
         throw new ScmError("SCM_INVALID_OPTIONS", "--comment must not be blank.");
-      const input = parameters(ref);
-      const { data } = await this.client.pulls.get(input);
-      const current = normalizePullRequest(data);
-      assertPullRequestIdentity(current, ref);
+      const { pullRequest: current } = await this.verifiedPullRequest(ref);
       if (current.state === "merged")
         throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be closed.");
       if (current.state === "closed") return current;
@@ -298,10 +293,8 @@ export class GitHubApiProvider
     return providerRequest(async () => {
       if (ref.provider !== "github")
         throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+      const { pullRequest: current } = await this.verifiedPullRequest(ref);
       const input = parameters(ref);
-      const { data } = await this.client.pulls.get(input);
-      const current = normalizePullRequest(data);
-      assertPullRequestIdentity(current, ref);
       if (current.state === "merged")
         throw new ScmError("SCM_INVALID_STATE", "A merged pull request cannot be reopened.");
       if (current.state === "open") return current;
@@ -416,9 +409,7 @@ export class GitHubApiProvider
     return providerRequest(async () => {
       if (ref.provider !== "github")
         throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
-      const { data } = await this.client.pulls.get(parameters(ref));
-      const current = normalizePullRequest(data);
-      assertPullRequestIdentity(current, ref);
+      const { data } = await this.verifiedPullRequest(ref);
       const head = data.head?.sha;
       if (!head) invalidResponse();
       if (input.expectedHead && input.expectedHead !== head)
@@ -469,6 +460,16 @@ export class GitHubApiProvider
     input: PullRequestMergeInput,
   ): Promise<PullRequestMergeResult> {
     return mergeGitHubPullRequest(this.client, ref, input);
+  }
+
+  private async verifiedPullRequest(ref: PullRequestRef) {
+    if (ref.provider !== "github")
+      throw new ScmError("SCM_PROVIDER_MISMATCH", "Expected a GitHub PR reference.");
+    const { data } = await this.client.pulls.get(parameters(ref));
+    const pullRequest = normalizePullRequest(data);
+    assertPullRequestIdentity(pullRequest, ref);
+
+    return { data, pullRequest };
   }
 
   findOpenPullRequests(query: {
