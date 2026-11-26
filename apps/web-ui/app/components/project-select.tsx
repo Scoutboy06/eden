@@ -47,7 +47,7 @@ function ProjectTile({ name, className }: { name: string; className?: string }) 
   );
 }
 
-export function ProjectSelect() {
+export function ProjectSelect({ compact = false }: { compact?: boolean }) {
   const { project: key = "" } = useParams();
   const navigate = useNavigate();
   const [importOpen, setImportOpen] = useState(false);
@@ -65,13 +65,17 @@ export function ProjectSelect() {
             render={
               <DropdownMenuTrigger
                 aria-label={`Project: ${project.name}`}
-                className="flex size-12 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                className={`flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset ${
+                  compact ? "size-10" : "size-12"
+                }`}
               />
             }
           >
             <ProjectTile
               name={project.name}
-              className="transition-shadow hover:ring-2 hover:ring-ring/50"
+              className={`transition-shadow hover:ring-2 hover:ring-ring/50 ${
+                compact ? "size-7" : ""
+              }`}
             />
           </TooltipTrigger>
           <TooltipContent side="right">{project.name}</TooltipContent>

@@ -1,15 +1,22 @@
-import { MultiFileDiff, type DiffFileInput } from "@pierre/diffs/react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import type { WorktreeDiffFile } from "../../shared/worktree-diff";
+import type { DiffViewerFile } from "./diff-viewer-content";
 
-export type DiffViewerFile = WorktreeDiffFile;
+const DiffViewerContent = lazy(async () => ({
+  default: (await import("./diff-viewer-content")).DiffViewerContent,
+}));
 
 export function DiffViewer({
   files,
   omittedFileCount = 0,
+  defaultOpen = false,
+  loadFile,
 }: {
   files: DiffViewerFile[];
   omittedFileCount?: number;
+  defaultOpen?: boolean;
+  loadFile: (path: string, signal?: AbortSignal) => Promise<WorktreeDiffFile>;
 }) {
   if (files.length === 0 && omittedFileCount === 0)
     return (
@@ -24,7 +31,12 @@ export function DiffViewer({
   return (
     <div className="space-y-4">
       {files.map((file) => (
-        <DiffFile key={`${file.previousPath ?? ""}\0${file.path}`} file={file} />
+        <DiffFile
+          key={`${file.previousPath ?? ""}\0${file.path}`}
+          file={file}
+          defaultOpen={defaultOpen}
+          loadFile={loadFile}
+        />
       ))}
       {omittedFileCount > 0 ? (
         <p role="status" className="rounded border border-border p-3 text-xs text-muted-foreground">
@@ -36,63 +48,93 @@ export function DiffViewer({
   );
 }
 
-function DiffFile({ file }: { file: DiffViewerFile }) {
-  if (file.fallback || (file.oldContents === null && file.newContents === null))
-    return (
-      <article className="overflow-hidden rounded-lg border border-border">
-        <FileHeader file={file} />
-        <p className="px-4 py-5 text-sm text-muted-foreground">{fallbackMessage(file)}</p>
-      </article>
-    );
+function DiffFile({
+  file,
+  defaultOpen,
+  loadFile,
+}: {
+  file: DiffViewerFile;
+  defaultOpen: boolean;
+  loadFile: (path: string, signal?: AbortSignal) => Promise<WorktreeDiffFile>;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [content, setContent] = useState<WorktreeDiffFile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const oldFile =
-    file.oldContents === null
-      ? null
-      : { name: file.previousPath ?? file.path, contents: file.oldContents };
-  const newFile =
-    file.newContents === null ? null : { name: file.path, contents: file.newContents };
-  const fileInput: DiffFileInput =
-    oldFile === null
-      ? { oldFile: null, newFile: newFile! }
-      : newFile === null
-        ? { oldFile, newFile: null }
-        : { oldFile, newFile };
+  useEffect(() => {
+    if (!open || content) return;
+    const controller = new AbortController();
+    setLoading(true);
+    void loadFile(file.path, controller.signal)
+      .then(setContent)
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : "Could not read this change.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [content, file.path, loadFile, open]);
 
   return (
     <article className="overflow-hidden rounded-lg border border-border">
-      <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2">
-        <span className="truncate font-mono text-xs" title={file.path}>
-          {file.path}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((expanded) => !expanded)}
+        className="flex w-full items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span aria-hidden="true" className="shrink-0 text-muted-foreground">
+            {open ? "⌄" : "›"}
+          </span>
+          <span className="truncate font-mono text-xs" title={file.path}>
+            {file.path}
+          </span>
         </span>
         <span className="shrink-0 text-[10px] capitalize text-muted-foreground">{file.change}</span>
-      </div>
-      {file.previousPath ? (
-        <p className="border-b border-border px-4 py-1 font-mono text-[10px] text-muted-foreground">
-          Renamed from <span title={file.previousPath}>{file.previousPath}</span>
-        </p>
+      </button>
+      {open ? (
+        <>
+          {file.previousPath ? (
+            <p className="border-b border-border px-4 py-1 font-mono text-[10px] text-muted-foreground">
+              Renamed from <span title={file.previousPath}>{file.previousPath}</span>
+            </p>
+          ) : null}
+          <ExpandedDiffContent content={content} error={error} loading={loading} />
+        </>
       ) : null}
-      <MultiFileDiff
-        {...fileInput}
-        className="block max-w-full overflow-x-auto text-xs"
-        options={{
-          collapsed: false,
-          diffStyle: "unified",
-          themeType: "system",
-          overflow: "scroll",
-        }}
-      />
     </article>
   );
 }
 
-function FileHeader({ file }: { file: DiffViewerFile }) {
+function ExpandedDiffContent({
+  content,
+  error,
+  loading,
+}: {
+  content: WorktreeDiffFile | null;
+  error: string | null;
+  loading: boolean;
+}) {
+  if (loading) return <p className="px-4 py-5 text-sm text-muted-foreground">Loading file…</p>;
+  if (error)
+    return (
+      <p role="alert" className="px-4 py-5 text-sm text-destructive">
+        {error}
+      </p>
+    );
+  if (content?.fallback)
+    return <p className="px-4 py-5 text-sm text-muted-foreground">{fallbackMessage(content)}</p>;
+  if (!content) return null;
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2">
-      <span className="truncate font-mono text-xs" title={file.path}>
-        {file.path}
-      </span>
-      <span className="shrink-0 text-[10px] capitalize text-muted-foreground">{file.change}</span>
-    </div>
+    <Suspense
+      fallback={<p className="px-4 py-5 text-sm text-muted-foreground">Loading renderer…</p>}
+    >
+      <DiffViewerContent file={content} />
+    </Suspense>
   );
 }
 

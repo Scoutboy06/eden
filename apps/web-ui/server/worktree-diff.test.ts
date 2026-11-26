@@ -6,7 +6,11 @@ import { lstat, mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createWorktreeDiffMiddleware, readWorktreeDiff } from "./worktree-diff";
+import {
+  createWorktreeDiffMiddleware,
+  readWorktreeDiff,
+  readWorktreeDiffFile,
+} from "./worktree-diff";
 
 test("scopes changes to the selected worktree and handles statuses and fallback files", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "eden-worktree-diff-"));
@@ -34,31 +38,41 @@ test("scopes changes to the selected worktree and handles statuses and fallback 
     const files = new Map(worktreeDiff.files.map((file) => [file.path, file]));
 
     expect(worktreeDiff.base).toBe("HEAD");
-    expect(files.get("modified.txt")).toMatchObject({
-      change: "modified",
-      oldContents: "before\n",
-      newContents: "working contents\n",
-    });
-    expect(files.get("staged.txt")).toMatchObject({
-      oldContents: "before\n",
-      newContents: "staged only\n",
-    });
-    expect(files.get("new-staged.txt")).toMatchObject({
-      change: "added",
-      oldContents: null,
-      newContents: "staged addition\n",
-    });
+    expect(files.get("modified.txt")).toMatchObject({ change: "modified", oldContents: null });
+    expect(files.get("staged.txt")).toMatchObject({ change: "modified", newContents: null });
+    expect(files.get("new-staged.txt")).toMatchObject({ change: "added", newContents: null });
     expect(files.get("deleted.txt")).toMatchObject({ change: "deleted", newContents: null });
     expect(files.get("renamed.txt")).toMatchObject({
       change: "renamed",
       previousPath: "rename-old.txt",
+      oldContents: null,
+      newContents: null,
+    });
+    expect(await readWorktreeDiffFile(repository, "modified.txt")).toMatchObject({
+      oldContents: "before\n",
+      newContents: "working contents\n",
+      contentLoaded: true,
+    });
+    expect((await readWorktreeDiffFile(repository, "staged.txt"))?.newContents).toBe(
+      "staged only\n",
+    );
+    expect((await readWorktreeDiffFile(repository, "new-staged.txt"))?.newContents).toBe(
+      "staged addition\n",
+    );
+    expect(await readWorktreeDiffFile(repository, "deleted.txt")).toMatchObject({
+      change: "deleted",
+      newContents: null,
+    });
+    expect(await readWorktreeDiffFile(repository, "renamed.txt")).toMatchObject({
       oldContents: "rename me\n",
       newContents: "rename me\n",
     });
-    expect(files.get("odd\nname.txt")?.newContents).toBe("unusual filename\n");
-    expect(files.get("binary.dat")?.fallback).toBe("binary");
-    expect(files.get("large.txt")?.fallback).toBe("too-large");
-    expect(files.get("outside-link")?.fallback).toBe("unavailable");
+    expect((await readWorktreeDiffFile(repository, "odd\nname.txt"))?.newContents).toBe(
+      "unusual filename\n",
+    );
+    expect((await readWorktreeDiffFile(repository, "binary.dat"))?.fallback).toBe("binary");
+    expect((await readWorktreeDiffFile(repository, "large.txt"))?.fallback).toBe("too-large");
+    expect((await readWorktreeDiffFile(repository, "outside-link"))?.fallback).toBe("unavailable");
     expect(await exists(marker)).toBe(false);
 
     await withServer(
@@ -74,11 +88,30 @@ test("scopes changes to the selected worktree and handles statuses and fallback 
           path: "/etc/passwd",
         });
         const response = await fetch(`${url}/api/worktree-diff?${query}`);
-        const body = (await response.json()) as { files: { path: string }[] };
+        const body = (await response.json()) as {
+          files: { path: string; oldContents: string | null; newContents: string | null }[];
+        };
 
         expect(response.status).toBe(200);
         expect(body.files.map(({ path }) => path)).toContain("odd\nname.txt");
         expect(body.files.map(({ path }) => path)).not.toContain("/etc/passwd");
+        expect(
+          body.files.every((file) => file.oldContents === null && file.newContents === null),
+        ).toBe(true);
+        const file = await fetch(
+          `${url}/api/worktree-diff?${new URLSearchParams({
+            project: "fixture",
+            worktree: "checkout",
+            branch: "main",
+            file: "modified.txt",
+          })}`,
+        );
+        expect(await file.json()).toMatchObject({
+          path: "modified.txt",
+          oldContents: "before\n",
+          newContents: "working contents\n",
+        });
+        expect(await readWorktreeDiffFile(repository, "../modified.txt")).toBeNull();
         expect(
           (await fetch(`${url}/api/worktree-diff?project=missing&worktree=checkout&branch=main`))
             .status,
@@ -116,9 +149,12 @@ test("compares an unborn repository against an empty tree and reports a clean tr
         path: "first.txt",
         change: "added",
         oldContents: null,
-        newContents: "first commit content\n",
+        newContents: null,
       },
     ]);
+    expect(await readWorktreeDiffFile(repository, "first.txt")).toMatchObject({
+      newContents: "first commit content\n",
+    });
 
     await runGit(repository, ["config", "user.name", "Eden test"]);
     await runGit(repository, ["config", "user.email", "eden@example.invalid"]);

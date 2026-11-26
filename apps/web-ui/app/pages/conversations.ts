@@ -2,6 +2,11 @@ export type ConversationMessage = {
   role: "user" | "assistant";
   text: string;
   createdAt: number;
+  tools?: {
+    id: string;
+    name: string;
+    status: "running" | "completed" | "failed";
+  }[];
 };
 
 export type Conversation = {
@@ -11,6 +16,8 @@ export type Conversation = {
   branch: string | null;
   hidden: boolean;
   status: "ready" | "active" | "blocked" | "incomplete";
+  selectedModelKey: string | null;
+  selectedModelLabel: string | null;
   messages: ConversationMessage[];
   approvals?: {
     id: string;
@@ -20,6 +27,14 @@ export type Conversation = {
   }[];
   forms?: ConversationForm[];
   updatedAt: number;
+};
+
+export type ConversationModel = {
+  key: string;
+  id: string;
+  providerID: string;
+  name: string;
+  group?: { key: string; label: string };
 };
 
 export type ConversationForm = {
@@ -67,11 +82,18 @@ export async function createConversation(project: string, worktree: string, bran
   return result.conversation as Conversation;
 }
 
-export async function sendConversationMessage(id: string, text: string) {
+export async function listConversationModels(id: string) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/models`);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Could not load available OpenCode models.");
+  return result.models as ConversationModel[];
+}
+
+export async function sendConversationMessage(id: string, text: string, modelKey?: string | null) {
   const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/send`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...(modelKey !== undefined ? { modelKey } : {}) }),
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? "Could not send message.");

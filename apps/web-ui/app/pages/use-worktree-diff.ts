@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { fetchWorktreeDiff } from "@/pages/worktree-diff";
+import { fetchWorktreeDiff, fetchWorktreeDiffFile } from "@/pages/worktree-diff";
 import type { WorktreeDiff } from "../../shared/worktree-diff";
 
 export function useWorktreeDiff(
@@ -30,6 +30,12 @@ export function useWorktreeDiff(
     [project, worktree, branch],
   );
 
+  const loadFile = useCallback(
+    (path: string, signal?: AbortSignal) =>
+      fetchWorktreeDiffFile(project, worktree!, branch, path, signal),
+    [project, worktree, branch],
+  );
+
   useEffect(() => {
     if (!enabled || !worktree) return;
     const controller = new AbortController();
@@ -37,5 +43,5 @@ export function useWorktreeDiff(
     return () => controller.abort();
   }, [enabled, worktree, refresh]);
 
-  return { diff, error, loading, refresh };
+  return { diff, error, loading, refresh, loadFile };
 }

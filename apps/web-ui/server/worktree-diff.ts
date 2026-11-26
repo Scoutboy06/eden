@@ -10,7 +10,6 @@ import { resolveWorktree } from "./terminals";
 
 const fileLimit = 100;
 const contentLimit = 256 * 1024;
-const responseContentLimit = 2 * 1024 * 1024;
 
 type Projects = Record<string, { name: string; path: string }>;
 
@@ -51,6 +50,13 @@ export function createWorktreeDiffMiddleware(dependencies: WorktreeDiffDependenc
     try {
       const scope = requestedScope(url);
       const worktree = await resolveWorktree(scope, dependencies);
+      const path = url.searchParams.get("file");
+      if (path !== null) {
+        const file = await readWorktreeDiffFile(worktree, path);
+        return file
+          ? respond(response, 200, file)
+          : respond(response, 404, { error: "Changed file not found." });
+      }
       const diff = await readWorktreeDiff(worktree);
       return respond(response, 200, diff);
     } catch (error) {
@@ -73,27 +79,54 @@ export async function readWorktreeDiff(worktree: string): Promise<WorktreeDiff> 
   ]);
   const entries = parseStatus(status);
   const head = await resolveHead(worktree);
-  const tree = head ? await readTree(worktree) : new Map<string, TreeBlob>();
   const uniqueEntries = deduplicateEntries(entries);
   const selected = uniqueEntries.slice(0, fileLimit);
-  const files: WorktreeDiffFile[] = [];
-  let contentBytes = 0;
-
-  for (const entry of selected) {
-    const file = await readDiffFile(worktree, entry, tree);
-    const size = byteLength(file.oldContents) + byteLength(file.newContents);
-    if (size > responseContentLimit - contentBytes) {
-      files.push({ ...file, oldContents: null, newContents: null, fallback: "too-large" });
-      continue;
-    }
-    contentBytes += size;
-    files.push(file);
-  }
+  const files = selected.map(describeDiffFile);
 
   return {
     files,
     base: head ? "HEAD" : "empty tree",
     omittedFileCount: Math.max(0, uniqueEntries.length - selected.length),
+  };
+}
+
+export async function readWorktreeDiffFile(
+  worktree: string,
+  path: string,
+): Promise<WorktreeDiffFile | null> {
+  if (!safeGitPath(path)) return null;
+  const status = await runGit(worktree, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+  ]);
+  const selected = deduplicateEntries(parseStatus(status)).slice(0, fileLimit);
+  const entry = selected.find((candidate) => candidate.path === path);
+  if (!entry) return null;
+  const blob = (await resolveHead(worktree))
+    ? await readTreeBlob(worktree, entry.previousPath ?? path)
+    : undefined;
+  const tree = new Map<string, TreeBlob>();
+  if (blob) tree.set(entry.previousPath ?? path, blob);
+  return { ...(await readDiffFile(worktree, entry, tree)), contentLoaded: true };
+}
+
+function describeDiffFile(entry: StatusEntry): WorktreeDiffFile {
+  const change =
+    entry.status === "R" || entry.previousPath
+      ? "renamed"
+      : entry.status.includes("A")
+        ? "added"
+        : entry.status === "D"
+          ? "deleted"
+          : "modified";
+  return {
+    path: entry.path,
+    ...(entry.previousPath ? { previousPath: entry.previousPath } : {}),
+    change,
+    oldContents: null,
+    newContents: null,
   };
 }
 
@@ -196,20 +229,28 @@ async function readBounded(handle: Awaited<ReturnType<typeof open>>): Promise<Bu
   return null;
 }
 
-async function readTree(worktree: string): Promise<Map<string, TreeBlob>> {
-  const output = await runGit(worktree, ["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD"]);
-  const blobs = new Map<string, TreeBlob>();
-  for (const record of output.split("\0")) {
-    const separator = record.indexOf("\t");
-    if (separator < 0) continue;
-    const [, type, object, sizeText] = record.slice(0, separator).trim().split(/\s+/);
-    if (type !== "blob" || !object || !/^[0-9a-f]{40,64}$/i.test(object)) continue;
-    const path = record.slice(separator + 1);
-    const size = Number(sizeText);
-    if (safeWorktreePath(worktree, path) && Number.isSafeInteger(size))
-      blobs.set(path, { object, size });
-  }
-  return blobs;
+async function readTreeBlob(worktree: string, path: string): Promise<TreeBlob | undefined> {
+  const output = await runGit(worktree, [
+    "--literal-pathspecs",
+    "ls-tree",
+    "-l",
+    "-z",
+    "HEAD",
+    "--",
+    path,
+  ]);
+  const record = output.split("\0").find(Boolean);
+  const separator = record?.indexOf("\t") ?? -1;
+  if (!record || separator < 0) return undefined;
+  const [, type, object, sizeText] = record.slice(0, separator).trim().split(/\s+/);
+  const size = Number(sizeText);
+  return type === "blob" &&
+    object &&
+    /^[0-9a-f]{40,64}$/i.test(object) &&
+    Number.isSafeInteger(size) &&
+    safeWorktreePath(worktree, path)
+    ? { object, size }
+    : undefined;
 }
 
 async function resolveHead(worktree: string): Promise<string | null> {
@@ -284,10 +325,6 @@ function isWithin(root: string, path: string): boolean {
     relativePath === "" ||
     (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`))
   );
-}
-
-function byteLength(contents: string | null): number {
-  return contents === null ? 0 : Buffer.byteLength(contents);
 }
 
 function sameOrigin(request: IncomingMessage): boolean {

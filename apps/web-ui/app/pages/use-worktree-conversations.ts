@@ -35,19 +35,55 @@ export function useWorktreeConversations(
 
   useEffect(() => {
     if (!enabled || !worktree) return;
-    const controller = new AbortController();
-    void refresh(controller.signal);
-    const timer = window.setInterval(() => void refresh(), 1200);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
+    let disposed = false;
+    let socket: WebSocket | undefined;
+    let reconnectTimer: number | undefined;
+    let reconnectDelay = 250;
+    const connect = () => {
+      if (disposed) return;
+      socket = new WebSocket(
+        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/conversations/socket`,
+      );
+      socket.addEventListener("open", () => {
+        reconnectDelay = 250;
+        socket?.send(JSON.stringify({ type: "subscribe", project, worktree, branch }));
+      });
+      socket.addEventListener("message", (event) => {
+        try {
+          const message = JSON.parse(String(event.data)) as {
+            type?: string;
+            conversations?: Conversation[];
+            hiddenConversations?: Conversation[];
+          };
+          if (message.type !== "snapshot") return;
+          setConversations(message.conversations ?? []);
+          setHiddenConversations(message.hiddenConversations ?? []);
+          setError(null);
+        } catch {
+          setError("Could not read conversation updates.");
+        }
+      });
+      socket.addEventListener("close", () => {
+        if (disposed) return;
+        reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+      });
+      socket.addEventListener("error", () => socket?.close());
     };
-  }, [enabled, worktree, refresh]);
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, [enabled, project, worktree, branch]);
 
   const create = useCallback(async () => {
     if (!worktree) return null;
     const conversation = await createConversation(project, worktree, branch);
-    setConversations((current) => [...current, conversation]);
+    setConversations((current) =>
+      current.some(({ id }) => id === conversation.id) ? current : [...current, conversation],
+    );
     return conversation;
   }, [project, worktree, branch]);
 

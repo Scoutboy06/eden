@@ -51,38 +51,135 @@ async function main() {
     const firstContext = await browser.newContext({ viewport: { width: 1400, height: 950 } });
     contexts.push(firstContext);
     const firstPage = await firstContext.newPage();
+    await firstPage.addInitScript(() => {
+      const sockets: WebSocket[] = [];
+      Object.defineProperty(window, "__edenConversationSockets", { value: sockets });
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args) {
+          const socket = Reflect.construct(target, args) as WebSocket;
+          sockets.push(socket);
+          return socket;
+        },
+      });
+    });
+    const conversationCollectionGets: string[] = [];
+    const modelDiscoveryGets: string[] = [];
+    firstPage.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/conversations" && request.method() === "GET")
+        conversationCollectionGets.push(request.url());
+      if (url.pathname.endsWith("/models") && request.method() === "GET")
+        modelDiscoveryGets.push(request.url());
+    });
     await openDoingPage(firstPage, vite.url, registered.key, basename(projectPath));
-    const diffResponsePromise = firstPage.waitForResponse((response) =>
-      response.url().includes("/api/worktree-diff"),
+    await verifyNavigationVariants(firstPage);
+    if (process.env.EDEN_NAVIGATION_E2E_ONLY === "1") {
+      console.log(JSON.stringify({ result: "passed", fixture: "navigation variants" }));
+      return;
+    }
+    await firstPage.waitForFunction(() =>
+      (
+        window as Window & { __edenConversationSockets?: WebSocket[] }
+      ).__edenConversationSockets?.some((socket) => socket.readyState === WebSocket.OPEN),
     );
-    await firstPage.getByRole("tab", { name: "Diff" }).click();
-    const diffResponse = await diffResponsePromise;
-    if (!diffResponse.ok())
-      throw new Error(
-        `Worktree diff returned ${diffResponse.status()}: ${await diffResponse.text()}`,
-      );
-    await firstPage.getByText(/state = 'working'/).waitFor();
-    await firstPage.getByText(/state = 'before'/).waitFor();
-    await firstPage.getByText("staged only").waitFor();
-    await firstPage.getByText("staged addition").waitFor();
-    await firstPage.getByText("untracked addition").waitFor();
-    await firstPage.getByText("Binary file; text preview is not available.").waitFor();
-    await firstPage.getByText("File exceeds the preview size limit.").waitFor();
-    await firstPage.getByTitle("rename-old.txt").waitFor();
-    await firstPage.getByTitle("deleted.txt").waitFor();
-    await firstPage.getByTitle("outside-link").waitFor();
-    await firstPage.getByTitle("odd\nname.txt").waitFor();
-    await firstPage.getByText("excludes commit history").waitFor();
-    if (process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT)
-      await firstPage.screenshot({ path: process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT });
-    await firstPage.setViewportSize({ width: 900, height: 900 });
-    const documentWidth = await firstPage.evaluate(
-      () => [document.documentElement.scrollWidth, window.innerWidth] as const,
-    );
-    assert.ok(
-      documentWidth[0] <= documentWidth[1] + 1,
-      "the diff viewer stays within a narrow browser viewport",
-    );
+    await firstPage.waitForTimeout(2600);
+    assert.deepEqual(conversationCollectionGets, [], "idle Doing views do not poll conversations");
+    if (process.env.EDEN_CONVERSATION_E2E_SKIP_DIFF !== "1") {
+      await firstPage.setViewportSize({ width: 390, height: 844 });
+      await firstPage.getByRole("button", { name: "Hide worktrees sidebar" }).click();
+      const diffProfiler = await firstContext.newCDPSession(firstPage);
+      await diffProfiler.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+      await diffProfiler.send("Profiler.enable");
+      await diffProfiler.send("Profiler.start");
+      const fileReads: string[] = [];
+      firstPage.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname === "/api/worktree-diff" && url.searchParams.has("file"))
+          fileReads.push(url.searchParams.get("file")!);
+      });
+      try {
+        const diffResponsePromise = firstPage.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return url.pathname === "/api/worktree-diff" && !url.searchParams.has("file");
+        });
+        await firstPage.getByRole("tab", { name: "Diff" }).click();
+        const diffResponse = await diffResponsePromise;
+        if (!diffResponse.ok())
+          throw new Error(
+            `Worktree diff returned ${diffResponse.status()}: ${await diffResponse.text()}`,
+          );
+        await firstPage.getByText("excludes commit history").waitFor();
+        const changedPaths = [
+          "modified.ts",
+          "staged.txt",
+          "new-staged.txt",
+          "deleted.txt",
+          "renamed.txt",
+          "untracked.txt",
+          "binary.dat",
+          "large.txt",
+          "outside-link",
+          "odd\nname.txt",
+        ];
+        for (const path of changedPaths) {
+          const panel = firstPage.getByTitle(path, { exact: true });
+          await panel.waitFor();
+          assert.equal(
+            await panel.evaluate((element) =>
+              element.closest("button")?.getAttribute("aria-expanded"),
+            ),
+            "false",
+            `${JSON.stringify(path)} starts collapsed`,
+          );
+        }
+        assert.deepEqual(fileReads, [], "collapsed diff panels do not fetch per-file content");
+
+        for (const path of changedPaths) {
+          const fileResponsePromise = firstPage.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return url.pathname === "/api/worktree-diff" && url.searchParams.get("file") === path;
+          });
+          await firstPage.getByTitle(path, { exact: true }).click();
+          const fileResponse = await fileResponsePromise;
+          assert.ok(fileResponse.ok(), `expanded diff panel reads ${JSON.stringify(path)}`);
+        }
+        assert.deepEqual(fileReads, changedPaths, "each expanded panel fetches only its own file");
+        await firstPage.getByText(/state = 'working'/).waitFor();
+        await firstPage.getByText(/state = 'before'/).waitFor();
+        await firstPage.getByText("staged only").waitFor();
+        await firstPage.getByText("staged addition").waitFor();
+        await firstPage.getByText("untracked addition").waitFor();
+        await firstPage.getByText("Binary file; text preview is not available.").waitFor();
+        await firstPage.getByText("File exceeds the preview size limit.").waitFor();
+        await firstPage.getByText("outside-link").waitFor();
+        await firstPage.getByTitle("rename-old.txt", { exact: true }).waitFor();
+        await firstPage.getByText("unusual filename", { exact: true }).waitFor();
+        if (process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT)
+          await firstPage.screenshot({ path: process.env.EDEN_WORKTREE_DIFF_E2E_SCREENSHOT });
+        const documentWidth = await firstPage.evaluate(
+          () => [document.documentElement.scrollWidth, window.innerWidth] as const,
+        );
+        assert.ok(
+          documentWidth[0] <= documentWidth[1] + 1,
+          "the diff viewer stays within a phone viewport",
+        );
+      } finally {
+        const { profile } = await diffProfiler.send("Profiler.stop");
+        await diffProfiler.send("Profiler.disable");
+        await diffProfiler.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+        await diffProfiler.detach();
+        console.log(
+          JSON.stringify({
+            worktreeDiffCpuProfileSamples: profile.samples?.length ?? 0,
+            worktreeDiffCpuProfileNodes: profile.nodes.length,
+            worktreeDiffFileReads: fileReads.length,
+            cpuThrottleRate: 4,
+            viewport: "390x844",
+          }),
+        );
+      }
+    }
     await firstPage.getByRole("tab", { name: "Reviews" }).click();
     const createdResponse = firstPage.waitForResponse(
       (response) =>
@@ -94,6 +191,75 @@ async function main() {
     const conversationID = String(created.conversation.id);
     const firstComposer = firstPage.getByRole("textbox", { name: "Message OpenCode" });
     await firstComposer.waitFor({ state: "visible" });
+    if (process.env.EDEN_CONVERSATION_E2E_SKIP_MODEL !== "1") {
+      const modelPicker = firstPage.getByRole("combobox", { name: "Choose OpenCode model" });
+      assert.deepEqual(modelDiscoveryGets, [], "model discovery stays lazy until the picker opens");
+      const modelListResponse = firstPage.waitForResponse(
+        (response) =>
+          response.url().includes(`/api/conversations/${conversationID}/models`) &&
+          response.request().method() === "GET",
+      );
+      await modelPicker.click();
+      assert.equal((await modelListResponse).status(), 200);
+      const modelOptions = firstPage.getByRole("option");
+      assert.equal(await modelOptions.first().innerText(), "Default model");
+      await firstPage.getByRole("group", { name: "Anthropic" }).waitFor();
+      await firstPage.getByRole("group", { name: "OpenCode" }).waitFor();
+      if (process.env.EDEN_OPENCODE_MODEL_E2E_SCREENSHOT)
+        await firstPage.screenshot({ path: process.env.EDEN_OPENCODE_MODEL_E2E_SCREENSHOT });
+      await firstPage.getByRole("option", { name: "Claude Fixture" }).click();
+      await firstPage.getByRole("option", { name: "Claude Fixture" }).waitFor({ state: "hidden" });
+      await modelPicker.getByText("Claude Fixture").waitFor();
+      await modelPicker.focus();
+      await modelPicker.press("ArrowDown");
+      await firstPage.keyboard.press("ArrowDown");
+      await firstPage.keyboard.press("Enter");
+      await modelPicker.getByText("Fake Free").waitFor();
+      await modelPicker.press("ArrowDown");
+      await firstPage.keyboard.press("ArrowUp");
+      await firstPage.keyboard.press("Enter");
+      await modelPicker.getByText("Claude Fixture").waitFor();
+    }
+
+    await firstComposer.click();
+    await firstComposer.evaluate((element) => element.blur());
+    await firstPage.evaluate(() =>
+      Promise.all(document.getAnimations().map((animation) => animation.finished)),
+    );
+    await firstPage.setViewportSize({ width: 1400, height: 950 });
+    if (process.env.EDEN_OPENCODE_COMPOSER_DESKTOP_SCREENSHOT)
+      await firstPage.screenshot({
+        path: process.env.EDEN_OPENCODE_COMPOSER_DESKTOP_SCREENSHOT,
+      });
+    await firstPage.setViewportSize({ width: 390, height: 844 });
+    const mobileComposerBounds = await firstPage.evaluate(() => ({
+      documentWidth: document.documentElement.scrollWidth,
+      composerRight: document.querySelector('[data-slot="input-group"]')!.getBoundingClientRect()
+        .right,
+      viewportWidth: window.innerWidth,
+    }));
+    assert.ok(
+      mobileComposerBounds.documentWidth <= mobileComposerBounds.viewportWidth + 1,
+      "the composer fits a phone viewport without horizontal overflow",
+    );
+    assert.ok(
+      mobileComposerBounds.composerRight <= mobileComposerBounds.viewportWidth + 1,
+      "the composer stays inside the phone viewport",
+    );
+    if (process.env.EDEN_OPENCODE_COMPOSER_MOBILE_SCREENSHOT)
+      await firstPage.screenshot({
+        path: process.env.EDEN_OPENCODE_COMPOSER_MOBILE_SCREENSHOT,
+      });
+    const initialComposerHeight = await firstComposer.evaluate((element) => element.clientHeight);
+    await firstComposer.fill(
+      Array.from({ length: 12 }, (_, index) => `draft line ${index}`).join("\n"),
+    );
+    const expandedComposerHeight = await firstComposer.evaluate((element) => element.clientHeight);
+    assert.ok(
+      expandedComposerHeight > initialComposerHeight && expandedComposerHeight <= 160,
+      "the mobile composer grows with the draft up to its bounded height",
+    );
+    await firstComposer.fill("");
 
     await firstComposer.fill("**first fake prompt**");
     await firstComposer.press("Enter");
@@ -101,6 +267,22 @@ async function main() {
     let messageListCount = fake.messageLists;
     const firstTurn = fake.startTurn(firstPrompt);
     fake.emitTextStarted(firstTurn);
+    fake.startTool(firstTurn, "fake-tool");
+    await firstPage.getByText("Running fake-tool", { exact: true }).waitFor();
+    assert.equal(
+      await firstPage.getByText("fake secret input", { exact: true }).count(),
+      0,
+      "native tool inputs are not shown in the transcript",
+    );
+    fake.finishTool(firstTurn, "fake-tool");
+    await firstPage.getByText("Completed fake-tool", { exact: true }).waitFor();
+    fake.failTool(firstTurn, "fake-failing-tool");
+    await firstPage.getByText("Failed fake-failing-tool", { exact: true }).waitFor();
+    assert.equal(
+      await firstPage.getByText(/fake secret (result|failure output)/).count(),
+      0,
+      "native tool results and errors are not shown in the transcript",
+    );
     const markdownPartial = [
       "# Streamed reply",
       "",
@@ -117,6 +299,24 @@ async function main() {
     await firstPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
     await firstPage.getByText("bold formatting", { exact: true }).waitFor();
     await firstPage.getByRole("listitem").filter({ hasText: "item 42" }).waitFor();
+    const socketCountBeforeReconnect = await firstPage.evaluate(() => {
+      const sockets = (window as unknown as Window & { __edenConversationSockets: WebSocket[] })
+        .__edenConversationSockets;
+      sockets
+        .filter((socket) => socket.readyState === WebSocket.OPEN)
+        .at(-1)!
+        .close();
+      return sockets.length;
+    });
+    fake.emitTextDelta(firstTurn, "\nreconnected transcript update");
+    await firstPage.waitForFunction(
+      (count) =>
+        (window as Window & { __edenConversationSockets?: WebSocket[] }).__edenConversationSockets
+          ?.slice(count)
+          .some((socket) => socket.readyState === WebSocket.OPEN),
+      socketCountBeforeReconnect,
+    );
+    await firstPage.getByText("reconnected transcript update", { exact: true }).waitFor();
     const firstTranscript = firstPage.getByRole("region", { name: "Conversation transcript" });
     const promptMarkup = firstPage.locator('[data-slot="bubble"] strong');
     assert.equal(await promptMarkup.count(), 0, "user prompts remain plain text");
@@ -144,6 +344,7 @@ async function main() {
     await secondTab.waitFor({ state: "visible" });
     await secondTab.click();
     await secondPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
+    await secondPage.getByText("Completed fake-tool", { exact: true }).waitFor();
     await secondPage.locator("pre code").filter({ hasText: "const answer = 42;" }).waitFor();
     fake.askPermission(firstTurn);
     await firstPage.getByRole("heading", { name: "OpenCode permission requested" }).waitFor();
@@ -178,7 +379,42 @@ async function main() {
       .getByRole("tab", { name: "OpenCode conversation 1" })
       .waitFor({ state: "hidden" });
     await secondPage.getByRole("button", { name: "New session tab" }).click();
-    await secondPage.getByRole("menuitem", { name: "Reopen OpenCode conversation 1" }).click();
+    assert.equal(
+      await secondPage.getByRole("menuitem", { name: /Reopen OpenCode conversation/ }).count(),
+      0,
+      "hidden conversations are no longer listed in the session menu",
+    );
+    await secondPage.getByRole("menuitem", { name: "OpenCode conversation" }).press("Escape");
+    await secondPage.locator('[data-slot="dropdown-menu-content"]').waitFor({ state: "hidden" });
+    await secondPage.waitForFunction(
+      () => document.querySelectorAll("[data-base-ui-inert]").length === 0,
+    );
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await secondPage.getByRole("button", { name: "Hide worktrees sidebar" }).click();
+    await secondPage.getByRole("button", { name: "Hidden conversations" }).click();
+    await secondPage.getByRole("heading", { name: "Hidden conversations" }).waitFor();
+    const hiddenConversation = secondPage.getByRole("button", {
+      name: "Reopen OpenCode conversation 1",
+    });
+    await hiddenConversation.waitFor({ state: "visible" });
+    const sidebarWidth = await secondPage.evaluate(
+      () => [document.documentElement.scrollWidth, window.innerWidth] as const,
+    );
+    assert.ok(sidebarWidth[0] <= sidebarWidth[1] + 1, "the hidden-conversation sheet fits mobile");
+    await Promise.all(
+      ["sheet-overlay", "sheet-content"].map((slot) =>
+        secondPage
+          .locator(`[data-slot="${slot}"]`)
+          .evaluate((element) =>
+            Promise.all(element.getAnimations().map((animation) => animation.finished)),
+          ),
+      ),
+    );
+    if (process.env.EDEN_HIDDEN_CONVERSATIONS_MOBILE_SCREENSHOT)
+      await secondPage.screenshot({
+        path: process.env.EDEN_HIDDEN_CONVERSATIONS_MOBILE_SCREENSHOT,
+      });
+    await hiddenConversation.click();
     await secondTab.waitFor({ state: "visible" });
     await firstPage
       .getByRole("tab", { name: "OpenCode conversation 1" })
@@ -221,7 +457,6 @@ async function main() {
     await secondPage.getByText("Completed fenced code.", { exact: true }).waitFor();
     await firstPage.locator("pre code").filter({ hasText: "const answer = 42;" }).waitFor();
     assert.equal(fake.sessionCreates, 1);
-
     for (const context of contexts.splice(0)) await context.close();
     await stopVite(vite);
     vite = await startVite(env);
@@ -234,6 +469,68 @@ async function main() {
     await reopenedTab.waitFor({ state: "visible" });
     await reopenedTab.click();
     await reopenedPage.getByRole("heading", { name: "Streamed reply" }).waitFor();
+    await reopenedPage.getByText("Completed fake-tool", { exact: true }).waitFor();
+    await reopenedPage.getByText("Failed fake-failing-tool", { exact: true }).waitFor();
+    await reopenedPage.route(`**/api/conversations/${conversationID}/models`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          models: [
+            {
+              key: JSON.stringify(["anthropic", "claude-fixture"]),
+              id: "claude-fixture",
+              providerID: "anthropic",
+              name: "Claude Fixture",
+            },
+            ...Array.from({ length: 40 }, (_, index) => ({
+              key: JSON.stringify(["fake", `scroll-model-${index}`]),
+              id: `scroll-model-${index}`,
+              providerID: "fake",
+              name: `Scroll Model ${index}`,
+            })),
+          ],
+        }),
+      }),
+    );
+    const reopenedModelPicker = reopenedPage.getByRole("combobox", {
+      name: "Choose OpenCode model",
+    });
+    await reopenedModelPicker.getByText("Claude Fixture", { exact: true }).waitFor();
+    assert.equal(
+      modelDiscoveryGets.length,
+      1,
+      "reopening shows the stored model label without discovering models",
+    );
+    await reopenedModelPicker.click();
+    await reopenedPage.getByRole("option", { name: "Claude Fixture · anthropic" }).waitFor();
+    const modelPopup = reopenedPage.locator('[data-slot="select-content"]');
+    await modelPopup.waitFor();
+    const desktopPopup = await modelPopup.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    assert.ok(
+      desktopPopup.scrollHeight > desktopPopup.clientHeight,
+      "a long model list scrolls inside its desktop popup",
+    );
+    assert.ok(desktopPopup.clientHeight <= 384, "the desktop model popup has a bounded height");
+    assert.equal(
+      await reopenedPage.getByRole("listbox").getByRole("group").count(),
+      0,
+      "ungrouped models stay flat",
+    );
+    await reopenedPage.setViewportSize({ width: 390, height: 844 });
+    const mobilePopup = await modelPopup.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    assert.ok(
+      mobilePopup.scrollHeight > mobilePopup.clientHeight,
+      "a long model list scrolls inside its mobile popup",
+    );
+    assert.ok(mobilePopup.clientHeight <= 506, "the mobile model popup fits the viewport");
+    await reopenedPage.keyboard.press("Escape");
     assert.equal(fake.prompts.length, 1, "reopening after server restart does not replay a turn");
     assert.equal(fake.sessionCreates, 1, "reopening reuses the durable Eden transcript");
 
@@ -511,6 +808,69 @@ async function stopVite(instance: ViteInstance) {
   }
 }
 
+async function verifyNavigationVariants(page: Page) {
+  const navigation = page.getByRole("navigation", { name: "Main" });
+  const routeLabels = ["Board", "Doing", "PRs", "Health"];
+  const assertSingleRouteSet = async () => {
+    for (const label of routeLabels) {
+      assert.equal(
+        await navigation.getByRole("link", { name: label }).count(),
+        1,
+        `${label} appears once in main navigation`,
+      );
+    }
+    assert.equal(
+      await navigation.getByRole("button", { name: "Settings" }).count(),
+      1,
+      "Settings remains available from the navigation rail",
+    );
+  };
+  const railWidth = async () =>
+    navigation.evaluate((element) => element.getBoundingClientRect().width);
+
+  await assertSingleRouteSet();
+  assert.equal(await railWidth(), 48, "Classic retains its 48px icon rail");
+  await page.getByRole("button", { name: "Settings" }).click();
+  const appearance = page.getByRole("dialog").getByRole("combobox", { name: "Navigation" });
+  await appearance.click();
+  await page.getByRole("option", { name: "Sidebar 09" }).click();
+  await page.locator('[data-slot="dialog-close"]').click();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await assertSingleRouteSet();
+  assert.equal(await railWidth(), 48, "Sidebar 09 uses a compact 48px icon rail");
+  assert.equal(
+    await page.getByRole("button", { name: "Hide worktrees sidebar" }).count(),
+    1,
+    "the distinct Doing worktree sidebar remains available",
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  assert.equal(await railWidth(), 48, "Sidebar 09 stays 48px wide at the comparison viewport");
+  if (process.env.EDEN_NAVIGATION_E2E_SCREENSHOT)
+    await page.screenshot({ path: process.env.EDEN_NAVIGATION_E2E_SCREENSHOT, fullPage: true });
+  await page.setViewportSize({ width: 1400, height: 950 });
+  await page.reload();
+  await page.getByRole("navigation", { name: "Main" }).waitFor();
+  await assertSingleRouteSet();
+  assert.equal(
+    await page.evaluate(() => {
+      const stored = JSON.parse(localStorage.getItem("eden.theme-settings") ?? "{}");
+      return stored.navigationStyle;
+    }),
+    "sidebar-09",
+    "Sidebar 09 selection persists across reloads",
+  );
+  await page.getByRole("button", { name: "Settings" }).click();
+  const persistedAppearance = page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Navigation" });
+  await persistedAppearance.click();
+  await page.getByRole("option", { name: "Classic (recommended)" }).click();
+  await page.locator('[data-slot="dialog-close"]').click();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await assertSingleRouteSet();
+  assert.equal(await railWidth(), 48, "Classic can be restored from Appearance");
+}
+
 async function openDoingPage(
   page: Page,
   baseUrl: string,
@@ -679,6 +1039,76 @@ class FakeOpenCode {
     });
   }
 
+  startTool(turn: FakeTurn, name: string) {
+    this.updateTool(turn, name, "running");
+    this.emit({
+      type: "session.tool.input.started",
+      id: randomID(),
+      created: Date.now(),
+      data: {
+        sessionID: nativeSessionID,
+        assistantMessageID: turn.assistantID,
+        id: "tool-1",
+        name,
+      },
+    });
+    this.emit({
+      type: "session.tool.called",
+      id: randomID(),
+      created: Date.now(),
+      data: {
+        sessionID: nativeSessionID,
+        assistantMessageID: turn.assistantID,
+        id: "tool-1",
+        input: { secret: "fake secret input" },
+        executed: true,
+      },
+    });
+  }
+
+  finishTool(turn: FakeTurn, name: string) {
+    this.updateTool(turn, name, "completed");
+    this.emit({
+      type: "session.tool.success",
+      id: randomID(),
+      created: Date.now(),
+      data: {
+        sessionID: nativeSessionID,
+        assistantMessageID: turn.assistantID,
+        id: "tool-1",
+        content: [{ type: "text", text: "fake secret result" }],
+        executed: true,
+      },
+    });
+  }
+
+  failTool(turn: FakeTurn, name: string) {
+    this.updateTool(turn, name, "failed", "tool-2");
+    this.emit({
+      type: "session.tool.input.started",
+      id: randomID(),
+      created: Date.now(),
+      data: {
+        sessionID: nativeSessionID,
+        assistantMessageID: turn.assistantID,
+        id: "tool-2",
+        name,
+      },
+    });
+    this.emit({
+      type: "session.tool.failed",
+      id: randomID(),
+      created: Date.now(),
+      data: {
+        sessionID: nativeSessionID,
+        assistantMessageID: turn.assistantID,
+        id: "tool-2",
+        error: { name: "Error", message: "fake secret failure output" },
+        executed: true,
+      },
+    });
+  }
+
   askPermission(turn: FakeTurn) {
     const permission = {
       id: "fake-permission",
@@ -744,6 +1174,44 @@ class FakeOpenCode {
         urls: [this.url],
         paths: { tmp: "/tmp" },
       });
+    if (path === "/api/model/default" && request.method === "GET")
+      return json(response, 200, {
+        data: {
+          id: "fake-free",
+          modelID: "fake-free",
+          providerID: "opencode",
+          type: "chat",
+          name: "Fake Free",
+        },
+      });
+    if (path === "/api/model" && request.method === "GET")
+      return json(response, 200, {
+        data: [
+          {
+            id: "claude-fixture",
+            modelID: "claude-fixture",
+            providerID: "anthropic",
+            type: "chat",
+            name: "Claude Fixture",
+            enabled: true,
+          },
+          {
+            id: "fake-free",
+            modelID: "fake-free",
+            providerID: "opencode",
+            type: "chat",
+            name: "Fake Free",
+            enabled: true,
+          },
+        ],
+      });
+    if (path === "/api/provider" && request.method === "GET")
+      return json(response, 200, {
+        data: [
+          { id: "anthropic", name: "Anthropic" },
+          { id: "opencode", name: "OpenCode" },
+        ],
+      });
     if (path === "/api/event" && request.method === "GET") {
       response.writeHead(200, {
         "content-type": "text/event-stream",
@@ -761,6 +1229,18 @@ class FakeOpenCode {
       await readJson(request);
       this.sessionCreates += 1;
       return json(response, 200, { data: { id: nativeSessionID } });
+    }
+    const modelMatch = path.match(/^\/api\/session\/([^/]+)\/model$/);
+    if (modelMatch && request.method === "POST") {
+      assert.equal(decodeURIComponent(modelMatch[1]!), nativeSessionID);
+      const body = await readJson(request);
+      assert.deepEqual(
+        body.model,
+        process.env.EDEN_CONVERSATION_E2E_SKIP_MODEL === "1"
+          ? { id: "fake-free", providerID: "opencode" }
+          : { id: "claude-fixture", providerID: "anthropic" },
+      );
+      return response.writeHead(204).end();
     }
     if (path === "/api/session/active" && request.method === "GET")
       return json(response, 200, { data: this.active ? { [nativeSessionID]: {} } : {} });
@@ -875,11 +1355,44 @@ class FakeOpenCode {
 
   private updateAssistant(turn: FakeTurn, text: string, finished = false) {
     const message = this.sessionMessages.find((entry) => entry.id === turn.assistantID)!;
-    message.content = [{ type: "text", text }];
+    const parts = message.content as Record<string, unknown>[];
+    message.content = [{ type: "text", text }, ...parts.filter((part) => part.type === "tool")];
     if (finished) {
       message.finish = "stop";
       message.time = { created: Date.now(), completed: Date.now() };
     }
+  }
+
+  private updateTool(
+    turn: FakeTurn,
+    name: string,
+    status: "running" | "completed" | "failed",
+    id = "tool-1",
+  ) {
+    const message = this.sessionMessages.find((entry) => entry.id === turn.assistantID)!;
+    const parts = message.content as Record<string, unknown>[];
+    message.content = [
+      ...parts.filter((part) => part.type !== "tool" || part.id !== id),
+      {
+        type: "tool",
+        id,
+        name,
+        state:
+          status === "completed"
+            ? {
+                status,
+                input: { secret: "fake secret input" },
+                content: [{ type: "text", text: "fake secret result" }],
+              }
+            : status === "failed"
+              ? {
+                  status: "error",
+                  input: { secret: "fake secret input" },
+                  error: { name: "Error", message: "fake secret failure output" },
+                }
+              : { status, input: { secret: "fake secret input" } },
+      },
+    ];
   }
 
   private emit(event: object) {

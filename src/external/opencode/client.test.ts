@@ -7,8 +7,10 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
   const servers: Server[] = [];
   const streams: ServerResponse[] = [];
   let messages: object[] = [];
+  let selectedModel: unknown;
+  let switchedBeforePrompt = false;
   let endpoint!: Endpoint;
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     if (path === "/api/info") {
       response.setHeader("content-type", "application/json");
@@ -26,7 +28,16 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
       streams.push(response);
       return;
     }
+    if (path === "/api/session/session/model") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      selectedModel = JSON.parse(Buffer.concat(chunks).toString()).model;
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     if (path === "/api/session/session/prompt") {
+      switchedBeforePrompt = selectedModel !== undefined;
       messages = [
         {
           id: "user-1",
@@ -122,9 +133,16 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
   });
   let sendResolved = false;
   const sending = client
-    .send("session", "/tmp/worktree", "prompt-1", "hello", (event) => {
-      if (event.type === "accepted") accepted();
-    })
+    .send(
+      "session",
+      "/tmp/worktree",
+      "prompt-1",
+      "hello",
+      (event) => {
+        if (event.type === "accepted") accepted();
+      },
+      { id: "mock", providerID: "mock" },
+    )
     .then((result) => {
       sendResolved = true;
       return result;
@@ -134,6 +152,8 @@ test("uses refreshed service discovery and waits past prompt acceptance for dela
     expect(sendResolved).toBe(false);
     const result = await sending;
     expect(result.reply).toBe("Hello there.");
+    expect(selectedModel).toEqual({ id: "mock", providerID: "mock" });
+    expect(switchedBeforePrompt).toBe(true);
   } finally {
     for (const stream of streams) stream.end();
     for (const instance of servers) instance.close();
@@ -157,6 +177,16 @@ test("event-stream EOF before delayed prompt acceptance is handled without an un
       if (path === "/api/info") {
         response.setHeader("content-type", "application/json");
         return response.end(JSON.stringify({ version: "2.4.1", pid: 1, urls: [], paths: { tmp: "/tmp" } }));
+      }
+      if (path === "/api/model/default") {
+        response.setHeader("content-type", "application/json");
+        return response.end(JSON.stringify({ data: {
+          id: "mock", modelID: "mock", providerID: "mock", type: "chat", name: "Mock"
+        } }));
+      }
+      if (path === "/api/session/session/model") {
+        response.statusCode = 204;
+        return response.end();
       }
       if (path === "/api/event") {
         response.writeHead(200, { "content-type": "text/event-stream", connection: "keep-alive" });
@@ -211,4 +241,100 @@ test("event-stream EOF before delayed prompt acceptance is handled without an un
   expect(exitCode).toBe(0);
   expect(stdout).toContain("child remained live");
   expect(stderr).toBe("");
+});
+
+test("resolves and switches to the worktree default before prompting", async () => {
+  const servers: Server[] = [];
+  const calls: string[] = [];
+  let switchedModel: unknown;
+  const server = createServer(async (request, response) => {
+    const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (path === "/api/info") {
+      response.setHeader("content-type", "application/json");
+      return response.end(
+        JSON.stringify({ version: "2.4.1", pid: 1, urls: [], paths: { tmp: "/tmp" } }),
+      );
+    }
+    if (path === "/api/model/default") {
+      calls.push("default");
+      response.setHeader("content-type", "application/json");
+      return response.end(
+        JSON.stringify({
+          data: {
+            id: "free-default",
+            modelID: "free-default",
+            providerID: "opencode",
+            type: "chat",
+            name: "Free Default",
+          },
+        }),
+      );
+    }
+    if (path === "/api/event") {
+      response.writeHead(200, { "content-type": "text/event-stream", connection: "keep-alive" });
+      response.write('data: {"type":"server.connected","id":"connected","data":{}}\n\n');
+      return;
+    }
+    if (path === "/api/session/session/model") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      switchedModel = JSON.parse(Buffer.concat(chunks).toString()).model;
+      calls.push("switch");
+      response.statusCode = 204;
+      return response.end();
+    }
+    if (path === "/api/session/session/prompt") {
+      calls.push("prompt");
+      response.statusCode = 500;
+      response.setHeader("content-type", "application/json");
+      return response.end(JSON.stringify({ errors: [{ message: "fake prompt failure" }] }));
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ errors: [{ message: "Not found" }] }));
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const endpoint: Endpoint = {
+    url: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+  };
+  const client = createOpenCodeConversationClient({ discover: async () => endpoint });
+  try {
+    await expect(client.send("session", "/tmp/worktree", "prompt-1", "hello")).rejects.toThrow();
+    expect(switchedModel).toEqual({ id: "free-default", providerID: "opencode" });
+    expect(calls).toEqual(["default", "switch", "prompt"]);
+  } finally {
+    server.closeAllConnections();
+    for (const instance of servers) instance.close();
+  }
+});
+
+test("refuses to prompt when the worktree has no default model", async () => {
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (path === "/api/info") {
+      response.setHeader("content-type", "application/json");
+      return response.end(
+        JSON.stringify({ version: "2.4.1", pid: 1, urls: [], paths: { tmp: "/tmp" } }),
+      );
+    }
+    if (path === "/api/model/default") {
+      response.setHeader("content-type", "application/json");
+      return response.end(JSON.stringify({ data: null }));
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ errors: [{ message: "Not found" }] }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const endpoint: Endpoint = {
+    url: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+  };
+  const client = createOpenCodeConversationClient({ discover: async () => endpoint });
+  try {
+    await expect(client.send("session", "/tmp/worktree", "prompt-1", "hello")).rejects.toThrow(
+      "OpenCode has no default chat model configured for this worktree. Choose an available model in Eden or configure a default in OpenCode.",
+    );
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
 });

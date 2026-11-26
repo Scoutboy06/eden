@@ -44,18 +44,26 @@ export default defineConfig({
     {
       name: "eden-tasks",
       configureServer(server) {
+        const conversations = createConversationApiMiddleware();
         if (server.httpServer)
-          attachTerminalServer(server.httpServer as unknown as import("node:http").Server);
+          attachTerminalServer(
+            server.httpServer as unknown as import("node:http").Server,
+            conversations,
+          );
         return () => {
           server.middlewares.use(createTasksMiddleware(checkout));
-          server.middlewares.use(createConversationApiMiddleware());
+          server.middlewares.use(conversations);
         };
       },
       configurePreviewServer(server) {
-        attachTerminalServer(server.httpServer as unknown as import("node:http").Server);
+        const conversations = createConversationApiMiddleware();
+        attachTerminalServer(
+          server.httpServer as unknown as import("node:http").Server,
+          conversations,
+        );
         return () => {
           server.middlewares.use(createTasksMiddleware(checkout));
-          server.middlewares.use(createConversationApiMiddleware());
+          server.middlewares.use(conversations);
         };
       },
     },
@@ -104,7 +112,10 @@ function createConversationApiMiddleware() {
   });
 }
 
-function attachTerminalServer(httpServer: import("node:http").Server) {
+function attachTerminalServer(
+  httpServer: import("node:http").Server,
+  conversations: ReturnType<typeof createConversationApiMiddleware>,
+) {
   const terminals = createTerminalServer({
     runtime: terminalBackend === "hc" ? createHcTerminalRuntime() : createBunTerminalRuntime(),
     readProjects: async () =>
@@ -113,11 +124,16 @@ function attachTerminalServer(httpServer: import("node:http").Server) {
       ),
   });
   httpServer.on("upgrade", (request, socket, head) => {
-    if (
-      request.url?.startsWith("/api/terminals/socket") &&
-      !terminals.upgrade(request, socket, head)
-    )
-      socket.destroy();
+    if (request.url?.startsWith("/api/terminals/socket")) {
+      if (!terminals.upgrade(request, socket, head)) socket.destroy();
+      return;
+    }
+    if (request.url?.startsWith("/api/conversations/socket")) {
+      if (!conversations.upgrade(request, socket, head)) socket.destroy();
+    }
   });
-  httpServer.on("close", () => terminals.close());
+  httpServer.on("close", () => {
+    terminals.close();
+    conversations.close();
+  });
 }

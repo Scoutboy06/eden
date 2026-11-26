@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
+import { WebSocket } from "ws";
 
 import type { OpenCodeConversationClient } from "../../../src/external/opencode/client";
 import { createConversationMiddleware } from "./conversations";
@@ -17,6 +18,72 @@ afterEach(async () => {
   );
 });
 
+test("subscribes to authorized worktree snapshots and pushes persisted visibility updates", async () => {
+  const root = await mkdtemp(join(tmpdir(), "eden-conversation-socket-"));
+  directories.push(root);
+  const worktree = join(root, "checkout");
+  await mkdir(worktree);
+  const url = await start({
+    root,
+    worktree,
+    client: {} as OpenCodeConversationClient,
+    databasePath: join(root, "conversations.sqlite"),
+  });
+  await expectConversationWebSocketRejected(
+    new WebSocket(`${url.replace(/^http/, "ws")}/api/conversations/socket`, {
+      origin: "http://evil.example",
+    }),
+  );
+  const first = await connectConversationSocket(url);
+  const second = await connectConversationSocket(url);
+  const firstInitial = nextSocketMessage(first);
+  const secondInitial = nextSocketMessage(second);
+  first.send(
+    JSON.stringify({
+      type: "subscribe",
+      project: "project",
+      worktree: "checkout",
+      branch: "slice",
+    }),
+  );
+  second.send(
+    JSON.stringify({
+      type: "subscribe",
+      project: "project",
+      worktree: "checkout",
+      branch: "slice",
+    }),
+  );
+  expect((await firstInitial).conversations).toEqual([]);
+  expect((await secondInitial).conversations).toEqual([]);
+
+  const firstCreated = nextSocketMessage(first);
+  const secondCreated = nextSocketMessage(second);
+  const created = await fetch(`${url}/api/conversations`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+  });
+  const { conversation } = (await created.json()) as { conversation: { id: string } };
+  expect((await firstCreated).conversations).toHaveLength(1);
+  expect((await secondCreated).conversations).toHaveLength(1);
+
+  const firstHidden = nextSocketMessage(first);
+  const secondHidden = nextSocketMessage(second);
+  await fetch(`${url}/api/conversations/${conversation.id}/close`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+  });
+  const hiddenSnapshot = await firstHidden;
+  expect(hiddenSnapshot.conversations).toEqual([]);
+  expect(hiddenSnapshot.hiddenConversations).toHaveLength(1);
+  expect((await secondHidden).hiddenConversations).toHaveLength(1);
+
+  first.close();
+  second.close();
+});
+
 test("creates a local conversation without a provider session and reuses its native ID on send", async () => {
   const root = await mkdtemp(join(tmpdir(), "eden-conversation-"));
   directories.push(root);
@@ -26,8 +93,20 @@ test("creates a local conversation without a provider session and reuses its nat
   let creates = 0;
   let sends = 0;
   let submittedPromptID = "";
+  let submittedModel: { id: string; providerID: string } | undefined;
   const client: OpenCodeConversationClient = {
     async prepare() {},
+    async models(directory) {
+      expect(directory).toBe(worktree);
+      return [
+        {
+          key: '["mock","cheap-model"]',
+          id: "cheap-model",
+          providerID: "mock",
+          name: "Cheap model",
+        },
+      ];
+    },
     async create() {
       creates += 1;
       return (nativeSessionID = "native-session");
@@ -57,9 +136,10 @@ test("creates a local conversation without a provider session and reuses its nat
     },
     async replyForm() {},
     async observe() {},
-    async send(id, _directory, promptID, text, onEvent) {
+    async send(id, _directory, promptID, text, onEvent, model) {
       expect(id).toBe(nativeSessionID);
       submittedPromptID = promptID;
+      submittedModel = model;
       sends += 1;
       const reply = `Reply to ${text}`;
       onEvent?.({ type: "attempting" });
@@ -84,6 +164,20 @@ test("creates a local conversation without a provider session and reuses its nat
   };
   expect(createdResponse.status).toBe(201);
   expect(created.status).toBe("ready");
+  expect(creates).toBe(0);
+
+  const modelsResponse = await fetch(`${url}/api/conversations/${created.id}/models`, {
+    headers: { origin: url },
+  });
+  expect(modelsResponse.status).toBe(200);
+  expect((await modelsResponse.json()).models).toEqual([
+    {
+      key: '["mock","cheap-model"]',
+      id: "cheap-model",
+      providerID: "mock",
+      name: "Cheap model",
+    },
+  ]);
   expect(creates).toBe(0);
 
   const sentResponse = await fetch(`${url}/api/conversations/${created.id}/send`, {
@@ -117,6 +211,52 @@ test("creates a local conversation without a provider session and reuses its nat
   expect(secondSend.status).toBe(200);
   expect(creates).toBe(1);
   expect(sends).toBe(2);
+
+  const selectedSend = await fetch(`${url}/api/conversations/${created.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "use this model", modelKey: '["mock","cheap-model"]' }),
+  });
+  expect(selectedSend.status).toBe(200);
+  expect(submittedModel).toEqual({ id: "cheap-model", providerID: "mock" });
+  expect((await selectedSend.json()).conversation.selectedModelLabel).toBe("Cheap model · mock");
+  expect(sends).toBe(3);
+
+  const followupSend = await fetch(`${url}/api/conversations/${created.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "keep using this model" }),
+  });
+  expect(followupSend.status).toBe(200);
+  expect(submittedModel).toEqual({ id: "cheap-model", providerID: "mock" });
+  expect(sends).toBe(4);
+  const reloaded = await fetch(`${url}/api/conversations/${created.id}`, {
+    headers: { origin: url },
+  });
+  const { conversation: reloadedConversation } = await reloaded.json();
+  expect(reloadedConversation.selectedModelKey).toBe('["mock","cheap-model"]');
+  expect(reloadedConversation.selectedModelLabel).toBe("Cheap model · mock");
+
+  const defaultSend = await fetch(`${url}/api/conversations/${created.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "use default model", modelKey: null }),
+  });
+  expect(defaultSend.status).toBe(200);
+  expect((await defaultSend.json()).conversation).toMatchObject({
+    selectedModelKey: null,
+    selectedModelLabel: null,
+  });
+  expect(submittedModel).toBeUndefined();
+  expect(sends).toBe(5);
+
+  const rejectedModel = await fetch(`${url}/api/conversations/${created.id}/send`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ text: "do not send", modelKey: '["other","model"]' }),
+  });
+  expect(rejectedModel.status).toBe(400);
+  expect(sends).toBe(5);
 });
 
 test("rejects cross-origin requests before touching conversation storage", async () => {
@@ -725,9 +865,44 @@ async function start({
         response.end();
       }),
   );
+  server.on("upgrade", (request, socket, head) => {
+    if (!middleware.upgrade(request, socket, head)) socket.destroy();
+  });
+  server.on("close", () => middleware.close());
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+}
+
+async function connectConversationSocket(url: string) {
+  const socket = new WebSocket(`${url.replace(/^http/, "ws")}/api/conversations/socket`, {
+    origin: url,
+  });
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  return socket;
+}
+
+function expectConversationWebSocketRejected(socket: WebSocket) {
+  return new Promise<void>((resolve, reject) => {
+    socket.once("open", () => {
+      socket.close();
+      reject(new Error("Cross-origin conversation socket unexpectedly opened."));
+    });
+    socket.once("error", () => resolve());
+  });
+}
+
+function nextSocketMessage(socket: WebSocket) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Conversation snapshot timed out.")), 1000);
+    socket.once("message", (raw) => {
+      clearTimeout(timeout);
+      resolve(JSON.parse(raw.toString()) as Record<string, unknown>);
+    });
+  });
 }
 
 async function waitFor(check: () => Promise<boolean>) {

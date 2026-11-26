@@ -4,17 +4,24 @@ import { themeCatalog } from "../../themes/catalog";
 import { generateThemeStylesheet } from "../../themes/stylesheet";
 
 export type ThemeMode = "system" | "light" | "dark";
+export type NavigationStyle = "classic" | "sidebar-09";
 
 export interface ThemeSettings {
   mode: ThemeMode;
   lightTheme: string;
   darkTheme: string;
+  navigationStyle: NavigationStyle;
 }
 
 // Keep in sync with the bootstrap script in index.html.
 const storageKey = "eden.theme-settings";
 const themeStylesheetId = "application-theme";
-const defaults: ThemeSettings = { mode: "system", lightTheme: "default", darkTheme: "default" };
+const defaults: ThemeSettings = {
+  mode: "system",
+  lightTheme: "default",
+  darkTheme: "default",
+  navigationStyle: "classic",
+};
 
 const listeners = new Set<() => void>();
 let current = readStoredSettings();
@@ -25,11 +32,15 @@ function readStoredSettings(): ThemeSettings {
     const mode = isThemeMode(stored.mode) ? stored.mode : defaults.mode;
     const lightTheme = themeCatalog.find(stored.lightTheme ?? "")?.id ?? defaults.lightTheme;
     const darkTheme = themeCatalog.find(stored.darkTheme ?? "")?.id ?? defaults.darkTheme;
+    const navigationStyle = isNavigationStyle(stored.navigationStyle)
+      ? stored.navigationStyle
+      : defaults.navigationStyle;
 
     return {
       mode,
       lightTheme,
       darkTheme,
+      navigationStyle,
     };
   } catch {
     return defaults;
@@ -38,6 +49,10 @@ function readStoredSettings(): ThemeSettings {
 
 function isThemeMode(value: string | undefined): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
+}
+
+function isNavigationStyle(value: string | undefined): value is NavigationStyle {
+  return value === "classic" || value === "sidebar-09";
 }
 
 export function updateThemeSettings(patch: Partial<ThemeSettings>): void {

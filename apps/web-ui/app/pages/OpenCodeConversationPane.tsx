@@ -1,4 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  AlertCircleIcon,
+  ArrowUp01Icon,
+  CircleCheckIcon,
+  Loading03Icon,
+  SquareStopIcon,
+  Wrench01Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
@@ -11,14 +20,26 @@ import {
 } from "@/components/ui/input-group";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   sendConversationMessage,
+  listConversationModels,
   replyToPermission,
   replyToForm,
   stopConversation,
   type Conversation,
   type ConversationForm,
+  type ConversationModel,
 } from "@/pages/conversations";
 import { Streamdown } from "streamdown";
+import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 
 export function OpenCodeConversationPane({
   conversation,
@@ -33,11 +54,18 @@ export function OpenCodeConversationPane({
   const [answeringPermission, setAnsweringPermission] = useState<string | null>(null);
   const [answeringForm, setAnsweringForm] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ConversationModel[] | null>(null);
+  const [selectedModelKey, setSelectedModelKey] = useState<string | undefined>(
+    conversation.selectedModelKey ?? undefined,
+  );
+  const [loadingModels, setLoadingModels] = useState(false);
   const transcript = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const lastMessage = conversation.messages.at(-1);
   const approvalsKey = conversation.approvals?.map(({ id }) => id).join(",");
   const active = conversation.status === "active" || conversation.status === "blocked" || sending;
+  const selectedModel = models?.find(({ key }) => key === selectedModelKey);
+  const groupedModels = models?.some(({ group }) => group);
 
   useEffect(() => {
     if (!nearBottom.current) return;
@@ -51,6 +79,14 @@ export function OpenCodeConversationPane({
     lastMessage?.text,
   ]);
 
+  useEffect(() => {
+    setSelectedModelKey(conversation.selectedModelKey ?? undefined);
+  }, [conversation.id, conversation.selectedModelKey]);
+
+  useEffect(() => {
+    setModels(null);
+  }, [conversation.id]);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const text = draft.trim();
@@ -58,7 +94,7 @@ export function OpenCodeConversationPane({
     setSending(true);
     setError(null);
     try {
-      await sendConversationMessage(conversation.id, text);
+      await sendConversationMessage(conversation.id, text, selectedModelKey ?? null);
       setDraft("");
       await refresh();
     } catch (cause) {
@@ -137,12 +173,49 @@ export function OpenCodeConversationPane({
                       <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
                     </Bubble>
                   ) : (
-                    <Streamdown
-                      className="px-3 py-2 text-sm leading-relaxed"
-                      isAnimating={conversation.status === "active"}
-                    >
-                      {message.text}
-                    </Streamdown>
+                    <>
+                      {message.tools?.length ? (
+                        <Trace className="px-3 pt-2">
+                          {message.tools.map((tool) => (
+                            <TraceLine
+                              key={tool.id}
+                              status={
+                                tool.status === "running"
+                                  ? "running"
+                                  : tool.status === "failed"
+                                    ? "error"
+                                    : undefined
+                              }
+                            >
+                              <TraceIcon>
+                                {tool.status === "running" ? (
+                                  <HugeiconsIcon icon={Loading03Icon} className="animate-spin" />
+                                ) : tool.status === "failed" ? (
+                                  <HugeiconsIcon icon={AlertCircleIcon} />
+                                ) : tool.status === "completed" ? (
+                                  <HugeiconsIcon icon={CircleCheckIcon} />
+                                ) : (
+                                  <HugeiconsIcon icon={Wrench01Icon} />
+                                )}
+                              </TraceIcon>
+                              <TraceTitle>
+                                {tool.status === "running"
+                                  ? `Running ${tool.name}`
+                                  : tool.status === "failed"
+                                    ? `Failed ${tool.name}`
+                                    : `Completed ${tool.name}`}
+                              </TraceTitle>
+                            </TraceLine>
+                          ))}
+                        </Trace>
+                      ) : null}
+                      <Streamdown
+                        className="px-3 py-2 text-sm leading-relaxed"
+                        isAnimating={conversation.status === "active"}
+                      >
+                        {message.text}
+                      </Streamdown>
+                    </>
                   )}
                 </MessageContent>
               </Message>
@@ -243,14 +316,90 @@ export function OpenCodeConversationPane({
               disabled={active}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              className="min-h-14 p-3"
+              className="max-h-40 min-h-14 overflow-y-auto p-3 leading-6"
             />
-            <InputGroupAddon align="block-end" className="justify-end">
+            <InputGroupAddon align="block-end">
+              <Select
+                value={selectedModelKey ?? "__default__"}
+                onValueChange={(value) =>
+                  setSelectedModelKey(value === "__default__" ? undefined : (value ?? undefined))
+                }
+                onOpenChange={(open) => {
+                  if (!open || models !== null || loadingModels) return;
+                  setLoadingModels(true);
+                  void listConversationModels(conversation.id)
+                    .then(setModels)
+                    .catch((cause) => {
+                      setError(
+                        cause instanceof Error
+                          ? cause.message
+                          : "Could not load available OpenCode models.",
+                      );
+                    })
+                    .finally(() => setLoadingModels(false));
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  disabled={active}
+                  aria-label="Choose OpenCode model"
+                  className="mr-auto max-w-56 min-w-0 border-transparent"
+                >
+                  <SelectValue>
+                    {selectedModel
+                      ? groupedModels
+                        ? selectedModel.name
+                        : `${selectedModel.name} · ${selectedModel.providerID}`
+                      : selectedModelKey
+                        ? models === null
+                          ? (conversation.selectedModelLabel ?? "Selected model")
+                          : "Model unavailable"
+                        : "Default model"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent
+                  align="start"
+                  className="max-h-[min(24rem,60dvh,var(--available-height))]"
+                >
+                  <SelectItem value="__default__">Default model</SelectItem>
+                  {loadingModels ? (
+                    <SelectItem value="__loading__" disabled>
+                      Loading models…
+                    </SelectItem>
+                  ) : null}
+                  {models?.length === 0 ? (
+                    <SelectItem value="__empty__" disabled>
+                      No available models
+                    </SelectItem>
+                  ) : null}
+                  {groupedModels
+                    ? Object.entries(
+                        Object.groupBy(
+                          models?.filter(({ group }) => group) ?? [],
+                          ({ group }) => group!.key,
+                        ),
+                      ).map(([key, groupModels]) => (
+                        <SelectGroup key={key}>
+                          <SelectLabel>{groupModels?.[0]?.group?.label ?? key}</SelectLabel>
+                          {groupModels?.map((model) => (
+                            <SelectItem key={model.key} value={model.key}>
+                              {model.name}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))
+                    : models?.map((model) => (
+                        <SelectItem key={model.key} value={model.key}>
+                          {model.name} · {model.providerID}
+                        </SelectItem>
+                      ))}
+                </SelectContent>
+              </Select>
               {conversation.status === "active" || conversation.status === "blocked" ? (
                 <InputGroupButton
                   type="button"
@@ -258,7 +407,10 @@ export function OpenCodeConversationPane({
                   size="sm"
                   disabled={stopping}
                   onClick={() => void stop()}
+                  aria-label={stopping ? "Stopping OpenCode response" : "Stop OpenCode response"}
+                  aria-busy={stopping}
                 >
+                  <HugeiconsIcon icon={SquareStopIcon} aria-hidden="true" className="size-3.5" />
                   {stopping ? "Stopping…" : "Stop"}
                 </InputGroupButton>
               ) : (
@@ -269,7 +421,7 @@ export function OpenCodeConversationPane({
                   disabled={!draft.trim() || active}
                   aria-label="Send message"
                 >
-                  ↑
+                  <HugeiconsIcon icon={ArrowUp01Icon} aria-hidden="true" />
                 </InputGroupButton>
               )}
             </InputGroupAddon>

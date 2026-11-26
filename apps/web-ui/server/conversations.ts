@@ -3,13 +3,24 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { WebSocket, WebSocketServer } from "ws";
 import type { OpenCodeConversationClient } from "../../../src/external/opencode/client";
 import { GitModule } from "../../../src/modules/git/git.module";
 import { createOpenCodeConversationClient } from "../../../src/external/opencode/client";
 import { isAllowedTerminalHost, resolveWorktree } from "./terminals";
 
 type Scope = { project: string; worktree: string; branch: string | null };
-type StoredMessage = { role: "user" | "assistant"; text: string; createdAt: number };
+type StoredToolCall = {
+  id: string;
+  name: string;
+  status: "running" | "completed" | "failed";
+};
+type StoredMessage = {
+  role: "user" | "assistant";
+  text: string;
+  createdAt: number;
+  tools?: StoredToolCall[];
+};
 type Approval = { id: string; action: string; resources: string[]; message?: string };
 type ConversationFormField = {
   key: string;
@@ -38,12 +49,17 @@ type Conversation = Scope & {
   directoryIdentity: string;
   nativeSessionID: string | null;
   activePromptID: string | null;
+  selectedModelKey: string | null;
+  selectedModelLabel: string | null;
   hidden: boolean;
   status: "ready" | "active" | "blocked" | "incomplete";
   messages: StoredMessage[];
   updatedAt: number;
 };
 type Database = import("bun:sqlite").Database;
+const databasePublishers = new WeakMap<Database, (scope: Scope) => void>();
+const conversationSocketLimit = 32;
+const conversationSocketBufferLimit = 256 * 1024;
 
 export type ConversationDependencies = {
   readProjects: () => Promise<Record<string, { name: string; path: string }>>;
@@ -57,8 +73,25 @@ export function createConversationMiddleware(dependencies: ConversationDependenc
   const actions = new Set<string>();
   let databasePromise: Promise<Database> | undefined;
   let recoveryStarted = false;
+  const subscribers = new Map<WebSocket, Scope>();
+  const sockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: 32 * 1024,
+    perMessageDeflate: false,
+  });
+  const publish = (scope: Scope) => {
+    if (!databasePromise) return;
+    void databasePromise.then((db) => {
+      void sendSnapshot(db, scope, client, subscribers);
+    });
+  };
+  const getDatabase = async () => {
+    const db = await (databasePromise ??= openDatabase(dependencies.databasePath));
+    databasePublishers.set(db, publish);
+    return db;
+  };
   const database = async () => {
-    const connection = await (databasePromise ??= openDatabase(dependencies.databasePath));
+    const connection = await getDatabase();
     if (!recoveryStarted) {
       recoveryStarted = true;
       void recoverConversations(connection, client, dependencies, actions).catch(() => {});
@@ -66,7 +99,7 @@ export function createConversationMiddleware(dependencies: ConversationDependenc
     return connection;
   };
 
-  return async (
+  const middleware = async (
     request: IncomingMessage & { originalUrl?: string },
     response: ServerResponse,
     next: () => void,
@@ -96,6 +129,56 @@ export function createConversationMiddleware(dependencies: ConversationDependenc
       return respond(response, 400, { error: "Could not process conversation request." });
     }
   };
+  sockets.on("connection", (socket) => {
+    socket.on("message", (raw) => {
+      let message: Record<string, unknown>;
+      try {
+        message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      } catch {
+        socket.close(1003, "Invalid message");
+        return;
+      }
+      if (message.type === "unsubscribe") {
+        subscribers.delete(socket);
+        return;
+      }
+      if (message.type !== "subscribe") {
+        socket.close(1008, "Invalid subscription");
+        return;
+      }
+      void (async () => {
+        const scope = parseScope(message);
+        const projects = await dependencies.readProjects();
+        await resolveWorktree(scope, {
+          readProjects: async () => projects,
+          worktrees: dependencies.worktrees,
+        });
+        subscribers.set(socket, scope);
+        const db = await getDatabase();
+        await sendSnapshot(db, scope, client, new Map([[socket, scope]]));
+      })().catch(() => socket.close(1008, "Invalid worktree subscription"));
+    });
+    socket.on("close", () => subscribers.delete(socket));
+  });
+  return Object.assign(middleware, {
+    upgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) {
+      if (
+        request.url?.split("?")[0] !== "/api/conversations/socket" ||
+        !sameConversationSocketOrigin(request) ||
+        sockets.clients.size >= conversationSocketLimit
+      )
+        return false;
+      sockets.handleUpgrade(request, socket, head, (webSocket) =>
+        sockets.emit("connection", webSocket, request),
+      );
+      return true;
+    },
+    close() {
+      for (const socket of sockets.clients) socket.terminate();
+      sockets.close();
+      subscribers.clear();
+    },
+  });
 }
 
 async function recoverConversations(
@@ -130,6 +213,7 @@ async function observeConversation(
       (event) => {
         const message = lastAssistantMessage(conversation);
         if (event.type === "text" && message) message.text += event.delta;
+        if (event.type === "tool" && message) updateToolCall(message, event);
         if (event.type === "blocked") conversation.status = "blocked";
         if (event.type === "settled") {
           settled = true;
@@ -235,6 +319,8 @@ async function handleCollectionRequest(
     directoryIdentity: await pathIdentity(directory),
     nativeSessionID: null,
     activePromptID: null,
+    selectedModelKey: null,
+    selectedModelLabel: null,
     hidden: false,
     status: "ready",
     messages: [],
@@ -259,6 +345,17 @@ async function handleConversationRequest(
     const conversation = get(database, id);
     if (!conversation) return respond(response, 404, { error: "Conversation not found." });
     return respond(response, 200, { conversation: await withPending(conversation, client) });
+  }
+  if (parts.length === 4 && parts[3] === "models" && request.method === "GET") {
+    const conversation = get(database, id);
+    if (!conversation) return respond(response, 404, { error: "Conversation not found." });
+    if (!client.models) return respond(response, 503, { error: "Model selection is unavailable." });
+    try {
+      const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+      return respond(response, 200, { models: await client.models(directory) });
+    } catch {
+      return respond(response, 503, { error: "Could not load available OpenCode models." });
+    }
   }
   if (parts.length === 5 && parts[3] === "permissions" && request.method === "POST") {
     return handlePermissionReply({
@@ -345,6 +442,29 @@ async function handleConversationRequest(
         error: "A reply is already in progress.",
         conversation: publicConversation(conversation),
       });
+    const modelKey = Object.hasOwn(body, "modelKey")
+      ? body.modelKey
+      : conversation.selectedModelKey;
+    let model: { id: string; providerID: string } | undefined;
+    if (modelKey === null) {
+      conversation.selectedModelKey = null;
+      conversation.selectedModelLabel = null;
+      save(database, conversation);
+    } else {
+      if (typeof modelKey !== "string" || !client.models)
+        return respond(response, 400, { error: "Choose an available OpenCode model." });
+      const { directory } = await resolveCurrentWorktree(conversation, dependencies);
+      const choices = await client.models(directory);
+      const choice = choices.find(({ key }) => key === modelKey);
+      if (!choice)
+        return respond(response, 400, { error: "That OpenCode model is no longer available." });
+      model = { id: choice.id, providerID: choice.providerID };
+      conversation.selectedModelKey = modelKey;
+      conversation.selectedModelLabel = choice.group
+        ? choice.name
+        : `${choice.name} · ${choice.providerID}`;
+      save(database, conversation);
+    }
     return await sendMessage(
       database,
       conversation,
@@ -353,6 +473,7 @@ async function handleConversationRequest(
       response,
       dependencies,
       actions,
+      model,
     );
   } finally {
     releaseAction(actions, id);
@@ -399,6 +520,7 @@ async function handlePermissionReply({
     if (!pending.some(({ id }) => id === requestID))
       return respond(response, 409, { error: "This permission request is no longer pending." });
     await client.replyPermission(conversation.nativeSessionID, directory, requestID, body.decision);
+    databasePublishers.get(database)?.(conversation);
     return respond(response, 200, {
       conversation: await withPending(conversation, client),
     });
@@ -428,6 +550,42 @@ async function withPending(conversation: Conversation, client: OpenCodeConversat
     approvals,
     forms,
   };
+}
+
+async function sendSnapshot(
+  database: Database,
+  scope: Scope,
+  client: OpenCodeConversationClient,
+  subscribers: Map<WebSocket, Scope>,
+) {
+  const current = list(database, scope.project, scope.worktree, scope.branch);
+  const present = async (conversation: Conversation) =>
+    conversation.status === "blocked"
+      ? withPending(conversation, client)
+      : publicConversation(conversation);
+  const [conversations, hiddenConversations] = await Promise.all([
+    Promise.all(current.conversations.map(present)),
+    Promise.all(current.hiddenConversations.map(present)),
+  ]);
+  const message = JSON.stringify({
+    type: "snapshot",
+    ...scope,
+    conversations,
+    hiddenConversations,
+  });
+  for (const [socket, watched] of subscribers) {
+    if (
+      watched.project !== scope.project ||
+      watched.worktree !== scope.worktree ||
+      watched.branch !== scope.branch ||
+      socket.readyState !== WebSocket.OPEN
+    )
+      continue;
+    if (socket.bufferedAmount >= conversationSocketBufferLimit) {
+      subscribers.delete(socket);
+      socket.close(1013, "Slow conversation subscriber");
+    } else socket.send(message);
+  }
 }
 
 async function handleFormReply({
@@ -475,6 +633,7 @@ async function handleFormReply({
       return respond(response, 400, { error: "This form contains unsupported fields." });
     const answer = validateFormAnswer(presented, body.answer);
     await client.replyForm(conversation.nativeSessionID, directory, formID, answer);
+    databasePublishers.get(database)?.(conversation);
     return respond(response, 200, { conversation: await withPending(conversation, client) });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "";
@@ -626,6 +785,7 @@ async function sendMessage(
   response: ServerResponse,
   dependencies: ConversationDependencies,
   actions: Set<string>,
+  model?: { id: string; providerID: string },
 ) {
   let promptAttempted = false;
   let appendedMessages: StoredMessage[] = [];
@@ -693,11 +853,13 @@ async function sendMessage(
           save(database, conversation);
         }
         if (event.type === "text") assistantMessage.text += event.delta;
+        if (event.type === "tool") updateToolCall(assistantMessage, event);
         if (event.type === "blocked") conversation.status = "blocked";
         if (event.type === "settled") assistantMessage.text = event.reply;
         conversation.updatedAt = Date.now();
         save(database, conversation);
       },
+      model,
     );
     assistantMessage.text = result.reply;
     conversation.status = "ready";
@@ -724,6 +886,23 @@ async function sendMessage(
         "OpenCode could not complete this turn; it is marked incomplete and will not be replayed.",
       conversation: publicConversation(conversation),
     });
+  }
+}
+
+function updateToolCall(
+  message: StoredMessage,
+  call: { id: string; name: string; status: StoredToolCall["status"] },
+) {
+  if (!call.id || call.id.length > 200) return;
+  const id = call.id;
+  const tools = (message.tools ??= []);
+  const existing = tools.find((tool) => tool.id === id);
+  const name = /^[a-zA-Z0-9_.:-]{1,64}$/.test(call.name) ? call.name : "";
+  if (existing) {
+    if (name) existing.name = name;
+    existing.status = call.status;
+  } else if (tools.length < 100) {
+    tools.push({ id, name: name || "tool", status: call.status });
   }
 }
 
@@ -813,7 +992,9 @@ async function openDatabase(
       directory TEXT NOT NULL,
       directory_identity TEXT NOT NULL DEFAULT '',
       native_session_id TEXT,
-      active_prompt_id TEXT,
+       active_prompt_id TEXT,
+       selected_model_key TEXT,
+       selected_model_label TEXT,
       hidden INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
       messages TEXT NOT NULL,
@@ -834,6 +1015,10 @@ async function openDatabase(
     );
   if (!columns.includes("active_prompt_id"))
     database.exec("ALTER TABLE conversations ADD COLUMN active_prompt_id TEXT");
+  if (!columns.includes("selected_model_key"))
+    database.exec("ALTER TABLE conversations ADD COLUMN selected_model_key TEXT");
+  if (!columns.includes("selected_model_label"))
+    database.exec("ALTER TABLE conversations ADD COLUMN selected_model_label TEXT");
   if (!columns.includes("hidden"))
     database.exec("ALTER TABLE conversations ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
   database.exec(
@@ -872,11 +1057,13 @@ function save(database: Database, conversation: Conversation) {
   database
     .query(
       `INSERT INTO conversations
-       (id, project, project_path, project_identity, worktree, branch, directory, directory_identity, native_session_id, active_prompt_id, hidden, status, messages, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, project, project_path, project_identity, worktree, branch, directory, directory_identity, native_session_id, active_prompt_id, selected_model_key, selected_model_label, hidden, status, messages, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET project_path = excluded.project_path,
        project_identity = excluded.project_identity, directory_identity = excluded.directory_identity,
        native_session_id = excluded.native_session_id, active_prompt_id = excluded.active_prompt_id,
+        selected_model_key = excluded.selected_model_key,
+        selected_model_label = excluded.selected_model_label,
        status = excluded.status, messages = excluded.messages, updated_at = excluded.updated_at`,
     )
     .run(
@@ -890,17 +1077,21 @@ function save(database: Database, conversation: Conversation) {
       conversation.directoryIdentity,
       conversation.nativeSessionID,
       conversation.activePromptID,
+      conversation.selectedModelKey,
+      conversation.selectedModelLabel,
       conversation.hidden ? 1 : 0,
       conversation.status,
       JSON.stringify(conversation.messages),
       conversation.updatedAt,
     );
+  databasePublishers.get(database)?.(conversation);
 }
 
 function saveVisibility(database: Database, conversation: Conversation) {
   database
     .query("UPDATE conversations SET hidden = ? WHERE id = ?")
     .run(conversation.hidden ? 1 : 0, conversation.id);
+  databasePublishers.get(database)?.(conversation);
 }
 
 function parseRow(row: Record<string, unknown>): Conversation {
@@ -915,6 +1106,14 @@ function parseRow(row: Record<string, unknown>): Conversation {
     directoryIdentity: String(row.directory_identity ?? ""),
     nativeSessionID: row.native_session_id === null ? null : String(row.native_session_id),
     activePromptID: row.active_prompt_id === null ? null : String(row.active_prompt_id),
+    selectedModelKey:
+      row.selected_model_key === null || row.selected_model_key === undefined
+        ? null
+        : String(row.selected_model_key),
+    selectedModelLabel:
+      row.selected_model_label === null || row.selected_model_label === undefined
+        ? null
+        : String(row.selected_model_label),
     hidden: Number(row.hidden ?? 0) !== 0,
     status: row.status as Conversation["status"],
     messages: JSON.parse(String(row.messages)) as StoredMessage[],
@@ -978,6 +1177,12 @@ function sameOrigin(request: IncomingMessage) {
     (!origin || ["http", "https"].some((scheme) => origin === `${scheme}://${host}`)) &&
     (!site || site === "same-origin")
   );
+}
+
+function sameConversationSocketOrigin(request: IncomingMessage) {
+  const host = request.headers.host?.toLowerCase();
+  const scheme = "encrypted" in request.socket && request.socket.encrypted ? "https" : "http";
+  return !!host && request.headers.origin === `${scheme}://${host}` && sameOrigin(request);
 }
 
 function respond(response: ServerResponse, status: number, body: object) {

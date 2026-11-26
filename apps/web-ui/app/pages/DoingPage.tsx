@@ -11,6 +11,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatPullRequestReference } from "@/pages/prs-data";
@@ -80,6 +87,7 @@ function Workspace({
 }) {
   const [selectedTab, setSelectedTab] = useState("reviews");
   const [conversationError, setConversationError] = useState<string | null>(null);
+  const [hiddenConversationsOpen, setHiddenConversationsOpen] = useState(false);
   const focusSession = useRef<string | null>(null);
   const launching = useRef(false);
   const { sessions, availableHarnesses, connected, error, create, end } = useWorktreeTerminals(
@@ -102,7 +110,7 @@ function Workspace({
     project,
     task.worktree?.name,
     task.worktree?.branch ?? null,
-    selected,
+    selected && selectedTab === "diff",
   );
   const claimLaunchFocus = useCallback((id: string) => {
     if (focusSession.current !== id) return false;
@@ -135,7 +143,10 @@ function Workspace({
   async function reopenConversation(id: string) {
     try {
       const conversation = await conversationsState.setHidden(id, false);
-      if (conversation) setSelectedTab(id);
+      if (conversation) {
+        setSelectedTab(id);
+        setHiddenConversationsOpen(false);
+      }
       setConversationError(null);
     } catch {
       setConversationError("Could not reopen the OpenCode conversation.");
@@ -174,10 +185,52 @@ function Workspace({
           </div>
           <h1 className="mt-1 truncate text-sm font-semibold">{task.worktree?.name}</h1>
         </div>
-        <span className="shrink-0 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground">
-          Local worktree
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Hidden conversations"
+            aria-controls="hidden-conversations-panel"
+            aria-expanded={hiddenConversationsOpen}
+            onClick={() => setHiddenConversationsOpen(true)}
+            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            Hidden
+            {conversationsState.hiddenConversations.length > 0 ? (
+              <span className="ml-1.5 rounded bg-muted px-1.5 font-mono text-[10px]">
+                {conversationsState.hiddenConversations.length}
+              </span>
+            ) : null}
+          </button>
+          <span className="rounded border border-border px-2 py-1 text-[10px] text-muted-foreground">
+            Local worktree
+          </span>
+        </div>
       </header>
+      <Sheet open={hiddenConversationsOpen} onOpenChange={setHiddenConversationsOpen}>
+        <SheetContent id="hidden-conversations-panel" side="right" className="w-[min(22rem,90vw)]">
+          <SheetHeader className="border-b border-border pr-12">
+            <SheetTitle>Hidden conversations</SheetTitle>
+            <SheetDescription>Reopen an OpenCode conversation for this worktree.</SheetDescription>
+          </SheetHeader>
+          {conversationsState.hiddenConversations.length > 0 ? (
+            <div className="flex min-h-0 flex-col overflow-y-auto px-4 pb-4">
+              {conversationsState.hiddenConversations.map((conversation, index) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => void reopenConversation(conversation.id)}
+                  className="flex min-h-11 items-center gap-2 rounded px-3 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  <LauncherIcon harness="opencode" />
+                  Reopen OpenCode conversation {index + 1}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="px-4 text-sm text-muted-foreground">No hidden conversations.</p>
+          )}
+        </SheetContent>
+      </Sheet>
       <Tabs
         value={active}
         onValueChange={(value) => setSelectedTab(String(value))}
@@ -209,9 +262,13 @@ function Workspace({
                     value={tab.id}
                     className="h-11 flex-none rounded-none pr-8 pl-4 after:bottom-0!"
                   >
-                    <span aria-hidden="true" className="font-mono text-xs text-muted-foreground">
-                      {tab.kind === "conversation" ? "✳" : tab.harness ? "◉" : ">_"}
-                    </span>
+                    {tab.kind === "conversation" ? (
+                      <LauncherIcon harness="opencode" />
+                    ) : (
+                      <span aria-hidden="true" className="font-mono text-xs text-muted-foreground">
+                        {tab.harness ? "◉" : ">_"}
+                      </span>
+                    )}
                     <span className="max-w-40 truncate">{tab.title}</span>
                   </TabsTrigger>
                   {tab.kind === "terminal" ? (
@@ -246,22 +303,9 @@ function Workspace({
             </DropdownMenuTrigger>
             <DropdownMenuContent finalFocus={restoreMenuFocus}>
               <DropdownMenuItem onClick={() => void launchConversation()}>
-                <span aria-hidden="true">✳</span>
+                <LauncherIcon harness="opencode" />
                 OpenCode conversation
               </DropdownMenuItem>
-              {conversationsState.hiddenConversations.length > 0 ? (
-                <>
-                  <DropdownMenuSeparator />
-                  {conversationsState.hiddenConversations.map((conversation, index) => (
-                    <DropdownMenuItem
-                      key={conversation.id}
-                      onClick={() => void reopenConversation(conversation.id)}
-                    >
-                      Reopen OpenCode conversation {index + 1}
-                    </DropdownMenuItem>
-                  ))}
-                </>
-              ) : null}
               <DropdownMenuSeparator />
               {Object.keys(agentHarnesses)
                 .filter(isAgentHarness)
@@ -441,6 +485,7 @@ function Diff({ task, diffState }: { task: Task; diffState: ReturnType<typeof us
           <DiffViewer
             files={diffState.diff.files}
             omittedFileCount={diffState.diff.omittedFileCount}
+            loadFile={diffState.loadFile}
           />
         </Suspense>
       ) : null}

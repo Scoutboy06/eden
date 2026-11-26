@@ -16,18 +16,41 @@ export type PromptEvent =
   | { type: "attempting" }
   | { type: "accepted"; userMessageID: string }
   | { type: "text"; assistantMessageID: string; delta: string }
+  | {
+      type: "tool";
+      assistantMessageID: string;
+      id: string;
+      name: string;
+      status: "running" | "completed" | "failed";
+    }
   | { type: "blocked" }
   | { type: "settled"; reply: string };
 
 export type ObservationEvent =
   | { type: "text"; assistantMessageID: string; delta: string }
+  | {
+      type: "tool";
+      assistantMessageID: string;
+      id: string;
+      name: string;
+      status: "running" | "completed" | "failed";
+    }
   | { type: "blocked" }
   | { type: "settled"; reply: string };
+
+export type OpenCodeModelChoice = {
+  key: string;
+  id: string;
+  providerID: string;
+  name: string;
+  group?: { key: string; label: string };
+};
 
 let waking: Promise<Endpoint> | undefined;
 
 export type OpenCodeConversationClient = {
   prepare(directory: string): Promise<void>;
+  models?(directory: string): Promise<OpenCodeModelChoice[]>;
   create(directory: string): Promise<string>;
   inspect(sessionID: string, directory: string): Promise<{ active: boolean }>;
   reconcile(
@@ -71,6 +94,7 @@ export type OpenCodeConversationClient = {
     promptID: string,
     text: string,
     observe?: (event: PromptEvent) => void,
+    model?: Pick<OpenCodeModelChoice, "id" | "providerID">,
   ): Promise<{ reply: string }>;
 };
 
@@ -87,6 +111,23 @@ export function createOpenCodeConversationClient(
   return {
     async prepare(directory) {
       await createClient(directory, discover, options);
+    },
+    async models(directory) {
+      const client = await createClient(directory, discover, options);
+      const [{ data }, { data: providers }] = await Promise.all([
+        client.model.list({ location: { directory }, types: ["chat"] }),
+        client.provider.list({ location: { directory } }),
+      ]);
+      const providerNames = new Map(providers.map(({ id, name }) => [id, name]));
+      return data
+        .filter((model) => model.enabled)
+        .map(({ id, providerID, name }) => ({
+          key: JSON.stringify([providerID, id]),
+          id,
+          providerID,
+          name,
+          group: { key: providerID, label: providerNames.get(providerID) ?? providerID },
+        }));
     },
     async create(directory) {
       const client = await createClient(directory, discover, options);
@@ -159,10 +200,17 @@ export function createOpenCodeConversationClient(
           throw new Error("OpenCode event stream did not connect.");
         const state = await reconcile(client, sessionID, promptID);
         if (!state.active) {
+          for (const tool of toolCallsAfterPrompt(await listMessages(client, sessionID), promptID))
+            onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
           if (state.reply === null)
             throw new Error("The OpenCode prompt has no authoritative reply.");
           onEvent({ type: "settled", reply: state.reply });
           return;
+        }
+        const messages = await listMessages(client, sessionID);
+        for (const tool of toolCallsAfterPrompt(messages, promptID)) {
+          assistantIDs.add(tool.assistantMessageID);
+          onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
         }
 
         for await (const event of { [Symbol.asyncIterator]: () => iterator }) {
@@ -181,8 +229,14 @@ export function createOpenCodeConversationClient(
               assistantMessageID: event.data.assistantMessageID,
               delta: event.data.delta,
             });
+          const tool = toolEvent(event);
+          if (tool && assistantIDs.has(tool.assistantMessageID))
+            onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
           if (isBlockedEvent(event)) onEvent({ type: "blocked" });
           if (isSettledEvent(event)) {
+            const messages = await listMessages(client, sessionID);
+            for (const tool of toolCallsAfterPrompt(messages, promptID))
+              onEvent({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
             const result = await reconcile(client, sessionID, promptID);
             if (!result.active && result.reply !== null) {
               onEvent({ type: "settled", reply: result.reply });
@@ -197,16 +251,26 @@ export function createOpenCodeConversationClient(
         controller.abort();
       }
     },
-    async send(sessionID, directory, promptID, text, observe) {
+    async send(sessionID, directory, promptID, text, observe, model) {
       const endpoint = await discoverOrWake(discover, options);
-      const controller = new AbortController();
       const client = await makeClient(endpoint, directory);
+      const effectiveModel =
+        model ?? (await client.model.default({ location: { directory } })).data;
+      if (!effectiveModel)
+        throw new Error(
+          "OpenCode has no default chat model configured for this worktree. Choose an available model in Eden or configure a default in OpenCode.",
+        );
+      const controller = new AbortController();
       const iterator = subscribe(client, controller.signal)[Symbol.asyncIterator]();
 
       let acceptedUserID: string | undefined;
       let acceptedAt: number | undefined;
       const queued: Event[] = [];
       const pendingText = new Map<string, string>();
+      const pendingTools = new Map<
+        string,
+        Array<{ id: string; name: string; status: "running" | "completed" | "failed" }>
+      >();
       const assistantIDs = new Set<string>();
       let resolveTurn!: (reply: string) => void;
       let rejectTurn!: (error: Error) => void;
@@ -234,6 +298,13 @@ export function createOpenCodeConversationClient(
               });
               pendingText.delete(event.data.assistantMessageID);
             }
+            for (const tool of pendingTools.get(event.data.assistantMessageID) ?? [])
+              observe?.({
+                type: "tool",
+                assistantMessageID: event.data.assistantMessageID,
+                ...tool,
+              });
+            pendingTools.delete(event.data.assistantMessageID);
           }
         }
         if (event.type === "session.text.delta") {
@@ -250,9 +321,22 @@ export function createOpenCodeConversationClient(
             );
           }
         }
+        const tool = toolEvent(event);
+        if (tool) {
+          if (assistantIDs.has(tool.assistantMessageID)) {
+            observe?.({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
+          } else {
+            const calls = pendingTools.get(tool.assistantMessageID) ?? [];
+            calls.push(tool.call);
+            pendingTools.set(tool.assistantMessageID, calls);
+          }
+        }
         if (isBlockedEvent(event)) observe?.({ type: "blocked" });
         if (isSettledEvent(event)) {
-          const reply = replyAfterPrompt(await listMessages(client, sessionID), acceptedUserID!);
+          const messages = await listMessages(client, sessionID);
+          for (const tool of toolCallsAfterPrompt(messages, acceptedUserID!))
+            observe?.({ type: "tool", assistantMessageID: tool.assistantMessageID, ...tool.call });
+          const reply = replyAfterPrompt(messages, acceptedUserID!);
           if (reply === null) {
             rejectTurn(new Error("OpenCode settled without an assistant reply for this prompt."));
             return;
@@ -280,6 +364,10 @@ export function createOpenCodeConversationClient(
           rejectTurn(asError(error));
         });
         observe?.({ type: "attempting" });
+        await client.session.switchModel({
+          sessionID,
+          model: { id: effectiveModel.id, providerID: effectiveModel.providerID },
+        });
         const accepted = await client.session.prompt({ sessionID, id: promptID, text });
         acceptedUserID = accepted.id;
         acceptedAt = accepted.time.created;
@@ -371,6 +459,10 @@ function subscribe(client: ReturnType<typeof OpenCode.make>, signal: AbortSignal
     types: [
       "session.text.started",
       "session.text.delta",
+      "session.tool.input.started",
+      "session.tool.called",
+      "session.tool.success",
+      "session.tool.failed",
       "permission.asked",
       "form.created",
       ...settleEvents,
@@ -444,6 +536,66 @@ function replyAfterPrompt(
     [...assistants].reverse().find((message) => message.finish === "stop") ?? assistants.at(-1);
   if (!final || final.type !== "assistant") return null;
   return final.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+}
+
+function toolCallsAfterPrompt(
+  messages: Awaited<ReturnType<ReturnType<typeof OpenCode.make>["message"]["list"]>>["data"],
+  promptID: string,
+) {
+  const promptIndex = messages.findIndex(
+    (message) => message.type === "user" && message.id === promptID,
+  );
+  if (promptIndex < 0) return [];
+  const nextUserIndex = messages.findIndex(
+    (message, index) => index > promptIndex && message.type === "user",
+  );
+  return messages
+    .slice(promptIndex + 1, nextUserIndex < 0 ? undefined : nextUserIndex)
+    .flatMap((message) =>
+      message.type === "assistant"
+        ? message.content.flatMap((part) =>
+            part.type === "tool"
+              ? [
+                  {
+                    assistantMessageID: message.id,
+                    call: {
+                      id: part.id,
+                      name: part.name,
+                      status:
+                        part.state.status === "completed"
+                          ? ("completed" as const)
+                          : part.state.status === "error"
+                            ? ("failed" as const)
+                            : ("running" as const),
+                    },
+                  },
+                ]
+              : [],
+          )
+        : [],
+    );
+}
+
+function toolEvent(event: Event) {
+  if (
+    event.type === "session.tool.input.started" ||
+    event.type === "session.tool.called" ||
+    event.type === "session.tool.success" ||
+    event.type === "session.tool.failed"
+  )
+    return {
+      assistantMessageID: event.data.assistantMessageID,
+      call: {
+        id: event.data.id,
+        name: event.type === "session.tool.input.started" ? event.data.name : "",
+        status:
+          event.type === "session.tool.success"
+            ? ("completed" as const)
+            : event.type === "session.tool.failed"
+              ? ("failed" as const)
+              : ("running" as const),
+      },
+    };
 }
 
 function belongsToSession(event: Event, sessionID: string) {

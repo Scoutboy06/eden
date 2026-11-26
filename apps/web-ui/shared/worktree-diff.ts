@@ -4,6 +4,7 @@ export type WorktreeDiffFile = {
   change: "added" | "deleted" | "modified" | "renamed";
   oldContents: string | null;
   newContents: string | null;
+  contentLoaded?: boolean;
   fallback?: "binary" | "too-large" | "conflict" | "unavailable";
 };
 

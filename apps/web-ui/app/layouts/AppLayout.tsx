@@ -105,15 +105,15 @@ export function AppLayout() {
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerCancel}
             onClick={handleClick}
-            className="group/sidebar-edge absolute inset-y-0 left-full z-20 h-full w-2 touch-none cursor-pointer rounded-none border-0 bg-transparent p-0 outline-none"
+            className="group/sidebar-edge absolute inset-y-0 left-full z-20 flex h-full w-11 -translate-x-1/2 touch-none cursor-pointer items-center justify-center rounded-none border-0 bg-transparent p-0 outline-none"
           >
             <span
               aria-hidden="true"
-              className="absolute inset-y-0 left-0 w-px bg-sidebar-border transition-colors group-hover/sidebar-edge:bg-muted-foreground/50"
+              className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-sidebar-border transition-colors group-hover/sidebar-edge:bg-muted-foreground/50"
             />
             <span
               aria-hidden="true"
-              className="absolute left-0 top-1/2 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-sidebar-border bg-background text-muted-foreground shadow-sm transition-colors group-hover/sidebar-edge:border-muted-foreground/50 group-focus-visible/sidebar-edge:outline-2 group-focus-visible/sidebar-edge:outline-offset-2 group-focus-visible/sidebar-edge:outline-current"
+              className="absolute left-1/2 top-1/2 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-sidebar-border bg-background text-muted-foreground shadow-sm transition-colors group-hover/sidebar-edge:border-muted-foreground/50 group-focus-visible/sidebar-edge:outline-2 group-focus-visible/sidebar-edge:outline-offset-2 group-focus-visible/sidebar-edge:outline-current"
             >
               <svg viewBox="0 0 16 16" className="size-3.5" fill="none">
                 {tasksOpen ? (
