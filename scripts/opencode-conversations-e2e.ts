@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
+import { Database } from "bun:sqlite";
 import { createProjectRegistry } from "../src/modules/projects/project-registry";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -46,6 +47,12 @@ async function main() {
       fakeUrl: fake.url,
     });
     vite = await startVite(env);
+    const sidebarFixtureID = await seedSidebarConversation(
+      vite.url,
+      registered.key,
+      stateHome,
+      projectName,
+    );
     browser = await chromium.launch({ headless: true });
 
     const firstContext = await browser.newContext({ viewport: { width: 1400, height: 950 } });
@@ -74,6 +81,7 @@ async function main() {
     });
     await openDoingPage(firstPage, vite.url, registered.key, basename(projectPath));
     await verifyNavigationVariants(firstPage);
+    await removeSidebarConversation(stateHome, sidebarFixtureID);
     if (process.env.EDEN_NAVIGATION_E2E_ONLY === "1") {
       console.log(JSON.stringify({ result: "passed", fixture: "navigation variants" }));
       return;
@@ -880,6 +888,14 @@ async function verifyNavigationVariants(page: Page) {
 
   await assertSingleRouteSet();
   assert.equal(await railWidth(), 48, "Classic retains its 48px icon rail");
+  assert.equal(
+    await page.getByRole("button", { name: "Open opencode-e2e-fixture on e2e in Doing" }).count(),
+    1,
+    "the compact worktree row remains keyboard-accessible",
+  );
+  assert.equal(await page.getByRole("textbox", { name: "Filter worktrees" }).count(), 0);
+  assert.equal(await page.getByRole("heading", { name: "Worktrees" }).count(), 0);
+  assert.equal(await page.getByText("A compact selector fixture", { exact: true }).count(), 1);
   await selectNavigationStyle(page, "Sidebar 09");
   await assertSingleRouteSet();
   assert.equal(await railWidth(), 48, "Sidebar 09 uses a compact 48px icon rail");
@@ -892,6 +908,25 @@ async function verifyNavigationVariants(page: Page) {
   assert.equal(await railWidth(), 48, "Sidebar 09 stays 48px wide at the comparison viewport");
   if (process.env.EDEN_NAVIGATION_E2E_SCREENSHOT)
     await page.screenshot({ path: process.env.EDEN_NAVIGATION_E2E_SCREENSHOT, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Hide worktrees sidebar" }).click();
+  assert.equal(
+    await page.getByRole("button", { name: "Show worktrees sidebar" }).count(),
+    1,
+    "the sidebar can be collapsed at mobile width",
+  );
+  await page.getByRole("button", { name: "Show worktrees sidebar" }).click();
+  assert.equal(
+    await page.getByRole("button", { name: "Open opencode-e2e-fixture on e2e in Doing" }).count(),
+    1,
+    "worktree selection remains available at mobile width",
+  );
+  if (process.env.EDEN_NAVIGATION_MOBILE_E2E_SCREENSHOT)
+    await page.screenshot({
+      path: process.env.EDEN_NAVIGATION_MOBILE_E2E_SCREENSHOT,
+      fullPage: true,
+      animations: "disabled",
+    });
   await page.setViewportSize({ width: 1400, height: 950 });
   await page.reload();
   await page.getByRole("navigation", { name: "Main" }).waitFor();
@@ -906,6 +941,40 @@ async function verifyNavigationVariants(page: Page) {
   );
   await selectNavigationStyle(page, "Classic (recommended)");
   assert.equal(await railWidth(), 48, "Classic can be restored from Appearance");
+}
+
+async function seedSidebarConversation(
+  url: string,
+  project: string,
+  stateHome: string,
+  worktree: string,
+) {
+  const response = await fetch(`${url}/api/conversations`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ project, worktree, branch: "e2e" }),
+  });
+  assert.equal(response.status, 201, "the isolated project accepts a conversation fixture");
+  const { conversation } = (await response.json()) as { conversation: { id: string } };
+  const database = new Database(join(stateHome, "eden", "conversations.sqlite"));
+  database
+    .query(
+      "UPDATE conversations SET selected_model_label = ?, messages = ?, updated_at = ? WHERE id = ?",
+    )
+    .run(
+      "Fixture model",
+      JSON.stringify([{ role: "user", text: "A compact selector fixture", createdAt: Date.now() }]),
+      Date.now(),
+      conversation.id,
+    );
+  database.close();
+  return conversation.id;
+}
+
+function removeSidebarConversation(stateHome: string, id: string) {
+  const database = new Database(join(stateHome, "eden", "conversations.sqlite"));
+  database.query("DELETE FROM conversations WHERE id = ?").run(id);
+  database.close();
 }
 
 async function selectNavigationStyle(page: Page, style: string) {

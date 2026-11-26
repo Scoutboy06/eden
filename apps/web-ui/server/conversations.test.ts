@@ -84,6 +84,66 @@ test("subscribes to authorized worktree snapshots and pushes persisted visibilit
   second.close();
 });
 
+test("lists bounded project-scoped conversation summaries without recovering harness sessions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "eden-conversation-summaries-"));
+  directories.push(root);
+  const databasePath = join(root, "conversations.sqlite");
+  const worktree = join(root, "checkout");
+  await mkdir(worktree);
+  let recoveries = 0;
+  const client = {
+    async reconcileAvailable() {
+      recoveries += 1;
+      return null;
+    },
+  } as unknown as OpenCodeConversationClient;
+  const url = await start({
+    root,
+    worktree,
+    client,
+    databasePath,
+  });
+
+  const createdResponse = await fetch(`${url}/api/conversations`, {
+    method: "POST",
+    headers: { origin: url, "content-type": "application/json" },
+    body: JSON.stringify({ project: "project", worktree: "checkout", branch: "slice" }),
+  });
+  const { conversation } = (await createdResponse.json()) as { conversation: { id: string } };
+  const { Database } = await import("bun:sqlite");
+  const database = new Database(databasePath);
+  database
+    .query(
+      "UPDATE conversations SET status = 'incomplete', native_session_id = 'native', selected_model_label = 'Fixture model', messages = ? WHERE id = ?",
+    )
+    .run(
+      JSON.stringify([{ role: "user", text: "A bounded conversation title", createdAt: 1 }]),
+      conversation.id,
+    );
+  database.close();
+
+  const response = await fetch(`${url}/api/conversations/summaries?project=project`, {
+    headers: { origin: url },
+  });
+  const result = (await response.json()) as {
+    summaries: Array<Record<string, unknown>>;
+  };
+  expect(response.status).toBe(200);
+  expect(result.summaries).toEqual([
+    {
+      id: conversation.id,
+      worktree: "checkout",
+      branch: "slice",
+      title: "A bounded conversation title",
+      status: "incomplete",
+      model: "Fixture model",
+      updatedAt: expect.any(Number),
+    },
+  ]);
+  expect(result.summaries[0]).not.toHaveProperty("messages");
+  expect(recoveries).toBe(0);
+});
+
 test("creates a local conversation without a provider session and reuses its native ID on send", async () => {
   const root = await mkdtemp(join(tmpdir(), "eden-conversation-"));
   directories.push(root);

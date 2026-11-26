@@ -98,6 +98,14 @@ export function createConversationMiddleware(dependencies: ConversationDependenc
       return respond(response, 403, { error: "Cross-origin requests are not allowed." });
 
     try {
+      if (url.pathname === "/api/conversations/summaries") {
+        if (request.method !== "GET")
+          return respond(response, 405, { error: "Method not allowed." });
+        const project = url.searchParams.get("project");
+        if (!project) return respond(response, 400, { error: "A project is required." });
+        const db = await getDatabase();
+        return respond(response, 200, { summaries: listProjectSummaries(db, project) });
+      }
       const db = await database();
       if (!(await handleCollectionRequest(request, response, url, db, client, dependencies))) {
         const parts = url.pathname.split("/").filter(Boolean);
@@ -1055,6 +1063,37 @@ function list(
     conversations: conversations.filter((item) => !item.hidden),
     hiddenConversations: conversations.filter((item) => item.hidden),
   };
+}
+
+function listProjectSummaries(database: Database, project: string) {
+  return database
+    .query(
+      `SELECT id, worktree, branch, status, selected_model_label, updated_at,
+       COALESCE((
+         SELECT json_extract(message.value, '$.text')
+         FROM json_each(conversations.messages) AS message
+         WHERE json_extract(message.value, '$.role') = 'user'
+         ORDER BY CAST(message.key AS INTEGER)
+         LIMIT 1
+       ), '') AS title
+       FROM conversations
+       WHERE project = ? AND hidden = 0
+       ORDER BY updated_at DESC
+       LIMIT 100`,
+    )
+    .all(project)
+    .map((row) => {
+      const summary = row as Record<string, unknown>;
+      return {
+        id: String(summary.id),
+        worktree: String(summary.worktree),
+        branch: summary.branch === null ? null : String(summary.branch),
+        title: String(summary.title ?? ""),
+        status: summary.status as Conversation["status"],
+        model: summary.selected_model_label === null ? null : String(summary.selected_model_label),
+        updatedAt: Number(summary.updated_at),
+      };
+    });
 }
 
 function get(database: Database, id: string) {

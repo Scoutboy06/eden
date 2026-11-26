@@ -20,6 +20,7 @@ test("renders a selectable worktree button and keeps its external PR link indepe
         reviews: [{ name: "alice", state: "approved" }],
         checks: [{ name: "build", state: "passed" }],
       }}
+      conversations={[]}
       selected
       onSelect={() => {}}
     />,

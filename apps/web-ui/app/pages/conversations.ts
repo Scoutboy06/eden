@@ -10,6 +10,23 @@ export type ConversationModel = {
   group?: { key: string; label: string };
 };
 
+export type ConversationSummary = {
+  id: string;
+  worktree: string;
+  branch: string | null;
+  title: string;
+  status: Conversation["status"];
+  model: string | null;
+  updatedAt: number;
+};
+
+export async function listConversationSummaries(project: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ project });
+  const response = await fetch(`/api/conversations/summaries?${query}`, { signal });
+  if (!response.ok) throw new Error("Could not load conversation summaries.");
+  return (await response.json()) as { summaries: ConversationSummary[] };
+}
+
 export async function listConversations(
   project: string,
   worktree: string,
