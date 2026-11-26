@@ -3,6 +3,7 @@
   "typeAware": {
     "enabled": true
   },
+  "ignoreBinaries": ["sbx", "script"],
   "ignoreExports": [
     {
       "file": "apps/web-ui/app/components/ui/**",

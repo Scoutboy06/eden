@@ -41,7 +41,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "fallow": "^3.33.1",
+    "fallow": "^3.48.0",
+    "fallow-type-aware": "^3.48.0",
     "husky": "^9.1.7",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0",
