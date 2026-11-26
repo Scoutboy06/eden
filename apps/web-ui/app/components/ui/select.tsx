@@ -100,7 +100,7 @@ function SelectContent({
         >
           {header && <div className="border-b border-border p-1">{header}</div>}
           <SelectScrollUpButton />
-          <SelectPrimitive.List className="p-1">{children}</SelectPrimitive.List>
+          <SelectPrimitive.List className="min-w-0 p-1">{children}</SelectPrimitive.List>
           <SelectScrollDownButton />
           {footer && <div className="border-t border-border p-1">{footer}</div>}
         </SelectPrimitive.Popup>
@@ -129,7 +129,7 @@ function SelectItem({ className, children, ...props }: SelectPrimitive.Item.Prop
       )}
       {...props}
     >
-      <SelectPrimitive.ItemText className="flex flex-1 shrink-0 gap-2 whitespace-nowrap">
+      <SelectPrimitive.ItemText className="flex min-w-0 flex-1 gap-2 whitespace-normal wrap-anywhere">
         {children}
       </SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator

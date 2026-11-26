@@ -471,7 +471,10 @@ function ConversationModelPicker({
           )}
         </SelectValue>
       </SelectTrigger>
-      <SelectContent align="start" className="max-h-[min(24rem,60dvh,var(--available-height))]">
+      <SelectContent
+        align="start"
+        className="min-w-0 w-fit max-w-[90vw] max-sm:w-[90vw] max-h-[min(24rem,60dvh,var(--available-height))]"
+      >
         <SelectItem value="__default__">Default model</SelectItem>
         {loadingModels ? (
           <SelectItem value="__loading__" disabled>

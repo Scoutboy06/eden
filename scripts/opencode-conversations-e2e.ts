@@ -323,6 +323,12 @@ async function main() {
               providerID: "anthropic",
               name: "Claude Fixture",
             },
+            {
+              key: JSON.stringify(["fake", "long-width-fixture"]),
+              id: "long-width-fixture",
+              providerID: "fake-provider-with-an-exceptionally-long-name",
+              name: "A deliberately long fake model name used to verify popup sizing",
+            },
             ...Array.from({ length: 40 }, (_, index) => ({
               key: JSON.stringify(["fake", `scroll-model-${index}`]),
               id: `scroll-model-${index}`,
@@ -348,8 +354,26 @@ async function main() {
     await modelPopup.waitFor();
     const desktopPopup = await modelPopup.evaluate((element) => ({
       clientHeight: element.clientHeight,
+      left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
       scrollHeight: element.scrollHeight,
+      width: element.getBoundingClientRect().width,
     }));
+    const desktopTriggerWidth = await reopenedModelPicker.evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    assert.ok(
+      desktopPopup.width > desktopTriggerWidth,
+      "desktop popup grows to fit long model labels",
+    );
+    assert.ok(
+      desktopPopup.left >= 0 && desktopPopup.right <= 1280,
+      "desktop popup stays in the viewport",
+    );
+    if (process.env.EDEN_OPENCODE_MODEL_WIDTH_DESKTOP_SCREENSHOT)
+      await reopenedPage.screenshot({
+        path: process.env.EDEN_OPENCODE_MODEL_WIDTH_DESKTOP_SCREENSHOT,
+      });
     assert.ok(
       desktopPopup.scrollHeight > desktopPopup.clientHeight,
       "a long model list scrolls inside its desktop popup",
@@ -363,13 +387,35 @@ async function main() {
     await reopenedPage.setViewportSize({ width: 390, height: 844 });
     const mobilePopup = await modelPopup.evaluate((element) => ({
       clientHeight: element.clientHeight,
+      left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
       scrollHeight: element.scrollHeight,
+      width: element.getBoundingClientRect().width,
+      viewportWidth: window.innerWidth,
     }));
     assert.ok(
       mobilePopup.scrollHeight > mobilePopup.clientHeight,
       "a long model list scrolls inside its mobile popup",
     );
     assert.ok(mobilePopup.clientHeight <= 506, "the mobile model popup fits the viewport");
+    assert.ok(
+      mobilePopup.left >= 0 &&
+        mobilePopup.right <= mobilePopup.viewportWidth &&
+        mobilePopup.width <= mobilePopup.viewportWidth,
+      "mobile popup stays within the viewport",
+    );
+    const longMobileOptionHeight = await reopenedPage
+      .getByRole("option", { name: /A deliberately long fake model name/ })
+      .evaluate((element) => element.getBoundingClientRect().height);
+    assert.ok(longMobileOptionHeight > 32, "long mobile model labels wrap onto multiple lines");
+    if (process.env.EDEN_OPENCODE_MODEL_WIDTH_MOBILE_SCREENSHOT)
+      await reopenedPage.screenshot({
+        path: process.env.EDEN_OPENCODE_MODEL_WIDTH_MOBILE_SCREENSHOT,
+      });
+    if (process.env.EDEN_OPENCODE_MODEL_WIDTH_MOBILE_SCREENSHOT)
+      await reopenedPage.screenshot({
+        path: process.env.EDEN_OPENCODE_MODEL_WIDTH_MOBILE_SCREENSHOT,
+      });
     await reopenedPage.keyboard.press("Escape");
     assert.equal(fake.prompts.length, 1, "reopening after server restart does not replay a turn");
     assert.equal(fake.sessionCreates, 1, "reopening reuses the durable Eden transcript");
