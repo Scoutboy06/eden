@@ -32,7 +32,7 @@ function isView(value: string | null): value is View {
 }
 
 export function BoardPage() {
-  const { project, groups, loading, error, refresh } = useBeadsTasks();
+  const { project, groups, loading, error, stale, savedAt, refresh } = useBeadsTasks();
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("view");
   const view: View = isView(requested) ? requested : "board";
@@ -108,7 +108,13 @@ export function BoardPage() {
           <CreateTaskPrototypes key={project} groups={groups} />
         </header>
         <Separator />
-        <p className="py-3 text-xs text-muted-foreground">Beads · {taskCount} tasks</p>
+        <div className="flex items-center gap-3 py-3 text-xs text-muted-foreground">
+          <p>Beads · {taskCount} tasks</p>
+          {stale && <p role="status">Saved snapshot · {snapshotAge(savedAt)}</p>}
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={refresh}>
+            Refresh
+          </Button>
+        </div>
         {loading && (
           <p role="status" className="py-4 text-sm text-muted-foreground">
             Loading Beads tasks…
@@ -151,6 +157,14 @@ export function BoardPage() {
       </Tabs>
     </TaskDetails>
   );
+}
+
+function snapshotAge(savedAt: number | null) {
+  if (savedAt === null) return "unknown time";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(savedAt);
 }
 
 function ViewSwitcher() {

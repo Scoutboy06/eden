@@ -31,6 +31,7 @@ import {
   type TaskMetadataKey,
   type TaskOptions,
 } from "@/components/issue/task-detail-fields";
+import { taskRequest, useTaskResource } from "@/components/issue/task-resource";
 
 export { LabelsInput } from "@/components/issue/task-detail-fields";
 
@@ -53,7 +54,11 @@ export function TaskDetails({
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [revision, setRevision] = useState(0);
-  const { task, statuses, error, setTask, setError } = useTaskResource(project, selected, revision);
+  const { task, statuses, error, stale, setTask, setError } = useTaskResource(
+    project,
+    selected,
+    revision,
+  );
   const titleRef = useRef<HTMLInputElement>(null);
   const editRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -193,6 +198,7 @@ export function TaskDetails({
             </div>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-5">
+            <TaskSnapshotStatus stale={stale} />
             <TaskLoadState
               loaded={task !== null}
               error={error}
@@ -231,6 +237,16 @@ export function TaskDetails({
         }}
       />
     </TaskOpeningContext>
+  );
+}
+
+function TaskSnapshotStatus({ stale }: { stale: boolean }) {
+  if (!stale) return null;
+
+  return (
+    <p role="status" className="mb-3 text-xs text-muted-foreground">
+      Saved task snapshot · may be out of date
+    </p>
   );
 }
 
@@ -355,35 +371,6 @@ function DiscardChangesDialog({
   );
 }
 
-function useTaskResource(project: string, id: string | null, revision: number) {
-  const [task, setTask] = useState<BeadsTaskDetail | null>(null);
-  const [statuses, setStatuses] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!id) return;
-    const controller = new AbortController();
-
-    async function load(taskId: string) {
-      try {
-        const request = { signal: controller.signal };
-        const result = await taskRequest(project, taskId, request);
-        if (controller.signal.aborted) return;
-
-        setTask(result.task);
-        setStatuses(result.statuses ?? []);
-      } catch (cause) {
-        if (!controller.signal.aborted) setError(message(cause));
-      }
-    }
-
-    void load(id);
-    return () => controller.abort();
-  }, [project, id, revision]);
-
-  return { task, statuses, error, setTask, setError };
-}
-
 function taskReturnFocus(trigger: HTMLElement | null, id: string | null) {
   if (trigger?.isConnected) return trigger;
   const selector = id ? `[data-task-open="${CSS.escape(id)}"]` : "#issue-search";
@@ -391,31 +378,6 @@ function taskReturnFocus(trigger: HTMLElement | null, id: string | null) {
   const fallback = document.querySelector<HTMLElement>("#issue-search");
 
   return taskTrigger ?? fallback;
-}
-
-async function taskRequest(
-  project: string,
-  id: string,
-  options: RequestInit = {},
-): Promise<{ task: BeadsTaskDetail; statuses?: string[] }> {
-  const taskId = encodeURIComponent(id);
-  const projectId = encodeURIComponent(project);
-  const url = `/api/tasks/${taskId}?project=${projectId}`;
-  const response = await fetch(url, options);
-  const contentType = response.headers.get("content-type");
-  const isJsonResponse = contentType?.includes("application/json") ?? false;
-
-  if (!isJsonResponse) {
-    throw new Error("Task API unavailable. Use Eden’s Vite dev or preview server.");
-  }
-
-  const result = await response.json();
-  if (!response.ok) {
-    const errorMessage = result.error ?? "Could not load or save task.";
-    throw new Error(errorMessage);
-  }
-
-  return result;
 }
 
 function message(cause: unknown) {

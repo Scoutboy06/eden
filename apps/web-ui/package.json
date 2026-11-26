@@ -41,6 +41,7 @@
   "devDependencies": {
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@types/ws": "^8.18.2"
+    "@types/ws": "^8.18.2",
+    "fake-indexeddb": "^6.2.8"
   }
 }

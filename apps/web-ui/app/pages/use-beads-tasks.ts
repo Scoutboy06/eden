@@ -4,7 +4,12 @@ import { useParams } from "react-router-dom";
 import type { BeadsTask } from "../../../../src/external/beads/tasks";
 import type { IssueGroup } from "@/components/issue/issue";
 import { beadsTaskGroups } from "@/pages/beads-data";
-import { cachedTaskGroups, cacheTaskGroups } from "@/pages/task-cache";
+import {
+  cachedTaskGroups,
+  cacheTaskGroups,
+  hydrateTaskGroups,
+  taskGroupsSnapshot,
+} from "@/pages/task-cache";
 
 export function useBeadsTasks() {
   const { project = "" } = useParams();
@@ -13,13 +18,40 @@ export function useBeadsTasks() {
     groups: IssueGroup[];
     loading: boolean;
     error: string | null;
-  }>({ project: "", groups: [], loading: true, error: null });
+    stale: boolean;
+    savedAt: number | null;
+  }>({ project: "", groups: [], loading: true, error: null, stale: false, savedAt: null });
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
-    const cached = cachedTaskGroups(project);
-    setResult({ project, groups: cached ?? [], loading: cached === undefined, error: null });
+    const cached = taskGroupsSnapshot(project);
+    setResult({
+      project,
+      groups: cached?.value ?? [],
+      loading: cached === undefined,
+      error: null,
+      stale: cached !== undefined,
+      savedAt: cached?.savedAt ?? null,
+    });
+
+    void hydrateTaskGroups(project).then((snapshot) => {
+      if (controller.signal.aborted || !snapshot) return;
+      setResult((current) =>
+        current.project !== project ||
+        current.stale ||
+        (!current.loading && current.savedAt !== null && current.savedAt >= snapshot.savedAt)
+          ? current
+          : {
+              project,
+              groups: snapshot.value,
+              loading: false,
+              error: current.error,
+              stale: true,
+              savedAt: snapshot.savedAt,
+            },
+      );
+    });
 
     async function load() {
       try {
@@ -36,11 +68,14 @@ export function useBeadsTasks() {
         if (!controller.signal.aborted) {
           const groups = beadsTaskGroups(result.tasks);
           cacheTaskGroups(project, groups);
+          const snapshot = taskGroupsSnapshot(project);
           setResult({
             project,
             groups,
             loading: false,
             error: null,
+            stale: false,
+            savedAt: snapshot?.savedAt ?? null,
           });
         }
       } catch (cause) {
@@ -50,13 +85,20 @@ export function useBeadsTasks() {
             groups: cachedTaskGroups(project) ?? [],
             loading: false,
             error: cause instanceof Error ? cause.message : "Could not read Beads tasks.",
+            stale: taskGroupsSnapshot(project) !== undefined,
+            savedAt: taskGroupsSnapshot(project)?.savedAt ?? null,
           });
         }
       }
     }
 
     void load();
-    return () => controller.abort();
+    const refreshOnReconnect = () => setRevision((value) => value + 1);
+    window.addEventListener("online", refreshOnReconnect);
+    return () => {
+      controller.abort();
+      window.removeEventListener("online", refreshOnReconnect);
+    };
   }, [project, revision]);
 
   const current =
@@ -67,6 +109,8 @@ export function useBeadsTasks() {
           groups: cachedTaskGroups(project) ?? [],
           loading: cachedTaskGroups(project) === undefined,
           error: null,
+          stale: taskGroupsSnapshot(project) !== undefined,
+          savedAt: taskGroupsSnapshot(project)?.savedAt ?? null,
         };
   return { ...current, refresh: () => setRevision((value) => value + 1) };
 }
