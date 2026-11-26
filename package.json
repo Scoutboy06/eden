@@ -19,7 +19,7 @@
     "lint": "oxlint",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "analyze": "fallow",
+    "analyze": "fallow dead-code && fallow dupes && fallow health",
     "typecheck": "bun run typecheck:backend && bun run typecheck:web",
     "typecheck:backend": "tsc --project tsconfig.json",
     "typecheck:web": "tsc --project apps/web-ui/tsconfig.json",
