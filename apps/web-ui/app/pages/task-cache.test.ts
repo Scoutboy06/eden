@@ -60,8 +60,14 @@ test("persists recently read task details by project and keeps the cache bounded
   expect(cachedTaskDetail("eden", task.id)?.value).toEqual(task);
 
   resetTaskSnapshotsForTest();
-  for (let index = 0; index < 51; index++) {
-    await cacheTaskDetail("eden", { ...task, id: `eden-${index}` });
+  const originalNow = Date.now;
+  Date.now = () => 1_000;
+  try {
+    for (let index = 0; index < 51; index++) {
+      await cacheTaskDetail("eden", { ...task, id: `eden-${index}` });
+    }
+  } finally {
+    Date.now = originalNow;
   }
   resetTaskSnapshotsForTest();
   expect(await hydrateTaskDetail("eden", "eden-0")).toBeUndefined();

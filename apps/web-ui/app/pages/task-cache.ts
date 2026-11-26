@@ -18,6 +18,7 @@ const maxTaskDetails = 50;
 const boards = new Map<string, Snapshot<IssueGroup[]>>();
 const details = new Map<string, Snapshot<BeadsTaskDetail>>();
 let database: Promise<IDBDatabase> | undefined;
+let lastSavedAt = 0;
 
 export function cachedTaskGroups(project: string) {
   return boards.get(project)?.value;
@@ -28,7 +29,7 @@ export function taskGroupsSnapshot(project: string) {
 }
 
 export function cacheTaskGroups(project: string, groups: IssueGroup[]) {
-  const snapshot = { value: groups, savedAt: Date.now() };
+  const snapshot = { value: groups, savedAt: nextSavedAt() };
   boards.delete(project);
   boards.set(project, snapshot);
   while (boards.size > maxBoardProjects) boards.delete(boards.keys().next().value!);
@@ -50,7 +51,7 @@ export function cachedTaskDetail(project: string, taskId: string) {
 
 export function cacheTaskDetail(project: string, task: BeadsTaskDetail) {
   const key = detailKey(project, task.id);
-  const snapshot = { value: task, savedAt: Date.now() };
+  const snapshot = { value: task, savedAt: nextSavedAt() };
   details.delete(key);
   details.set(key, snapshot);
   while (details.size > maxTaskDetails) details.delete(details.keys().next().value!);
@@ -138,6 +139,11 @@ function boardKey(project: string) {
 
 function detailKey(project: string, taskId: string) {
   return `detail:${encodeURIComponent(project)}:${encodeURIComponent(taskId)}`;
+}
+
+function nextSavedAt() {
+  lastSavedAt = Math.max(Date.now(), lastSavedAt + 1);
+  return lastSavedAt;
 }
 
 async function persist(snapshot: Omit<StoredSnapshot, "key">) {
