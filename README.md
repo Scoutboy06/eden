@@ -3,6 +3,7 @@
 ## Dependencies
 
 - [Bun](https://bun.sh) is required.
+- Node.js 22 or later is required for Fallow analysis during `bun run check`.
 - [herdr-core](https://herdr.dev/core/) (`hc` 0.1.22 or later) must be on the Eden server's `PATH` for the default Doing terminal backend.
 - Sandbox commands require Docker's standalone `sbx` CLI, signed in and configured with a network policy.
 
